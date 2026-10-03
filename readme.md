@@ -52,9 +52,13 @@ Les données sont rechargées depuis le fichier à chaque exécution : les `INSE
 
 ## Langage supporté
 
+Tout ce qui n'est pas listé ici est **refusé dès l'analyse**, avec la ligne et un message « pas encore supporté par l'interpréteur » (soulignement rouge dans l'éditeur) : un programme qui s'exécute ici n'a rien sauté en silence.
+
+
 - **Déclarations** : `ctl-opt` (ignoré), `dcl-s`, `dcl-c`, `dcl-ds` qualifiées (`ds.champ`) ou non qualifiées (champs utilisables directement), champs insensibles à la casse
 - **Types** : `char(n)` à longueur fixe, `varchar(n)`, `int`/`uns(3|5|10|20)`, `packed`/`zoned(p:d)`, `ind`. Troncature à l'affectation et dépassement de capacité (RNX0103) comme en RPG
 - **Expressions** : priorités RPG (`OR` < `AND` < `NOT` < comparaisons < `+ -` < `* /` < `**` < signe), comparaison des chaînes sans tenir compte des blancs de fin
+- **Affectation** : `x = …`, `EVAL x = …` (sans extenseur), indicateurs `*INLR` et `*IN01` à `*IN99`, valeurs `*ON`, `*OFF`, `*BLANK(S)`, `*ZERO(S)`
 - **Contrôle** : `IF`/`ELSEIF`/`ELSE`, `SELECT`/`WHEN`/`OTHER`, `DOW`, `DOU`, `FOR … TO|DOWNTO … BY`, `LEAVE`, `ITER`, `RETURN`, `MONITOR`/`ON-ERROR` avec codes de statut (`on-error 00102 : 00103;`, `*PROGRAM`, `*FILE`, `*ALL`). Seules les erreurs d'exécution RPG (division par zéro 00102, dépassement 00103, conversion 00105) sont interceptées
 - **Procédures** : `dcl-proc`/`dcl-pi`, paramètres par référence, `VALUE`, `CONST`, `OPTIONS(*NOPASS)`, variables locales, récursion, appel dans une expression, `CALLP`, prototypes `dcl-pr` (ignorés)
 - **SQL embarqué** : `SELECT … INTO`, `INSERT`, `UPDATE`, `DELETE` ; clause `WHERE` avec `AND`/`OR`/`NOT`, parenthèses, `IS [NOT] NULL` ; variables hôtes ; `SQLCOD` et `SQLSTT`. Une clause non reconnue renvoie une erreur (`SQLCOD` négatif) et ne modifie aucune ligne
@@ -66,6 +70,8 @@ Pour se protéger d'une boucle ou d'une récursion infinie, l'exécution s'arrê
 ## Limites connues
 
 - Pas de fichiers natifs (`dcl-f`, `read`, `chain`, `setll`…), de tableaux (`dim`), de dates ni de `float`
+- Pas de sous-routines (`BEGSR`/`EXSR`), de `LIKE`/`LIKEDS`/`EXTNAME`, de `/COPY`, ni de paramètres pour le programme principal
+- `ctl-opt` est accepté mais ses options sont ignorées
 - SQL : pas de curseurs, de jointures, de `ORDER BY` ni de `LIKE`
 - `%char` ne connaît les décimales que d'une variable passée directement : `%char(total + 1)` affiche `16`, pas `16.00`
 - Calculs en virgule flottante JavaScript (environ 15 chiffres significatifs)

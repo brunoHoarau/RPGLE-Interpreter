@@ -1,9 +1,34 @@
 import { Token, TokenType, ASTNode, ProgramNode, ExpressionNode, DataTypeNode, ParameterNode } from './types';
+import { isSupportedBuiltin } from './builtins';
 
 const TYPE_TOKENS = [
   TokenType.CHAR, TokenType.VARCHAR, TokenType.PACKED, TokenType.ZONED, TokenType.INT, TokenType.UNS,
   TokenType.DATE, TokenType.TIME, TokenType.TIMESTAMP, TokenType.IND, TokenType.POINTER,
 ];
+
+// Types reconnus par la syntaxe mais sans sémantique dans l'interpréteur
+const UNSUPPORTED_TYPE_TOKENS = [TokenType.DATE, TokenType.TIME, TokenType.TIMESTAMP, TokenType.POINTER];
+
+// Opérations sur fichiers natifs : tokens dédiés
+const FILE_OPERATION_TOKENS = [
+  TokenType.SETLL, TokenType.READ, TokenType.CHAIN, TokenType.UPDATE, TokenType.DELETE, TokenType.WRITE,
+];
+
+// Codes opération RPG free form non supportés (reconnus quand ils ne sont pas
+// suivis de '=', '.' ou '(' : sinon ce sont des noms de variable ou de procédure)
+const UNSUPPORTED_OPCODES = new Set([
+  'acq', 'begsr', 'clear', 'close', 'commit', 'data-gen', 'data-into', 'dealloc', 'dump', 'endsr',
+  'eval-corr', 'evalr', 'except', 'exfmt', 'exsr', 'feod', 'force', 'in', 'leavesr', 'next',
+  'on-excp', 'on-exit', 'open', 'out', 'post', 'readc', 'reade', 'readp', 'readpe', 'rel', 'reset',
+  'rolbk', 'setgt', 'snd-msg', 'sorta', 'test', 'unlock', 'xml-into', 'xml-sax',
+]);
+
+const INDICATOR = /^\*in(lr|\d\d)$/;
+const SUPPORTED_SPECIAL_VALUES = new Set(['*on', '*off', '*zero', '*zeros', '*blank', '*blanks']);
+
+function unsupported(what: string, token: Token): Error {
+  return new Error(`${what} : pas encore supporté par l'interpréteur (ligne ${token.line})`);
+}
 
 export class Parser {
   private tokens: Token[];
@@ -30,25 +55,14 @@ export class Parser {
       } else if (this.check(TokenType.DCL_PR)) {
         this.skipPrototype();
       } else if (this.check(TokenType.DCL_PI)) {
-        this.parseProcedureInterface(); // Paramètres du programme : non gérés
-      } else if (this.check(TokenType.IF)) {
-        body.push(this.parseIfStatement());
-      } else if (this.check(TokenType.SELECT)) {
-        body.push(this.parseSelectStatement());
-      } else if (this.check(TokenType.DOW) || this.check(TokenType.DOU) || this.check(TokenType.FOR)) {
-        body.push(this.parseLoop());
-      } else if (this.check(TokenType.MONITOR)) {
-        body.push(this.parseMonitor());
-      } else if (this.check(TokenType.RETURN)) {
-        body.push(this.parseReturn());
-      } else if (this.check(TokenType.EXEC_SQL)) {
-        body.push(this.parseSQL());
-      } else if (this.check(TokenType.DSPLY)) {
-        body.push(this.parseDsply());
-      } else if (this.check(TokenType.IDENTIFIER)) {
-        body.push(this.parseAssignmentOrCall());
+        const token = this.peek();
+        if (this.parseProcedureInterface().parameters.length > 0) {
+          throw unsupported('Les paramètres du programme principal (DCL-PI)', token);
+        }
+      } else if (this.check(TokenType.DCL_F)) {
+        throw unsupported('DCL-F (fichiers natifs)', this.peek());
       } else {
-        this.advance(); // Skip unknown tokens
+        body.push(this.parseStatement());
       }
     }
 
@@ -69,21 +83,45 @@ export class Parser {
     this.expect(TokenType.DCL_S);
     const name = this.expect(TokenType.IDENTIFIER).value;
     const dataType = this.parseDataType();
-    let initialValue: ExpressionNode | undefined;
-
-    if (this.check(TokenType.IDENTIFIER) && this.peek().value.toLowerCase() === 'inz') {
-      this.advance();
-      this.expect(TokenType.LPAREN);
-      initialValue = this.parseExpression();
-      this.expect(TokenType.RPAREN);
-    }
-
+    const initialValue = this.parseDeclarationKeywords('DCL-S');
     this.expect(TokenType.SEMICOLON);
     return { type: 'VariableDeclaration', name, dataType, initialValue };
   }
 
+  // Mots-clés d'une déclaration jusqu'au ';' : seul INZ est supporté.
+  // Renvoie la valeur de INZ(...), undefined pour INZ seul (valeur par défaut du type).
+  private parseDeclarationKeywords(context: string): ExpressionNode | undefined {
+    let initialValue: ExpressionNode | undefined;
+    while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
+      const token = this.peek();
+      if (token.type === TokenType.IDENTIFIER && token.value.toLowerCase() === 'inz') {
+        this.advance();
+        if (this.check(TokenType.LPAREN)) {
+          this.advance();
+          initialValue = this.parseExpression();
+          this.expect(TokenType.RPAREN);
+        }
+      } else {
+        throw unsupported(`Le mot-clé ${token.value.toUpperCase()} de ${context}`, token);
+      }
+    }
+    return initialValue;
+  }
+
   private parseDataType(): any {
-    const typeToken = this.advance();
+    const typeToken = this.peek();
+    if (UNSUPPORTED_TYPE_TOKENS.includes(typeToken.type)) {
+      throw unsupported(`Le type ${typeToken.value.toUpperCase()}`, typeToken);
+    }
+    if (!TYPE_TOKENS.includes(typeToken.type)) {
+      if (typeToken.type === TokenType.IDENTIFIER) {
+        const word = typeToken.value.toLowerCase();
+        const what = word === 'like' || word === 'likeds' || word === 'likerec' ? 'Le mot-clé' : 'Le type';
+        throw unsupported(`${what} ${typeToken.value.toUpperCase()}`, typeToken);
+      }
+      throw new Error(`Type attendu à la ligne ${typeToken.line}, reçu '${typeToken.value}'`);
+    }
+    this.advance();
     const typeName = typeToken.value;
     let length: number | undefined;
     let decimals: number | undefined;
@@ -122,47 +160,35 @@ export class Parser {
     let isQualified = false;
     const fields: any[] = [];
 
-    // 1. Parser les options (qualified, dim, etc.) jusqu'au ';'
+    // 1. Options de la DS jusqu'au ';' : QUALIFIED et INZ sont supportés
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
-        if (this.check(TokenType.IDENTIFIER) && this.peek().value.toLowerCase() === 'qualified') {
-            this.advance();
-            isQualified = true;
-        } else if (this.check(TokenType.IDENTIFIER) && this.peek().value.toLowerCase() === 'dim') {
-            this.advance();
-            this.expect(TokenType.LPAREN);
-            this.expect(TokenType.NUMBER);
-            this.expect(TokenType.RPAREN);
-        } else {
-            this.advance(); // Skip other options
-        }
+      const token = this.peek();
+      const word = token.type === TokenType.IDENTIFIER ? token.value.toLowerCase() : '';
+      if (word === 'qualified') {
+        this.advance();
+        isQualified = true;
+      } else if (word === 'inz' && this.peekNext()?.type !== TokenType.LPAREN) {
+        this.advance(); // INZ seul : valeurs par défaut, déjà le comportement
+      } else {
+        throw unsupported(`Le mot-clé ${token.value.toUpperCase()} de DCL-DS`, token);
+      }
     }
-
-    // 🔥 CORRECTION : Toujours consommer le ';' de fin de déclaration
     this.expect(TokenType.SEMICOLON);
 
-    // 2. Parser les champs jusqu'à 'end-ds'
+    // 2. Champs jusqu'à 'end-ds'
     while (!this.check(TokenType.END_DS) && !this.isAtEnd()) {
-        const fieldName = this.expect(TokenType.IDENTIFIER).value;
-        const fieldType = this.parseDataType();
-
-        // Valeur initiale optionnelle (inz)
-        let initialValue: ExpressionNode | undefined;
-        if (this.check(TokenType.IDENTIFIER) && this.peek().value.toLowerCase() === 'inz') {
-            this.advance();
-            this.expect(TokenType.LPAREN);
-            initialValue = this.parseExpression();
-            this.expect(TokenType.RPAREN);
-        }
-
-        this.expect(TokenType.SEMICOLON);
-        fields.push({ name: fieldName, dataType: fieldType, initialValue });
+      const fieldName = this.expect(TokenType.IDENTIFIER).value;
+      const fieldType = this.parseDataType();
+      const initialValue = this.parseDeclarationKeywords('champ de DS');
+      this.expect(TokenType.SEMICOLON);
+      fields.push({ name: fieldName, dataType: fieldType, initialValue });
     }
 
     this.expect(TokenType.END_DS);
-    this.expect(TokenType.SEMICOLON);
+    this.skipToSemicolon(); // end-ds peut répéter le nom
 
     return { type: 'DataStructure', name, isQualified, fields };
-}
+  }
 
   private parseProcedure(): ASTNode {
     this.expect(TokenType.DCL_PROC);
@@ -203,9 +229,12 @@ export class Parser {
     }
     this.advance();
 
-    const returnType = this.isTypeToken() ? this.parseDataType() : undefined;
+    const next = this.peek();
+    const isLikeKeyword = next.type === TokenType.IDENTIFIER && /^like(ds|rec)?$/i.test(next.value);
+    const returnType = this.isTypeToken() || isLikeKeyword ? this.parseDataType() : undefined;
+    // Autres mots-clés de l'interface (EXTPGM, EXTPROC...) : sans effet ici
     while (!this.check(TokenType.SEMICOLON) && !this.check(TokenType.END_PI) && !this.isAtEnd()) {
-      this.advance();
+      if (this.advance().type === TokenType.IDENTIFIER && this.check(TokenType.LPAREN)) this.skipParenthesized();
     }
 
     const parameters: ParameterNode[] = [];
@@ -228,15 +257,14 @@ export class Parser {
 
   private parseParameter(): ParameterNode {
     const name = this.expect(TokenType.IDENTIFIER).value;
-    const dataType: DataTypeNode = this.isTypeToken()
-      ? this.parseDataType()
-      : { type: 'DataType', typeName: 'unknown' }; // like(...), likeds(...) : traités comme mots-clés
+    const dataType: DataTypeNode = this.parseDataType();
     let isConst = false;
     let byValue = false;
     const options: string[] = [];
 
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
-      const keyword = this.advance().value.toLowerCase();
+      const token = this.advance();
+      const keyword = token.value.toLowerCase();
       if (keyword === 'const') {
         isConst = true;
       } else if (keyword === 'value') {
@@ -244,12 +272,16 @@ export class Parser {
       } else if (keyword === 'options' && this.check(TokenType.LPAREN)) {
         this.advance();
         while (!this.check(TokenType.RPAREN) && !this.isAtEnd()) {
-          const token = this.advance();
-          if (token.type === TokenType.SPECIAL_VALUE) options.push(token.value.toLowerCase());
+          const option = this.advance();
+          if (option.type === TokenType.COLON) continue;
+          if (option.value.toLowerCase() !== '*nopass') {
+            throw unsupported(`OPTIONS(${option.value.toUpperCase()})`, option);
+          }
+          options.push('*nopass');
         }
         this.expect(TokenType.RPAREN);
-      } else if (this.check(TokenType.LPAREN)) {
-        this.skipParenthesized();
+      } else {
+        throw unsupported(`Le mot-clé ${token.value.toUpperCase()} de paramètre`, token);
       }
     }
     this.expect(TokenType.SEMICOLON);
@@ -507,43 +539,60 @@ export class Parser {
 }
 
   private parseAssignmentOrCall(): ASTNode {
-    // 🔥 CORRECTION : Lire le nom complet (avec notation pointée si présente)
-    let name = this.expect(TokenType.IDENTIFIER).value;
+    const nameToken = this.expect(TokenType.IDENTIFIER);
+    let name = nameToken.value;
+    const lower = name.toLowerCase();
 
     // CALLP [(E)] proc(...) : CALLP est facultatif en free form
-    if (name.toLowerCase() === 'callp' && (this.check(TokenType.IDENTIFIER) || this.check(TokenType.LPAREN))) {
+    if (lower === 'callp' && (this.check(TokenType.IDENTIFIER) || this.check(TokenType.LPAREN))) {
       if (this.check(TokenType.LPAREN)) this.skipParenthesized();
       return this.parseAssignmentOrCall();
     }
 
-    // Gérer la notation pointée : client.id, ds.field.subfield, etc.
+    // EVAL var = expr ; les extenseurs (H, M, R) ne sont pas supportés
+    if (lower === 'eval' && (this.check(TokenType.IDENTIFIER) || this.check(TokenType.LPAREN))) {
+      if (this.check(TokenType.LPAREN)) {
+        const extender = this.peekNext();
+        throw unsupported(`EVAL(${(extender?.value ?? '').toUpperCase()})`, nameToken);
+      }
+      return this.parseAssignmentOrCall();
+    }
+
+    const isNameUse = this.check(TokenType.EQUALS) || this.check(TokenType.DOT) || this.check(TokenType.LPAREN);
+    if (UNSUPPORTED_OPCODES.has(lower) && !isNameUse) {
+      throw unsupported(`L'opération ${name.toUpperCase()}`, nameToken);
+    }
+
+    // Notation pointée : client.id
     while (this.check(TokenType.DOT)) {
-        this.advance(); // Consomme le '.'
-        const nextPart = this.expect(TokenType.IDENTIFIER).value;
-        name += '.' + nextPart;
+      this.advance();
+      name += '.' + this.expect(TokenType.IDENTIFIER).value;
     }
 
     if (this.check(TokenType.EQUALS)) {
-        // Affectation : var = value; ou ds.field = value;
-        this.advance();
-        const value = this.parseExpression();
-        this.expect(TokenType.SEMICOLON);
-        return { type: 'Assignment', variable: name, value };
-    } else if (this.check(TokenType.LPAREN)) {
-        // Appel avec parenthèses : proc(arg1: arg2);
-        const args = this.parseCallArguments();
-        this.expect(TokenType.SEMICOLON);
-        return { type: 'ProcedureCall', name, args };
-    } else {
-        // Appel SANS parenthèses : dsply 'message';
-        const args: ExpressionNode[] = [];
-        if (!this.check(TokenType.SEMICOLON)) {
-            args.push(this.parseExpression());
-        }
-        this.expect(TokenType.SEMICOLON);
-        return { type: 'ProcedureCall', name, args };
+      this.advance();
+      const value = this.parseExpression();
+      this.expect(TokenType.SEMICOLON);
+      return { type: 'Assignment', variable: name, value };
     }
-}
+
+    if (this.check(TokenType.LPAREN)) {
+      const args = this.parseCallArguments();
+      if (this.check(TokenType.EQUALS)) {
+        throw unsupported('Les tableaux (affectation indicée)', nameToken);
+      }
+      this.expect(TokenType.SEMICOLON);
+      return { type: 'ProcedureCall', name, args };
+    }
+
+    if (this.check(TokenType.SEMICOLON)) {
+      // Appel sans paramètre ni parenthèses : proc;
+      this.advance();
+      return { type: 'ProcedureCall', name, args: [] };
+    }
+
+    throw new Error(`Instruction non reconnue '${name}' à la ligne ${nameToken.line}`);
+  }
 
   private parseStatement(): ASTNode {
     if (this.check(TokenType.DSPLY)) return this.parseDsply();
@@ -565,7 +614,23 @@ export class Parser {
     }
     if (this.check(TokenType.IDENTIFIER)) return this.parseAssignmentOrCall();
 
-    throw new Error(`Instruction inattendue à la ligne ${this.peek().line}`);
+    const token = this.peek();
+    if (FILE_OPERATION_TOKENS.includes(token.type)) {
+      throw unsupported(`L'opération ${token.value.toUpperCase()} (fichiers natifs)`, token);
+    }
+    if (token.type === TokenType.DCL_F) {
+      throw unsupported('DCL-F (fichiers natifs)', token);
+    }
+    if (token.type === TokenType.SPECIAL_VALUE && INDICATOR.test(token.value)) {
+      // *INLR = *ON; *IN50 = ...;
+      this.advance();
+      this.expect(TokenType.EQUALS);
+      const value = this.parseExpression();
+      this.expect(TokenType.SEMICOLON);
+      return { type: 'Assignment', variable: token.value.toLowerCase(), value };
+    }
+
+    throw new Error(`Instruction inattendue '${token.value.toUpperCase()}' à la ligne ${token.line}`);
   }
 
   // Priorités RPG, de la plus faible à la plus forte :
@@ -683,12 +748,20 @@ export class Parser {
     }
 
     if (this.check(TokenType.SPECIAL_VALUE)) {
-      const value = this.advance().value;
+      const token = this.advance();
+      const value = token.value.toLowerCase();
+      if (!SUPPORTED_SPECIAL_VALUES.has(value) && !INDICATOR.test(value)) {
+        throw unsupported(`La valeur spéciale ${value.toUpperCase()}`, token);
+      }
       return { type: 'Expression', value, valueType: 'special' };
     }
 
     if (this.check(TokenType.BUILTIN)) {
-      const name = this.advance().value;
+      const token = this.advance();
+      const name = token.value;
+      if (!isSupportedBuiltin(name)) {
+        throw unsupported(`La fonction ${name.toUpperCase()}`, token);
+      }
       this.expect(TokenType.LPAREN);
       const args: ExpressionNode[] = [];
 
@@ -742,6 +815,10 @@ export class Parser {
     return this.tokens[this.pos];
   }
 
+  private peekNext(): Token | undefined {
+    return this.tokens[this.pos + 1];
+  }
+
   private advance(): Token {
     if (!this.isAtEnd()) this.pos++;
     return this.tokens[this.pos - 1];
@@ -771,9 +848,15 @@ export class Parser {
     }
 
     // 2. Collecter tous les paramètres jusqu'au ';'
+    // Les paramètres après le message peuvent être des valeurs spéciales
+    // propres à DSPLY (*BLANK = pas de réponse, *EXT, *JOBLOG...)
     const params: ExpressionNode[] = [];
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
-        params.push(this.parseExpression());
+        if (params.length > 0 && this.check(TokenType.SPECIAL_VALUE)) {
+            params.push({ type: 'Expression', value: this.advance().value.toLowerCase(), valueType: 'special' });
+        } else {
+            params.push(this.parseExpression());
+        }
     }
     this.expect(TokenType.SEMICOLON);
 

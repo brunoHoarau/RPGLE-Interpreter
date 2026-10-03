@@ -2,6 +2,7 @@ import { ExecutionContext, emptyContext } from './context';
 import { SQLEngine, SQLResult, HostVariables } from './sql-engine';
 import { DataTypeNode } from './types';
 import { coerce } from './datatypes';
+import { BUILTINS } from './builtins';
 
 // Portée de noms : le programme principal (globale) ou un appel de procédure (locale)
 interface Scope {
@@ -28,7 +29,6 @@ export interface FieldDeclaration {
 export class Runtime {
   private globals: Scope = newScope();
   private frames: Scope[] = [];
-  private procedures: Map<string, Function> = new Map();
   private files: Map<string, any[]> = new Map();
   private output: string[] = [];
   public status = 0; // Code de la dernière erreur interceptée par MONITOR (%STATUS)
@@ -46,7 +46,6 @@ export class Runtime {
     // ✅ UTILISATION DE this.context
     this.context = context || emptyContext();
     this.sqlEngine = new SQLEngine(this.context);
-    this.initializeBuiltinFunctions();
   }
 
   private get currentScope(): Scope {
@@ -201,24 +200,6 @@ export class Runtime {
     };
   }
 
-  registerProcedure(name: string, proc: Function): void {
-    this.procedures.set(name.toLowerCase(), proc);
-  }
-
-  callProcedure(name: string, args: any[]): any {
-    const proc = this.procedures.get(name.toLowerCase());
-    if (!proc) {
-      throw new Error(`Procédure non trouvée: ${name}`);
-    }
-
-    this.callStack.push(name);
-    try {
-      return proc(...args);
-    } finally {
-      this.callStack.pop();
-    }
-  }
-
   declareFile(name: string, data: any[] = []): void {
     this.files.set(name.toLowerCase(), data);
     this.filePointers.set(name.toLowerCase(), 0);
@@ -289,11 +270,11 @@ export class Runtime {
   }
 
   executeBuiltin(name: string, args: any[]): any {
-    const proc = this.procedures.get(name.toLowerCase());
-    if (!proc) {
+    const builtin = BUILTINS[name.toLowerCase()];
+    if (!builtin) {
       throw new Error(`Fonction intégrée non supportée: ${name}`);
     }
-    return proc(...args);
+    return builtin(this, ...args);
   }
 
   addOutput(message: string): void {
@@ -322,50 +303,5 @@ export class Runtime {
 
   getCallStack(): string[] {
     return [...this.callStack];
-  }
-
-  private initializeBuiltinFunctions(): void {
-    this.registerProcedure('%status', () => this.status);
-    this.registerProcedure('%len', (str: any) => String(str).length);
-    this.registerProcedure('%trim', (str: any) => String(str).trim());
-    this.registerProcedure('%trimr', (str: any) => String(str).trimEnd());
-    this.registerProcedure('%triml', (str: any) => String(str).trimStart());
-    this.registerProcedure('%subst', (source: any, start: number, length?: number) => {
-      const str = String(source);
-      const startPos = start - 1;
-      return length !== undefined ? str.substr(startPos, length) : str.substr(startPos);
-    });
-    this.registerProcedure('%int', (value: any) => parseInt(value));
-    this.registerProcedure('%dec', (value: any, precision?: number, decimals?: number) => {
-      const num = parseFloat(value);
-      return decimals !== undefined ? parseFloat(num.toFixed(decimals)) : num;
-    });
-    this.registerProcedure('%char', (value: any) => String(value));
-    this.registerProcedure('%scan', (search: any, source: any) => {
-      const pos = String(source).indexOf(String(search));
-      return pos === -1 ? 0 : pos + 1;
-    });
-    this.registerProcedure('%upper', (str: any) => String(str).toUpperCase());
-    this.registerProcedure('%lower', (str: any) => String(str).toLowerCase());
-    this.registerProcedure('%replace', (newStr: any, source: any, start: number, length?: number) => {
-      const str = String(source);
-      const startPos = start - 1;
-      const len = length !== undefined ? length : String(newStr).length;
-      return str.substr(0, startPos) + String(newStr) + str.substr(startPos + len);
-    });
-    this.registerProcedure('%check', (comparator: any, base: any, start: number = 1) => {
-      const comp = String(comparator);
-      const baseStr = String(base);
-      const startPos = start - 1;
-      for (let i = startPos; i < baseStr.length; i++) {
-        if (comp.indexOf(baseStr[i]) === -1) return i + 1;
-      }
-      return 0;
-    });
-    this.registerProcedure('%abs', (value: number) => Math.abs(value));
-    this.registerProcedure('%max', (...values: number[]) => Math.max(...values));
-    this.registerProcedure('%min', (...values: number[]) => Math.min(...values));
-    this.registerProcedure('%rem', (dividend: number, divisor: number) => dividend % divisor);
-    this.registerProcedure('%div', (dividend: number, divisor: number) => Math.floor(dividend / divisor));
   }
 }

@@ -57,6 +57,13 @@ export class Interpreter {
     this.runtime.declareVariable('SQLCOD', 0, { type: 'DataType', typeName: 'int', length: 10 });
     this.runtime.declareVariable('SQLSTT', '00000', { type: 'DataType', typeName: 'char', length: 5 });
 
+    // Indicateurs *INLR et *IN01 à *IN99
+    const ind = { type: 'DataType' as const, typeName: 'ind' };
+    this.runtime.declareVariable('*inlr', false, ind);
+    for (let i = 1; i <= 99; i++) {
+      this.runtime.declareVariable(`*in${String(i).padStart(2, '0')}`, false, ind);
+    }
+
     // Première passe : déclarer variables, constantes, procédures
     for (const node of ast.body) {
       if (node.type === 'VariableDeclaration') {
@@ -168,8 +175,7 @@ export class Interpreter {
   private callProcedure(name: string, argExprs: ExpressionNode[]): any {
     const proc = this.procedures.get(name.toLowerCase());
     if (!proc) {
-      const args = argExprs.map(arg => this.evaluate(arg));
-      return this.runtime.callProcedure(name, args);
+      throw new Error(`Procédure non trouvée: ${name}`);
     }
 
     const params = proc.parameters;
@@ -287,52 +293,7 @@ export class Interpreter {
   }
 
   private executeProcedureCall(node: any): void {
-    const procName = node.name.toLowerCase();
-
-    if (procName === 'dsply') {
-      const message = this.evaluate(node.args[0]);
-      this.runtime.addOutput(String(message));
-      return;
-    }
-
-    if (['setll', 'read', 'chain', 'update', 'delete', 'write'].includes(procName)) {
-      this.executeFileOperation(procName, node.args);
-      return;
-    }
-
     return this.callProcedure(node.name, node.args);
-  }
-
-  private executeFileOperation(operation: string, args: any[]): void {
-    const fileName = this.evaluate(args[args.length - 1]);
-
-    switch (operation) {
-      case 'setll':
-        const key = args.length > 1 ? this.evaluate(args[0]) : undefined;
-        this.runtime.setll(fileName, key);
-        break;
-      case 'read':
-        const record = this.runtime.read(fileName);
-        if (record) {
-          for (const [key, value] of Object.entries(record)) {
-            if (this.runtime.hasVariable(key)) {
-              this.runtime.setVariable(key, value);
-            }
-          }
-        }
-        break;
-      case 'chain':
-        const chainKey = this.evaluate(args[0]);
-        const chainRecord = this.runtime.chain(fileName, chainKey);
-        if (chainRecord) {
-          for (const [key, value] of Object.entries(chainRecord)) {
-            if (this.runtime.hasVariable(key)) {
-              this.runtime.setVariable(key, value);
-            }
-          }
-        }
-        break;
-    }
   }
 
   private executeDsply(node: any): void {
@@ -402,10 +363,11 @@ export class Interpreter {
       switch (expr.value) {
         case '*on': return true;
         case '*off': return false;
-        case '*zero': return 0;
-        case '*blank': return '';
-        case '*all': return '';
-        default: return expr.value;
+        case '*zero': case '*zeros': return 0;
+        case '*blank': case '*blanks': return '';
+        default:
+          // Indicateurs *INLR, *INxx ; les autres valeurs (*EXT, *JOBLOG) ne viennent que de DSPLY
+          return /^\*in(lr|\d\d)$/.test(expr.value) ? this.runtime.getVariable(expr.value) : expr.value;
       }
     }
 
