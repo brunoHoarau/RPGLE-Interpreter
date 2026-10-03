@@ -62,10 +62,14 @@ test('tst_sql_I_U_D.rpgle', () => {
   ]);
 });
 
-// tstpgm.rpgle appelle MONPGM, exécuté depuis fichiers_test/monpgm.rpgle
+// tstpgm.rpgle appelle MONPGM, exécuté depuis fichiers_test/monpgm.rpgle.
+// La valeur testée remplace celle du fichier, quelle qu'elle soit (on peut l'éditer pour essayer).
 function runTstpgm(param) {
   const { folderProgramResolver } = require('../out/sources');
-  const code = read('fichiers_test/tstpgm.rpgle').replace("Prm_Test = 'VALIDE';", `Prm_Test = '${param}';`);
+  const source = read('fichiers_test/tstpgm.rpgle');
+  const assignment = /Prm_Test = '[^']*';/i;
+  assert.match(source, assignment, "tstpgm.rpgle doit contenir l'affectation Prm_Test = '...';");
+  const code = source.replace(assignment, `Prm_Test = '${param}';`);
   return run(code, undefined, { resolveProgram: folderProgramResolver(path.join(ROOT, 'fichiers_test')) });
 }
 
