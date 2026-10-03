@@ -24,11 +24,12 @@ export class Runtime {
   private procedures: Map<string, Function> = new Map();
   private files: Map<string, any[]> = new Map();
   private output: string[] = [];
+  public status = 0; // Code de la dernière erreur interceptée par MONITOR (%STATUS)
   private callStack: string[] = [];
-  
+
   private filePointers: Map<string, number> = new Map();
   private fileStatus: Map<string, { found: boolean; eof: boolean }> = new Map();
-  
+
   // 🆕 NOUVEAUX ÉLÉMENTS (avec 'private')
   private context: ExecutionContext;
   private sqlEngine: SQLEngine;
@@ -158,7 +159,7 @@ export class Runtime {
     if (!proc) {
       throw new Error(`Procédure non trouvée: ${name}`);
     }
-    
+
     this.callStack.push(name);
     try {
       return proc(...args);
@@ -176,7 +177,7 @@ export class Runtime {
   setll(fileName: string, key?: any): boolean {
     const file = this.files.get(fileName.toLowerCase());
     if (!file) throw new Error(`Fichier non déclaré: ${fileName}`);
-    
+
     this.filePointers.set(fileName.toLowerCase(), 0);
     const status = this.fileStatus.get(fileName.toLowerCase())!;
     status.found = false;
@@ -187,16 +188,16 @@ export class Runtime {
   read(fileName: string): any {
     const file = this.files.get(fileName.toLowerCase());
     if (!file) throw new Error(`Fichier non déclaré: ${fileName}`);
-    
+
     const pointer = this.filePointers.get(fileName.toLowerCase())!;
     const status = this.fileStatus.get(fileName.toLowerCase())!;
-    
+
     if (pointer >= file.length) {
       status.eof = true;
       status.found = false;
       return null;
     }
-    
+
     const record = file[pointer];
     this.filePointers.set(fileName.toLowerCase(), pointer + 1);
     status.found = true;
@@ -207,10 +208,10 @@ export class Runtime {
   chain(fileName: string, key: any): any {
     const file = this.files.get(fileName.toLowerCase());
     if (!file) throw new Error(`Fichier non déclaré: ${fileName}`);
-    
+
     const status = this.fileStatus.get(fileName.toLowerCase())!;
     const record = file.find(r => r.id === key || r.key === key);
-    
+
     if (record) {
       status.found = true;
       status.eof = false;
@@ -259,6 +260,7 @@ export class Runtime {
   reset(): void {
     this.globals = newScope();
     this.frames = [];
+    this.status = 0;
     this.files.clear();
     this.filePointers.clear();
     this.fileStatus.clear();
@@ -272,6 +274,7 @@ export class Runtime {
   }
 
   private initializeBuiltinFunctions(): void {
+    this.registerProcedure('%status', () => this.status);
     this.registerProcedure('%len', (str: any) => String(str).length);
     this.registerProcedure('%trim', (str: any) => String(str).trim());
     this.registerProcedure('%trimr', (str: any) => String(str).trimEnd());

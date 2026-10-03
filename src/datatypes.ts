@@ -1,5 +1,6 @@
 // Sémantique des types RPG : valeurs par défaut, conversion à l'affectation, %CHAR
 import { DataTypeNode } from './types';
+import { RpgError, STATUS_INVALID_NUMERIC, STATUS_OVERFLOW } from './errors';
 
 const INT_BITS: { [digits: number]: number } = { 3: 8, 5: 16, 10: 32, 20: 64 };
 
@@ -85,7 +86,9 @@ function toNumber(value: any, target: string): number {
   if (typeof value === 'boolean') return value ? 1 : 0;
   const str = String(value).trim();
   const n = Number(str);
-  if (str === '' || isNaN(n)) throw new Error(`Valeur non numérique '${value}' affectée à ${target}`);
+  if (str === '' || isNaN(n)) {
+    throw new RpgError(STATUS_INVALID_NUMERIC, `Valeur non numérique '${value}' affectée à ${target} (RNX0105)`);
+  }
   return n;
 }
 
@@ -95,5 +98,5 @@ function normalize(n: number): number {
 }
 
 function overflow(value: any, type: DataTypeNode, target: string): Error {
-  return new Error(`Dépassement de capacité : ${value} ne tient pas dans ${target} ${describeType(type)} (RNX0103)`);
+  return new RpgError(STATUS_OVERFLOW, `Dépassement de capacité : ${value} ne tient pas dans ${target} ${describeType(type)} (RNX0103)`);
 }

@@ -2,6 +2,7 @@ import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode } from './types';
 import { Runtime } from './runtime';
 import { ExecutionContext } from './context';
 import { coerce, defaultValue, formatChar } from './datatypes';
+import { RpgError, STATUS_DIVIDE_BY_ZERO, matchesStatus } from './errors';
 
 // Signaux de contrôle : levés comme exceptions pour traverser les blocs imbriqués
 // jusqu'à la boucle (LEAVE/ITER) ou la procédure / le programme (RETURN) concerné.
@@ -10,9 +11,6 @@ class IterSignal {}
 class ReturnSignal {
   constructor(public value?: any) {}
 }
-
-const isControlSignal = (e: unknown) =>
-  e instanceof LeaveSignal || e instanceof IterSignal || e instanceof ReturnSignal;
 
 export interface InterpreterOptions {
   // Nombre total d'itérations de boucle autorisées avant d'arrêter l'exécution
@@ -378,12 +376,13 @@ export class Interpreter {
     try {
       this.executeBlock(node.tryBlock);
     } catch (error) {
-      if (isControlSignal(error)) throw error;
-      if (node.catchBlocks && node.catchBlocks.length > 0) {
-        for (const catchBlock of node.catchBlocks) {
-          this.executeBlock(catchBlock.block);
-        }
-      }
+      // Les signaux LEAVE/ITER/RETURN et les erreurs de l'interpréteur ne sont pas des RpgError
+      if (!(error instanceof RpgError)) throw error;
+      const { status } = error;
+      const handler = node.catchBlocks.find((c: any) => matchesStatus(c.errorCodes, status));
+      if (!handler) throw error;
+      this.runtime.status = status;
+      this.executeBlock(handler.block);
     }
   }
 
@@ -461,7 +460,7 @@ export class Interpreter {
       case '-': return left - right;
       case '*': return left * right;
       case '/': 
-        if (right === 0) throw new Error('Division par zéro');
+        if (right === 0) throw new RpgError(STATUS_DIVIDE_BY_ZERO, 'Division par zéro (RNX0102)');
         return left / right;
       case '**': return Math.pow(left, right);
       case '=': return compare(left, right) === 0;
