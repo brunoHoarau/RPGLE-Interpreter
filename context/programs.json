@@ -1,0 +1,8 @@
+{
+  "VOTRE_PGM": {
+    "calls": [
+      { "when": { "Entree_Param1": "VALIDE" }, "set": { "Sortie_Resultat": 1500.50 } },
+      { "error": "Paramètre invalide" }
+    ]
+  }
+}

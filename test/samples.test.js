@@ -61,3 +61,12 @@ test('tst_sql_I_U_D.rpgle', () => {
     'Client 4 bien supprime',
   ]);
 });
+
+test('tstpgm.rpgle avec le bouchon de VOTRE_PGM du dossier context/', () => {
+  const { loadContextFromFolder } = require('../out/context');
+  assert.deepEqual(run(read('fichiers_test/tstpgm.rpgle'), loadContextFromFolder(path.join(ROOT, 'context'))), [
+    '--- DEBUT DES TESTS ---',
+    'Succes - Valeur : 1500.50',
+    '--- FIN DES TESTS ---',
+  ]);
+});

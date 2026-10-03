@@ -28,9 +28,10 @@ export function activate(vscodeContext: vscode.ExtensionContext) {
       const contextPath = findContextFolder(editor.document);
       const execContext = loadContextFromFolder(contextPath);
       const tables = Object.keys(execContext.tables);
-      output.appendLine(tables.length > 0
-        ? `Contexte : ${contextPath} (tables : ${tables.join(', ')})`
-        : `Contexte : aucun tables.json dans ${contextPath}`);
+      const mocks = Object.keys(execContext.programs);
+      output.appendLine(tables.length + mocks.length > 0
+        ? `Contexte : ${contextPath} (tables : ${tables.join(', ') || 'aucune'} ; bouchons : ${mocks.join(', ') || 'aucun'})`
+        : `Contexte : ni tables.json ni programs.json dans ${contextPath}`);
 
       const ast = new Parser(new Lexer(editor.document.getText()).tokenize()).parse();
       const lines = new Interpreter(execContext).execute(ast);

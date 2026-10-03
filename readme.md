@@ -50,7 +50,30 @@ Deux formats sont acceptés pour chaque table :
 
 Les données sont rechargées depuis le fichier à chaque exécution : les `INSERT`, `UPDATE` et `DELETE` ne modifient pas `tables.json`.
 
-## Langage supporté
+## Programmes appelés (bouchons)
+
+Un programme ou une procédure externe déclaré par `dcl-pr … extpgm('NOM')` ou `extproc('NOM')` n'existe pas en local. Son comportement se décrit dans `context/programs.json`, en nommant les paramètres comme dans le `dcl-pr` :
+
+```json
+{
+  "VOTRE_PGM": {
+    "calls": [
+      { "when": { "Entree_Param1": "VALIDE" }, "set": { "Sortie_Resultat": 1500.50 } },
+      { "error": "Paramètre invalide" }
+    ]
+  }
+}
+```
+
+- Le **premier cas** dont toutes les conditions `when` correspondent s'applique (un cas sans `when` correspond toujours).
+- `set` renvoie des paramètres à l'appelant (pas les paramètres `CONST` ou `VALUE`), convertis à leur type.
+- `return` donne la valeur de retour d'une procédure externe.
+- `error` simule un échec du programme appelé : erreur de statut **00202**, interceptable par `MONITOR`.
+- Sans bouchon, l'appel échoue comme un programme introuvable sur IBM i : statut **00211**.
+- Chaque appel est tracé dans la sortie : `[APPEL] VOTRE_PGM(Entree_Param1='VALIDE', Sortie_Resultat=0) (bouchon)`.
+
+Un prototype sans `extpgm` ni `extproc` appelle la procédure `dcl-proc` du même nom si elle existe dans le source, sinon le bouchon portant son nom.
+
 
 Tout ce qui n'est pas listé ici est **refusé dès l'analyse**, avec la ligne et un message « pas encore supporté par l'interpréteur » (soulignement rouge dans l'éditeur) : un programme qui s'exécute ici n'a rien sauté en silence.
 
@@ -60,7 +83,7 @@ Tout ce qui n'est pas listé ici est **refusé dès l'analyse**, avec la ligne e
 - **Expressions** : priorités RPG (`OR` < `AND` < `NOT` < comparaisons < `+ -` < `* /` < `**` < signe), comparaison des chaînes sans tenir compte des blancs de fin
 - **Affectation** : `x = …`, `EVAL x = …` (sans extenseur), indicateurs `*INLR` et `*IN01` à `*IN99`, valeurs `*ON`, `*OFF`, `*BLANK(S)`, `*ZERO(S)`
 - **Contrôle** : `IF`/`ELSEIF`/`ELSE`, `SELECT`/`WHEN`/`OTHER`, `DOW`, `DOU`, `FOR … TO|DOWNTO … BY`, `LEAVE`, `ITER`, `RETURN`, `MONITOR`/`ON-ERROR` avec codes de statut (`on-error 00102 : 00103;`, `*PROGRAM`, `*FILE`, `*ALL`). Seules les erreurs d'exécution RPG (division par zéro 00102, dépassement 00103, conversion 00105) sont interceptées
-- **Procédures** : `dcl-proc`/`dcl-pi`, paramètres par référence, `VALUE`, `CONST`, `OPTIONS(*NOPASS)`, variables locales, récursion, appel dans une expression, `CALLP`, prototypes `dcl-pr` (ignorés)
+- **Procédures** : `dcl-proc`/`dcl-pi`, paramètres par référence, `VALUE`, `CONST`, `OPTIONS(*NOPASS)`, variables locales, récursion, appel dans une expression, `CALLP`, prototypes `dcl-pr` (`EXTPGM`, `EXTPROC`, voir les bouchons ci-dessus)
 - **SQL embarqué** : `SELECT … INTO`, `INSERT`, `UPDATE`, `DELETE` ; clause `WHERE` avec `AND`/`OR`/`NOT`, parenthèses, `IS [NOT] NULL` ; variables hôtes ; `SQLCOD` et `SQLSTT`. Une clause non reconnue renvoie une erreur (`SQLCOD` négatif) et ne modifie aucune ligne
 - **Fonctions intégrées** : `%len`, `%trim`, `%triml`, `%trimr`, `%subst`, `%scan`, `%replace`, `%check`, `%upper`, `%lower`, `%char`, `%int`, `%dec`, `%abs`, `%max`, `%min`, `%rem`, `%div`, `%status`
 - **`DSPLY`** : message, variable de réponse (la réponse `Y` est simulée), file d'attente
@@ -92,6 +115,6 @@ Dans VS Code, **F5** lance une fenêtre de développement avec l'extension charg
 | `src/` | Lexer, parser, interpréteur, runtime, moteur SQL, types RPG |
 | `test/` | Tests unitaires et de non-régression |
 | `fichiers_test/`, `test.rpgle` | Programmes d'exemple |
-| `context/` | Données SQL simulées pour les exemples |
+| `context/` | Données SQL et bouchons de programmes pour les exemples |
 
 Les tests sont lancés par GitHub Actions à chaque push sur `main` et à chaque pull request.
