@@ -27,65 +27,46 @@ export interface ExecutionContext {
   programs: { [programName: string]: ProgramMock };
 }
 
-// Fonction utilitaire pour charger le contexte depuis un dossier
+// Charge le contexte d'exécution (données simulées) depuis un dossier.
+// Un dossier ou un tables.json absent donne un contexte vide ; un fichier invalide est une erreur.
 export function loadContextFromFolder(folderPath: string): ExecutionContext {
   const fs = require('fs');
   const path = require('path');
 
-  console.log('🔍 Tentative de chargement du contexte depuis :', folderPath);
-
-  const context: ExecutionContext = {
-    tables: {},
-    files: {},
-    programs: {}
-  };
-
+  const context = emptyContext();
   const tablesPath = path.join(folderPath, 'tables.json');
-  console.log('📄 Chemin recherché pour tables.json :', tablesPath);
+  if (!fs.existsSync(tablesPath)) return context;
 
-  if (fs.existsSync(tablesPath)) {
-    console.log('✅ Le fichier tables.json existe !');
-    try {
-      const rawContent = fs.readFileSync(tablesPath, 'utf8');
-      console.log('📝 Contenu brut du fichier :\n', rawContent);
-      
-      const parsed = JSON.parse(rawContent);
-      context.tables = normalizeTables(parsed);
-      console.log('🎉 Tables chargées avec succès :', Object.keys(context.tables));
-    } catch (err: any) {
-      console.error('❌ Erreur lors de la lecture ou du parsing de tables.json :', err.message);
-    }
-  } else {
-    console.warn('⚠️ Le fichier tables.json N\'EXISTE PAS à cet emplacement.');
+  let parsed: any;
+  try {
+    parsed = JSON.parse(fs.readFileSync(tablesPath, 'utf8'));
+  } catch (err: any) {
+    throw new Error(`Fichier ${tablesPath} invalide : ${err.message}`);
   }
-
+  context.tables = normalizeTables(parsed, tablesPath);
   return context;
 }
 
-// Normalise le format des tables (accepte plusieurs syntaxes)
-function normalizeTables(raw: any): { [name: string]: TableDefinition } {
+// Normalise le format des tables : tableau de lignes, ou { schema, data }
+function normalizeTables(raw: any, sourcePath: string): { [name: string]: TableDefinition } {
   const result: { [name: string]: TableDefinition } = {};
 
   for (const tableName in raw) {
     const table = raw[tableName];
 
-    // Si l'utilisateur a fourni "schema" + "data"
-    if (table.schema && table.data) {
+    if (table && table.schema && Array.isArray(table.data)) {
       const columns: ColumnDefinition[] = [];
       for (const colName in table.schema) {
         columns.push({ name: colName.toUpperCase(), type: table.schema[colName] });
       }
       result[tableName.toUpperCase()] = { columns, data: table.data };
-    }
-    // Si l'utilisateur a fourni directement un tableau de lignes
-    else if (Array.isArray(table)) {
-      const columns: ColumnDefinition[] = [];
-      if (table.length > 0) {
-        for (const key of Object.keys(table[0])) {
-          columns.push({ name: key.toUpperCase(), type: 'AUTO' });
-        }
-      }
+    } else if (Array.isArray(table)) {
+      const columns: ColumnDefinition[] = table.length > 0
+        ? Object.keys(table[0]).map(key => ({ name: key.toUpperCase(), type: 'AUTO' }))
+        : [];
       result[tableName.toUpperCase()] = { columns, data: table };
+    } else {
+      throw new Error(`Table '${tableName}' de ${sourcePath} : un tableau de lignes ou { "schema", "data" } est attendu`);
     }
   }
 

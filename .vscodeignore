@@ -1,0 +1,10 @@
+src/**
+test/**
+fichiers_test/**
+context/**
+test.rpgle
+.github/**
+.vscode/**
+**/*.map
+tsconfig.json
+.gitignore
