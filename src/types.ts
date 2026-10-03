@@ -141,6 +141,7 @@ export type ASTNode =
 export interface ProgramNode {
   type: 'Program';
   body: ASTNode[];
+  parameters?: ParameterNode[];  // dcl-pi du programme principal : paramètres d'entrée
 }
 
 export interface ControlOptionsNode {

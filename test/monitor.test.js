@@ -152,3 +152,16 @@ test('la limite d\'itérations n\'est pas interceptée par MONITOR', () => {
     endmon;
   `, undefined, { maxIterations: 100 }), /limite/i);
 });
+
+test('une erreur interceptée par MONITOR est tracée dans la sortie, comme dans le joblog', () => {
+  const { runRaw } = require('./helpers');
+  const output = runRaw(`
+    dcl-s x int(10);
+    monitor;
+      x = 1 / 0;
+    on-error;
+      dsply 'intercepte';
+    endmon;
+  `);
+  assert.deepEqual(output, ['[JOBLOG] Division par zéro (RNX0102) - interceptée par MONITOR', '[DSPLY] intercepte']);
+});

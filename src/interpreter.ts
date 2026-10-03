@@ -2,6 +2,9 @@ import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, Par
 import { Runtime } from './runtime';
 import { ExecutionContext, MockCase, emptyContext } from './context';
 import { coerce, defaultValue, formatChar } from './datatypes';
+import { Lexer } from './lexer';
+import { Parser } from './parser';
+import { ProgramResolver } from './sources';
 import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DIVIDE_BY_ZERO, matchesStatus } from './errors';
 
 // Signaux de contrôle : levés comme exceptions pour traverser les blocs imbriqués
@@ -17,6 +20,8 @@ export interface InterpreterOptions {
   maxIterations?: number;
   // Nombre maximal d'appels de procédure imbriqués (protège des récursions infinies)
   maxCallDepth?: number;
+  // Source des programmes appelés par EXTPGM sans bouchon
+  resolveProgram?: ProgramResolver;
 }
 
 const DEFAULT_MAX_ITERATIONS = 1_000_000;
@@ -42,15 +47,29 @@ export class Interpreter {
   private procedures = new Map<string, ProcedureNode>();
   private prototypes = new Map<string, PrototypeNode>();
   private context: ExecutionContext;
+  private options: InterpreterOptions;
+  private programDepth = 0; // Niveau d'imbrication des appels de programmes source
 
   constructor(context?: ExecutionContext, options: InterpreterOptions = {}) {
     this.context = context ?? emptyContext();
+    this.options = options;
     this.runtime = new Runtime(this.context);
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     this.maxCallDepth = options.maxCallDepth ?? DEFAULT_MAX_CALL_DEPTH;
   }
 
   execute(ast: ProgramNode): string[] {
+    const parameters = ast.parameters ?? [];
+    if (parameters.length > 0) {
+      throw new Error(`Ce programme attend des paramètres d'entrée (${parameters.map(p => p.name).join(', ')}) : `
+        + `exécutez le programme qui l'appelle`);
+    }
+    this.runProgram(ast, []);
+    return this.runtime.getOutput();
+  }
+
+  // Exécute un programme avec ses paramètres d'entrée ; renvoie leurs valeurs finales
+  private runProgram(ast: ProgramNode, args: any[]): any[] {
     this.runtime.reset();
     this.runtime.clearOutput();
     this.iterations = 0;
@@ -67,6 +86,10 @@ export class Interpreter {
     for (let i = 1; i <= 99; i++) {
       this.runtime.declareVariable(`*in${String(i).padStart(2, '0')}`, false, ind);
     }
+
+    // Paramètres d'entrée du programme (dcl-pi principal), passés par l'appelant
+    const parameters = ast.parameters ?? [];
+    parameters.forEach((p, i) => this.runtime.declareVariable(p.name, args[i], p.dataType));
 
     // Première passe : déclarer variables, constantes, procédures
     for (const node of ast.body) {
@@ -99,7 +122,7 @@ export class Interpreter {
       if (!(e instanceof ReturnSignal)) throw e;
     }
 
-    return this.runtime.getOutput();
+    return parameters.map(p => this.runtime.lookup(p.name));
   }
 
   private executeBlock(statements: ASTNode[]): void {
@@ -261,8 +284,13 @@ export class Interpreter {
     const mockName = Object.keys(this.context.programs).find(n => n.toUpperCase() === target);
     const mock = mockName !== undefined ? this.context.programs[mockName] : undefined;
     if (!mock) {
-      throw new RpgError(STATUS_CALL_NOT_FOUND,
-        `${what} ${target} introuvable : ajoutez son bouchon dans context/programs.json (RNX0211)`);
+      // Sans bouchon, un programme dont le source est disponible est exécuté
+      const program = proto.kind === 'program' ? this.options.resolveProgram?.(target) : undefined;
+      if (program) return this.callSourceProgram(proto, target, program, argExprs, args, callText);
+      const hint = proto.kind === 'program'
+        ? `placez ${target}.rpgle à côté du programme appelant ou ajoutez son bouchon dans context/programs.json`
+        : 'ajoutez son bouchon dans context/programs.json';
+      throw new RpgError(STATUS_CALL_NOT_FOUND, `${what} ${target} introuvable : ${hint} (RNX0211)`);
     }
     this.runtime.addOutput(`[APPEL] ${target}(${callText}) (bouchon)`);
 
@@ -296,6 +324,44 @@ export class Interpreter {
       this.assignTo(arg.value, coerce(value, param.dataType, param.name));
     }
     return coerce(matching.return, proto.returnType, proto.name);
+  }
+
+  // Exécute le source d'un programme appelé, avec ses propres variables globales.
+  // Paramètres passés par référence ; une erreur RPG non interceptée remonte en 00202.
+  private callSourceProgram(proto: PrototypeNode, target: string, program: { source: string; path?: string },
+                            argExprs: ExpressionNode[], args: any[], callText: string): void {
+    if (this.programDepth >= (this.options.maxCallDepth ?? DEFAULT_MAX_CALL_DEPTH)) {
+      throw new Error(`Profondeur maximale d'appels de programmes atteinte en appelant ${target}`);
+    }
+    this.runtime.addOutput(`[APPEL] ${target}(${callText}) (source ${program.path ?? target})`);
+
+    let ast: ProgramNode;
+    try {
+      ast = new Parser(new Lexer(program.source).tokenize()).parse();
+    } catch (e: any) {
+      throw new Error(`${target} (${program.path ?? 'source'}) : ${e.message}`);
+    }
+
+    const callee = new Interpreter(this.context, this.options);
+    callee.programDepth = this.programDepth + 1;
+    let finalValues: any[];
+    try {
+      finalValues = callee.runProgram(ast, args);
+    } catch (e) {
+      callee.runtime.getOutput().forEach(line => this.runtime.addOutput(line));
+      if (e instanceof RpgError) {
+        throw new RpgError(STATUS_CALL_FAILED, `Programme ${target} en échec : ${e.message} (RNX0202)`);
+      }
+      throw e;
+    }
+    callee.runtime.getOutput().forEach(line => this.runtime.addOutput(line));
+
+    proto.parameters.forEach((param, i) => {
+      const arg = argExprs[i];
+      if (i < finalValues.length && !param.isConst && !param.byValue && arg?.valueType === 'identifier') {
+        this.assignTo(arg.value, coerce(finalValues[i], param.dataType, param.name));
+      }
+    });
   }
 
   private executeAssignment(node: any): void {
@@ -426,6 +492,7 @@ export class Interpreter {
       const handler = node.catchBlocks.find((c: any) => matchesStatus(c.errorCodes, status));
       if (!handler) throw error;
       this.runtime.status = status;
+      this.runtime.addOutput(`[JOBLOG] ${error.message} - interceptée par MONITOR`);
       this.executeBlock(handler.block);
     }
   }

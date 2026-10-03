@@ -94,8 +94,8 @@ test('LIKEDS et OPTIONS(*OMIT) sont refusés sur un paramètre', () => {
   assert.throws(() => parse(`dcl-proc p; dcl-pi *n; c int(5) options(*omit); end-pi; end-proc;`), /\*OMIT/i);
 });
 
-test('les paramètres du programme principal sont refusés', () => {
-  assert.throws(() => parse(`dcl-pi *n; client int(10); end-pi;`), NOT_SUPPORTED);
+test('les paramètres du programme principal sont acceptés à l\'analyse', () => {
+  assert.doesNotThrow(() => parse(`dcl-pi *n; client int(10); end-pi;`));
 });
 
 test('un DCL-PI principal sans paramètre reste accepté', () => {

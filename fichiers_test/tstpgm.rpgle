@@ -2,7 +2,7 @@
 Ctl-Opt ActGrp(*NEW);
 
 // Déclaration de l'extension à tester
-Dcl-Pr MonExtension ExtPgm('VOTRE_PGM');
+Dcl-Pr MonExtension ExtPgm('MONPGM');
   Entree_Param1  Char(10) Const;
   Sortie_Resultat  Packed(10:2);
 End-Pr;

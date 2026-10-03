@@ -146,7 +146,7 @@ export class Runtime {
   }
 
   // Valeur d'un nom visible, undefined s'il n'existe pas ou n'a pas de valeur
-  private lookup(name: string): any {
+  lookup(name: string): any {
     const resolved = this.resolve(name);
     if (!resolved) return undefined;
     return resolved.dsName

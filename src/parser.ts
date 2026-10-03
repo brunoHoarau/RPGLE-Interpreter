@@ -40,6 +40,7 @@ export class Parser {
 
   parse(): ProgramNode {
     const body: ASTNode[] = [];
+    let parameters: ParameterNode[] | undefined;
 
     while (!this.isAtEnd()) {
       if (this.check(TokenType.CTL_OPT)) {
@@ -55,10 +56,7 @@ export class Parser {
       } else if (this.check(TokenType.DCL_PR)) {
         body.push(this.parsePrototype());
       } else if (this.check(TokenType.DCL_PI)) {
-        const token = this.peek();
-        if (this.parseProcedureInterface().parameters.length > 0) {
-          throw unsupported('Les paramètres du programme principal (DCL-PI)', token);
-        }
+        parameters = this.parseProcedureInterface().parameters;
       } else if (this.check(TokenType.DCL_F)) {
         throw unsupported('DCL-F (fichiers natifs)', this.peek());
       } else {
@@ -66,7 +64,7 @@ export class Parser {
       }
     }
 
-    return { type: 'Program', body };
+    return { type: 'Program', body, parameters };
   }
 
   private parseControlOptions(): ASTNode {
