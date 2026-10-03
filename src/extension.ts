@@ -4,6 +4,7 @@ import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter } from './interpreter';
 import { loadContextFromFolder } from './context';
+import { folderProgramResolver } from './sources';
 
 export function activate(vscodeContext: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel('RPGLE Output');
@@ -34,7 +35,11 @@ export function activate(vscodeContext: vscode.ExtensionContext) {
         : `Contexte : ni tables.json ni programs.json dans ${contextPath}`);
 
       const ast = new Parser(new Lexer(editor.document.getText()).tokenize()).parse();
-      const lines = new Interpreter(execContext).execute(ast);
+      // Les programmes appelés par EXTPGM sont cherchés à côté du programme exécuté
+      const resolveProgram = editor.document.uri.scheme === 'file'
+        ? folderProgramResolver(path.dirname(editor.document.uri.fsPath))
+        : undefined;
+      const lines = new Interpreter(execContext, { resolveProgram }).execute(ast);
 
       lines.forEach(line => output.appendLine(line));
       vscode.window.showInformationMessage('Exécution terminée avec succès');

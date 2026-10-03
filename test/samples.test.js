@@ -62,11 +62,21 @@ test('tst_sql_I_U_D.rpgle', () => {
   ]);
 });
 
-test('tstpgm.rpgle avec le bouchon de VOTRE_PGM du dossier context/', () => {
-  const { loadContextFromFolder } = require('../out/context');
-  assert.deepEqual(run(read('fichiers_test/tstpgm.rpgle'), loadContextFromFolder(path.join(ROOT, 'context'))), [
-    '--- DEBUT DES TESTS ---',
-    'Succes - Valeur : 1500.50',
-    '--- FIN DES TESTS ---',
-  ]);
+// tstpgm.rpgle appelle MONPGM, exécuté depuis fichiers_test/monpgm.rpgle
+function runTstpgm(param) {
+  const { folderProgramResolver } = require('../out/sources');
+  const code = read('fichiers_test/tstpgm.rpgle').replace("Prm_Test = 'VALIDE';", `Prm_Test = '${param}';`);
+  return run(code, undefined, { resolveProgram: folderProgramResolver(path.join(ROOT, 'fichiers_test')) });
+}
+
+test('tstpgm.rpgle appelle monpgm.rpgle : cas VALIDE', () => {
+  assert.deepEqual(runTstpgm('VALIDE'), ['--- DEBUT DES TESTS ---', 'Succes - Valeur : 150.75', '--- FIN DES TESTS ---']);
+});
+
+test('tstpgm.rpgle appelle monpgm.rpgle : la division par zéro de MONPGM est interceptée', () => {
+  assert.deepEqual(runTstpgm('ERREUR'), ['--- DEBUT DES TESTS ---', 'Erreur interceptee.', '--- FIN DES TESTS ---']);
+});
+
+test('tstpgm.rpgle appelle monpgm.rpgle : valeur non gérée', () => {
+  assert.deepEqual(runTstpgm('AUTRE'), ['--- DEBUT DES TESTS ---', 'Succes - Valeur : -1.00', '--- FIN DES TESTS ---']);
 });

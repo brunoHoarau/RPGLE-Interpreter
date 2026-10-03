@@ -50,9 +50,25 @@ Deux formats sont acceptés pour chaque table :
 
 Les données sont rechargées depuis le fichier à chaque exécution : les `INSERT`, `UPDATE` et `DELETE` ne modifient pas `tables.json`.
 
-## Programmes appelés (bouchons)
+## Programmes appelés
 
-Un programme ou une procédure externe déclaré par `dcl-pr … extpgm('NOM')` ou `extproc('NOM')` n'existe pas en local. Son comportement se décrit dans `context/programs.json`, en nommant les paramètres comme dans le `dcl-pr` :
+Un appel de programme déclaré par `dcl-pr … extpgm('NOM')` est résolu dans cet ordre :
+
+1. **Bouchon** de `NOM` dans `context/programs.json` (voir ci-dessous) : il est prioritaire, pour isoler le programme testé ;
+2. **Source local** `NOM.rpgle` ou `NOM.sqlrpgle`, cherché dans le dossier du programme exécuté (sans tenir compte de la casse) : il est exécuté réellement ;
+3. sinon, échec comme un programme introuvable sur IBM i (statut **00211**).
+
+Quand le source est exécuté :
+
+- ses paramètres d'entrée (`dcl-pi` principal) reçoivent les valeurs de l'appelant, **par référence** : ce que le programme appelé y écrit revient chez l'appelant, sauf pour un paramètre `CONST` ou `VALUE` du prototype ;
+- il a ses propres variables globales et ses `DSPLY` apparaissent dans la sortie à leur place ;
+- une erreur RPG qu'il n'intercepte pas remonte chez l'appelant avec le statut **00202**, interceptable par `MONITOR`.
+
+Un programme qui attend des paramètres ne peut pas être lancé directement : exécutez le programme qui l'appelle.
+
+### Bouchons
+
+Un programme ou une procédure externe (`extproc('NOM')`) peut être simulé dans `context/programs.json`, en nommant les paramètres comme dans le `dcl-pr` :
 
 ```json
 {
@@ -70,7 +86,9 @@ Un programme ou une procédure externe déclaré par `dcl-pr … extpgm('NOM')` 
 - `return` donne la valeur de retour d'une procédure externe.
 - `error` simule un échec du programme appelé : erreur de statut **00202**, interceptable par `MONITOR`.
 - Sans bouchon, l'appel échoue comme un programme introuvable sur IBM i : statut **00211**.
-- Chaque appel est tracé dans la sortie : `[APPEL] VOTRE_PGM(Entree_Param1='VALIDE', Sortie_Resultat=0) (bouchon)`.
+- Chaque appel est tracé dans la sortie, avec les valeurs envoyées : `[APPEL] VOTRE_PGM(Entree_Param1='VALIDE', Sortie_Resultat=0) (bouchon)`.
+
+Toute erreur interceptée par `MONITOR` est aussi tracée, comme dans l'historique du travail : `[JOBLOG] Division par zéro (RNX0102) - interceptée par MONITOR`.
 
 Un prototype sans `extpgm` ni `extproc` appelle la procédure `dcl-proc` du même nom si elle existe dans le source, sinon le bouchon portant son nom.
 
@@ -95,6 +113,8 @@ Pour se protéger d'une boucle ou d'une récursion infinie, l'exécution s'arrê
 - Pas de fichiers natifs (`dcl-f`, `read`, `chain`, `setll`…), de tableaux (`dim`), de dates ni de `float`
 - Pas de sous-routines (`BEGSR`/`EXSR`), de `LIKE`/`LIKEDS`/`EXTNAME`, de `/COPY`, ni de paramètres pour le programme principal
 - `ctl-opt` est accepté mais ses options sont ignorées
+- Un programme appelé repart toujours de zéro, comme s'il s'était terminé avec `*INLR = *ON` : ses variables ne sont pas conservées d'un appel à l'autre
+- Seul le dossier du programme exécuté est cherché pour les sources appelés
 - SQL : pas de curseurs, de jointures, de `ORDER BY` ni de `LIKE`
 - `%char` ne connaît les décimales que d'une variable passée directement : `%char(total + 1)` affiche `16`, pas `16.00`
 - Calculs en virgule flottante JavaScript (environ 15 chiffres significatifs)
