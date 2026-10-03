@@ -112,7 +112,7 @@ export class Lexer {
   private skipWhitespaceAndComments() {
     while (this.pos < this.code.length) {
       const char = this.code[this.pos];
-      
+
       if (char === ' ' || char === '\t' || char === '\r') {
         this.advance();
       } else if (char === '\n') {
@@ -144,7 +144,7 @@ export class Lexer {
   private readString(quote: string) {
     this.advance(); // Skip opening quote
     let value = '';
-    
+
     while (this.pos < this.code.length) {
       if (this.code[this.pos] === quote) {
         if (this.peek(1) !== quote) break;
@@ -155,49 +155,49 @@ export class Lexer {
         this.advance();
       }
     }
-    
+
     this.advance(); // Skip closing quote
     this.addToken(TokenType.STRING, value);
   }
 
   private readNumber() {
     let value = '';
-    
+
     while (this.pos < this.code.length && (this.isDigit(this.code[this.pos]) || this.code[this.pos] === '.')) {
       value += this.code[this.pos];
       this.advance();
     }
-    
+
     this.addToken(TokenType.NUMBER, value);
   }
 
   private readBuiltin() {
     this.advance(); // Skip %
     let name = '%';
-    
+
     while (this.pos < this.code.length && this.isAlphaNumeric(this.code[this.pos])) {
       name += this.code[this.pos];
       this.advance();
     }
-    
+
     this.addToken(TokenType.BUILTIN, name);
   }
 
   private readSpecialValue() {
     let value = '*';
     this.advance(); // Skip *
-    
+
     while (this.pos < this.code.length && this.isAlphaNumeric(this.code[this.pos])) {
       value += this.code[this.pos];
       this.advance();
     }
-    
+
     this.addToken(TokenType.SPECIAL_VALUE, value.toLowerCase());
   }
 
     private readKeywordOrIdentifier() {
     let value = '';
-    
+
     while (this.pos < this.code.length && this.isAlphaNumeric(this.code[this.pos])) {
       value += this.code[this.pos];
       this.advance();
@@ -210,10 +210,10 @@ export class Lexer {
       value += suffix[0];
       this.advance(suffix[0].length);
     }
-    
+
     const lowerValue = value.toLowerCase();
     const keyword = this.getKeywordType(lowerValue);
-    
+
     if (keyword) {
       this.addToken(keyword, lowerValue);
     } else {
@@ -224,6 +224,8 @@ export class Lexer {
   private static readonly HYPHENATED_KEYWORDS = new Set([
     'ctl-opt', 'dcl-s', 'dcl-c', 'dcl-ds', 'dcl-f', 'dcl-proc', 'dcl-pi', 'dcl-pr',
     'dcl-subf', 'dcl-parm', 'end-ds', 'end-pi', 'end-pr', 'end-proc', 'on-error', 'on-exit',
+    // Codes opération composés (non supportés, mais reconnus comme un seul mot)
+    'eval-corr', 'xml-into', 'xml-sax', 'data-into', 'data-gen', 'snd-msg', 'on-excp',
   ]);
 
   private getKeywordType(keyword: string): TokenType | null {
@@ -285,7 +287,7 @@ export class Lexer {
       'exec': TokenType.EXEC_SQL,
       'dsply': TokenType.DSPLY,
     };
-    
+
     return keywords[keyword] || null;
   }
 
