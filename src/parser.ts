@@ -53,7 +53,7 @@ export class Parser {
       } else if (this.check(TokenType.DCL_PROC)) {
         body.push(this.parseProcedure());
       } else if (this.check(TokenType.DCL_PR)) {
-        this.skipPrototype();
+        body.push(this.parsePrototype());
       } else if (this.check(TokenType.DCL_PI)) {
         const token = this.peek();
         if (this.parseProcedureInterface().parameters.length > 0) {
@@ -209,7 +209,7 @@ export class Parser {
       } else if (this.check(TokenType.DCL_DS)) {
         body.push(this.parseDataStructure());
       } else if (this.check(TokenType.DCL_PR)) {
-        this.skipPrototype();
+        body.push(this.parsePrototype());
       } else {
         body.push(this.parseStatement());
       }
@@ -289,14 +289,52 @@ export class Parser {
     return { type: 'Parameter', name, dataType, isConst, byValue, options };
   }
 
-  // Les prototypes ne servent qu'au compilateur : l'interface réelle est lue dans dcl-pi
-  private skipPrototype(): void {
+  // dcl-pr nom [type-retour] [EXTPGM['nom'] | EXTPROC['nom']] ; paramètres... end-pr;
+  // Sans EXTPGM ni EXTPROC, le prototype désigne une procédure du même nom.
+  private parsePrototype(): ASTNode {
     this.expect(TokenType.DCL_PR);
-    while (!this.check(TokenType.END_PR) && !this.isAtEnd()) {
-      this.advance();
+    const name = this.expect(TokenType.IDENTIFIER).value;
+
+    const next = this.peek();
+    const isLikeKeyword = next.type === TokenType.IDENTIFIER && /^like(ds|rec)?$/i.test(next.value);
+    const returnType = this.isTypeToken() || isLikeKeyword ? this.parseDataType() : undefined;
+
+    let kind: 'program' | 'procedure' = 'procedure';
+    let externalName = name;
+    while (!this.check(TokenType.SEMICOLON) && !this.check(TokenType.END_PR) && !this.isAtEnd()) {
+      const token = this.advance();
+      const keyword = token.value.toLowerCase();
+      if (keyword === 'extpgm' || keyword === 'extproc') {
+        kind = keyword === 'extpgm' ? 'program' : 'procedure';
+        if (this.check(TokenType.LPAREN)) {
+          this.advance();
+          const target = this.advance();
+          if (target.type !== TokenType.STRING) {
+            throw unsupported(`${keyword.toUpperCase()} avec un nom non littéral`, target);
+          }
+          externalName = target.value;
+          this.expect(TokenType.RPAREN);
+        }
+      } else if (this.check(TokenType.LPAREN)) {
+        this.skipParenthesized(); // OPDESC, RTNPARM... : sans effet ici
+      }
     }
-    this.expect(TokenType.END_PR);
-    this.skipToSemicolon();
+
+    const parameters: ParameterNode[] = [];
+    if (this.check(TokenType.END_PR)) {
+      // Forme courte : dcl-pr nom extpgm end-pr;
+      this.advance();
+      this.expect(TokenType.SEMICOLON);
+    } else {
+      this.expect(TokenType.SEMICOLON);
+      while (!this.check(TokenType.END_PR) && !this.isAtEnd()) {
+        parameters.push(this.parseParameter());
+      }
+      this.expect(TokenType.END_PR);
+      this.skipToSemicolon();
+    }
+
+    return { type: 'Prototype', name, kind, externalName, returnType, parameters };
   }
 
   private skipToSemicolon(): void {
@@ -837,14 +875,14 @@ export class Parser {
     this.expect(TokenType.DSPLY);
     let hasErrorExtender = false;
 
-    // 1. Extendeur (E) optionnel
-    if (this.check(TokenType.LPAREN)) {
+    // 1. Extendeur (E) optionnel ; sinon une parenthèse ouvre le message : dsply ('...');
+    const extender = this.peekNext();
+    if (this.check(TokenType.LPAREN) && extender?.type === TokenType.IDENTIFIER &&
+        extender.value.toLowerCase() === 'e' && this.tokens[this.pos + 2]?.type === TokenType.RPAREN) {
         this.advance();
-        if (this.check(TokenType.IDENTIFIER) && this.peek().value.toLowerCase() === 'e') {
-            this.advance();
-            hasErrorExtender = true;
-        }
-        this.expect(TokenType.RPAREN);
+        this.advance();
+        this.advance();
+        hasErrorExtender = true;
     }
 
     // 2. Collecter tous les paramètres jusqu'au ';'

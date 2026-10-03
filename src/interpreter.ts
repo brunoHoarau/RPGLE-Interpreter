@@ -1,8 +1,8 @@
-import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode } from './types';
+import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, ParameterNode, DataTypeNode } from './types';
 import { Runtime } from './runtime';
-import { ExecutionContext } from './context';
+import { ExecutionContext, MockCase, emptyContext } from './context';
 import { coerce, defaultValue, formatChar } from './datatypes';
-import { RpgError, STATUS_DIVIDE_BY_ZERO, matchesStatus } from './errors';
+import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DIVIDE_BY_ZERO, matchesStatus } from './errors';
 
 // Signaux de contrôle : levés comme exceptions pour traverser les blocs imbriqués
 // jusqu'à la boucle (LEAVE/ITER) ou la procédure / le programme (RETURN) concerné.
@@ -40,9 +40,12 @@ export class Interpreter {
   private maxCallDepth: number;
   private iterations = 0;
   private procedures = new Map<string, ProcedureNode>();
+  private prototypes = new Map<string, PrototypeNode>();
+  private context: ExecutionContext;
 
   constructor(context?: ExecutionContext, options: InterpreterOptions = {}) {
-    this.runtime = new Runtime(context);
+    this.context = context ?? emptyContext();
+    this.runtime = new Runtime(this.context);
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     this.maxCallDepth = options.maxCallDepth ?? DEFAULT_MAX_CALL_DEPTH;
   }
@@ -52,6 +55,7 @@ export class Interpreter {
     this.runtime.clearOutput();
     this.iterations = 0;
     this.procedures.clear();
+    this.prototypes.clear();
 
     // Déclarer SQLCOD et SQLSTT par défaut
     this.runtime.declareVariable('SQLCOD', 0, { type: 'DataType', typeName: 'int', length: 10 });
@@ -74,6 +78,8 @@ export class Interpreter {
         this.executeDataStructure(node as any);
       } else if (node.type === 'Procedure') {
         this.procedures.set(node.name.toLowerCase(), node);
+      } else if (node.type === 'Prototype') {
+        this.prototypes.set(node.name.toLowerCase(), node);
       }
     }
 
@@ -143,6 +149,10 @@ export class Interpreter {
         return this.executeDsply(node as any);
       case 'SQL':
         return this.executeSQL(node as any);
+      case 'Prototype':
+        // Prototype local à une procédure
+        this.prototypes.set(node.name.toLowerCase(), node);
+        return;
       case 'Leave':
         throw new LeaveSignal();
       case 'Iter':
@@ -175,15 +185,14 @@ export class Interpreter {
   private callProcedure(name: string, argExprs: ExpressionNode[]): any {
     const proc = this.procedures.get(name.toLowerCase());
     if (!proc) {
+      // Pas de procédure interne : programme ou procédure externe déclaré par dcl-pr
+      const prototype = this.prototypes.get(name.toLowerCase());
+      if (prototype) return this.callExternal(prototype, argExprs);
       throw new Error(`Procédure non trouvée: ${name}`);
     }
 
     const params = proc.parameters;
-    const required = params.filter(p => !p.options.includes('*nopass')).length;
-    if (argExprs.length < required || argExprs.length > params.length) {
-      const expected = required === params.length ? `${required}` : `${required} à ${params.length}`;
-      throw new Error(`Nombre de paramètres incorrect pour ${proc.name} : ${argExprs.length} reçu(s), ${expected} attendu(s)`);
-    }
+    this.checkArgumentCount(proc.name, params, argExprs.length);
     if (this.runtime.callDepth >= this.maxCallDepth) {
       throw new Error(`Profondeur de récursion maximale (${this.maxCallDepth}) atteinte dans ${proc.name}`);
     }
@@ -216,6 +225,77 @@ export class Interpreter {
       if (isRef) this.assignTo(argExprs[i].value, outValues[i]);
     });
     return returnValue;
+  }
+
+  private declaredType(expr: ExpressionNode | undefined): DataTypeNode | undefined {
+    if (expr?.valueType === 'identifier') return this.runtime.getType(expr.value);
+    if (expr?.valueType === 'call') {
+      const name = expr.value.name.toLowerCase();
+      return (this.procedures.get(name) ?? this.prototypes.get(name))?.returnType;
+    }
+    return undefined;
+  }
+
+  private checkArgumentCount(name: string, params: ParameterNode[], count: number): void {
+    const required = params.filter(p => !p.options.includes('*nopass')).length;
+    if (count < required || count > params.length) {
+      const expected = required === params.length ? `${required}` : `${required} à ${params.length}`;
+      throw new Error(`Nombre de paramètres incorrect pour ${name} : ${count} reçu(s), ${expected} attendu(s)`);
+    }
+  }
+
+  // Appel d'un programme (EXTPGM) ou d'une procédure externe, simulé par le bouchon
+  // de context/programs.json. Sans bouchon : erreur 00211, comme un programme introuvable.
+  private callExternal(proto: PrototypeNode, argExprs: ExpressionNode[]): any {
+    const target = proto.externalName.toUpperCase();
+    const what = proto.kind === 'program' ? 'Programme' : 'Procédure externe';
+    this.checkArgumentCount(proto.name, proto.parameters, argExprs.length);
+
+    const args = argExprs.map((arg, i) => coerce(this.evaluate(arg), proto.parameters[i].dataType, proto.parameters[i].name));
+    const describe = (v: any) => (typeof v === 'string' ? `'${v.trimEnd()}'` : String(v));
+    const callText = proto.parameters
+      .slice(0, args.length)
+      .map((p, i) => `${p.name}=${describe(args[i])}`)
+      .join(', ');
+
+    const mockName = Object.keys(this.context.programs).find(n => n.toUpperCase() === target);
+    const mock = mockName !== undefined ? this.context.programs[mockName] : undefined;
+    if (!mock) {
+      throw new RpgError(STATUS_CALL_NOT_FOUND,
+        `${what} ${target} introuvable : ajoutez son bouchon dans context/programs.json (RNX0211)`);
+    }
+    this.runtime.addOutput(`[APPEL] ${target}(${callText}) (bouchon)`);
+
+    const paramIndex = (paramName: string) => {
+      const index = proto.parameters.findIndex(p => p.name.toLowerCase() === paramName.toLowerCase());
+      if (index < 0) throw new Error(`Bouchon ${target} : paramètre '${paramName}' inconnu dans le prototype ${proto.name}`);
+      return index;
+    };
+    const sameValue = (actual: any, expected: any) =>
+      typeof actual === 'string' ? actual.trimEnd() === String(expected).trimEnd() : actual === expected;
+
+    const matching = mock.calls.find((c: MockCase) =>
+      Object.entries(c.when ?? {}).every(([paramName, expected]) => sameValue(args[paramIndex(paramName)], expected)));
+    if (!matching) {
+      throw new Error(`Bouchon ${target} : aucun cas ne correspond à l'appel (${callText})`);
+    }
+
+    if (matching.error !== undefined) {
+      throw new RpgError(STATUS_CALL_FAILED, `${what} ${target} en échec : ${matching.error} (RNX0202)`);
+    }
+    for (const [paramName, value] of Object.entries(matching.set ?? {})) {
+      const index = paramIndex(paramName);
+      const param = proto.parameters[index];
+      if (param.isConst || param.byValue) {
+        throw new Error(`Bouchon ${target} : le paramètre ${param.name} est ${param.isConst ? 'CONST' : 'VALUE'}, il ne peut pas être renvoyé`);
+      }
+      const arg = argExprs[index];
+      if (!arg || arg.valueType !== 'identifier') {
+        throw new Error(`Bouchon ${target} : le paramètre ${param.name} doit recevoir une variable pour être renvoyé`);
+      }
+      this.assignTo(arg.value, coerce(value, param.dataType, param.name));
+    }
+    return coerce(matching.return, proto.returnType, proto.name);
   }
 
   private executeAssignment(node: any): void {
@@ -398,9 +478,8 @@ export class Interpreter {
     if (expr.valueType === 'builtin') {
       const args = expr.value.args.map((arg: ExpressionNode) => this.evaluate(arg));
       if (expr.value.name.toLowerCase() === '%char') {
-        // Le format dépend du type déclaré quand l'argument est une variable
-        const arg = expr.value.args[0];
-        return formatChar(args[0], arg?.valueType === 'identifier' ? this.runtime.getType(arg.value) : undefined);
+        // Le format dépend du type déclaré : variable, ou valeur de retour d'une procédure
+        return formatChar(args[0], this.declaredType(expr.value.args[0]));
       }
       return this.runtime.executeBuiltin(expr.value.name, args);
     }

@@ -5,7 +5,7 @@
 export enum TokenType {
   // Mots-clés de contrôle
   CTL_OPT = 'CTL_OPT',
-  
+
   // Déclarations
   DCL_S = 'DCL_S',
   DCL_C = 'DCL_C',
@@ -14,7 +14,7 @@ export enum TokenType {
   DCL_PROC = 'DCL_PROC',
   DCL_PI = 'DCL_PI',
   DCL_PR = 'DCL_PR',
-  
+
   // Fin de blocs
   END_DS = 'END_DS',
   END_PI = 'END_PI',
@@ -25,7 +25,7 @@ export enum TokenType {
   ENDDO = 'ENDDO',
   ENDFOR = 'ENDFOR',
   ENDMON = 'ENDMON',
-  
+
   // Structures de contrôle
   IF = 'IF',
   ELSEIF = 'ELSEIF',
@@ -41,12 +41,12 @@ export enum TokenType {
   BY = 'BY',
   MONITOR = 'MONITOR',
   ON_ERROR = 'ON_ERROR',
-  
+
   // Flux d'exécution
   RETURN = 'RETURN',
   LEAVE = 'LEAVE',
   ITER = 'ITER',
-  
+
   // Types de données
   CHAR = 'CHAR',
   VARCHAR = 'VARCHAR',
@@ -59,7 +59,7 @@ export enum TokenType {
   TIMESTAMP = 'TIMESTAMP',
   IND = 'IND',
   POINTER = 'POINTER',
-  
+
   // Opérateurs
   EQUALS = 'EQUALS',
   NOT_EQUALS = 'NOT_EQUALS',
@@ -75,7 +75,7 @@ export enum TokenType {
   AND = 'AND',
   OR = 'OR',
   NOT = 'NOT',
-  
+
   // Symboles
   LPAREN = 'LPAREN',
   RPAREN = 'RPAREN',
@@ -83,14 +83,14 @@ export enum TokenType {
   SEMICOLON = 'SEMICOLON',
   COMMA = 'COMMA',
   DOT = 'DOT',
-  
+
   // Littéraux et identifiants
   STRING = 'STRING',
   NUMBER = 'NUMBER',
   IDENTIFIER = 'IDENTIFIER',
   BUILTIN = 'BUILTIN', // ex: %len, %trim
   SPECIAL_VALUE = 'SPECIAL_VALUE', // ex: *on, *off, *zero
-  
+
   // Opérations spécifiques
   EXEC_SQL = 'EXEC_SQL',
   SETLL = 'SETLL',
@@ -100,7 +100,7 @@ export enum TokenType {
   DELETE = 'DELETE',
   WRITE = 'WRITE',
   DSPLY = 'DSPLY',
-  
+
   EOF = 'EOF'
 }
 
@@ -123,6 +123,7 @@ export type ASTNode =
   | ConstantDeclarationNode
   | DataStructureNode
   | ProcedureNode
+  | PrototypeNode
   | ParameterNode
   | AssignmentNode
   | IfStatementNode
@@ -176,6 +177,16 @@ export interface ProcedureNode {
   returnType?: DataTypeNode;
   parameters: ParameterNode[];
   body: ASTNode[];               // Déclarations locales et instructions, dans l'ordre
+}
+
+// dcl-pr : interface d'un programme (EXTPGM) ou d'une procédure (EXTPROC, ou interne)
+export interface PrototypeNode {
+  type: 'Prototype';
+  name: string;
+  kind: 'program' | 'procedure';
+  externalName: string;          // Nom du programme / de la procédure appelé
+  returnType?: DataTypeNode;
+  parameters: ParameterNode[];
 }
 
 export interface ParameterNode {

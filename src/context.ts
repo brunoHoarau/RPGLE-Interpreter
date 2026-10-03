@@ -15,10 +15,17 @@ export interface FileDefinition {
   keyFields?: string[];
 }
 
+// Bouchon d'un programme ou d'une procédure externe (context/programs.json).
+// Le premier cas dont toutes les conditions "when" correspondent est appliqué.
+export interface MockCase {
+  when?: { [parameter: string]: any };  // Valeurs attendues des paramètres
+  set?: { [parameter: string]: any };   // Paramètres renvoyés à l'appelant
+  return?: any;                         // Valeur de retour (EXTPROC avec type de retour)
+  error?: string;                       // Simule un échec du programme appelé
+}
+
 export interface ProgramMock {
-  parameters?: { name: string; type: string }[];
-  returnValue?: any;
-  sideEffects?: { variable: string; value: any }[];
+  calls: MockCase[];
 }
 
 export interface ExecutionContext {
@@ -27,24 +34,43 @@ export interface ExecutionContext {
   programs: { [programName: string]: ProgramMock };
 }
 
-// Charge le contexte d'exécution (données simulées) depuis un dossier.
-// Un dossier ou un tables.json absent donne un contexte vide ; un fichier invalide est une erreur.
+// Charge le contexte d'exécution (données simulées) depuis un dossier : tables.json, programs.json.
+// Un dossier ou un fichier absent donne un contexte vide ; un fichier invalide est une erreur.
 export function loadContextFromFolder(folderPath: string): ExecutionContext {
+  const context = emptyContext();
+
+  const tables = readJson(folderPath, 'tables.json');
+  if (tables !== undefined) context.tables = normalizeTables(tables.content, tables.path);
+
+  const programs = readJson(folderPath, 'programs.json');
+  if (programs !== undefined) context.programs = normalizePrograms(programs.content, programs.path);
+
+  return context;
+}
+
+function readJson(folderPath: string, fileName: string): { path: string; content: any } | undefined {
   const fs = require('fs');
   const path = require('path');
-
-  const context = emptyContext();
-  const tablesPath = path.join(folderPath, 'tables.json');
-  if (!fs.existsSync(tablesPath)) return context;
-
-  let parsed: any;
+  const filePath = path.join(folderPath, fileName);
+  if (!fs.existsSync(filePath)) return undefined;
   try {
-    parsed = JSON.parse(fs.readFileSync(tablesPath, 'utf8'));
+    return { path: filePath, content: JSON.parse(fs.readFileSync(filePath, 'utf8')) };
   } catch (err: any) {
-    throw new Error(`Fichier ${tablesPath} invalide : ${err.message}`);
+    throw new Error(`Fichier ${filePath} invalide : ${err.message}`);
   }
-  context.tables = normalizeTables(parsed, tablesPath);
-  return context;
+}
+
+// Les noms de programme sont indexés en majuscules, comme sur IBM i
+function normalizePrograms(raw: any, sourcePath: string): { [name: string]: ProgramMock } {
+  const result: { [name: string]: ProgramMock } = {};
+  for (const name in raw) {
+    const mock = raw[name];
+    if (!mock || !Array.isArray(mock.calls)) {
+      throw new Error(`Bouchon '${name}' de ${sourcePath} : une liste "calls" est attendue`);
+    }
+    result[name.toUpperCase()] = { calls: mock.calls };
+  }
+  return result;
 }
 
 // Normalise le format des tables : tableau de lignes, ou { schema, data }

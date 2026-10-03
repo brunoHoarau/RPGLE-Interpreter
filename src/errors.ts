@@ -11,6 +11,8 @@ export class RpgError extends Error {
 export const STATUS_DIVIDE_BY_ZERO = 102;   // RNX0102
 export const STATUS_OVERFLOW = 103;         // RNX0103
 export const STATUS_INVALID_NUMERIC = 105;  // RNX0105
+export const STATUS_CALL_FAILED = 202;      // Le programme ou la procédure appelé a échoué
+export const STATUS_CALL_NOT_FOUND = 211;   // Programme ou procédure appelé introuvable
 
 // ON-ERROR sans code ou *ALL : tout ; *PROGRAM : 00100-00999 ; *FILE : 01000-09999
 export function matchesStatus(codes: string[], status: number): boolean {
