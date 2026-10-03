@@ -428,13 +428,15 @@ export class Parser {
     const catchBlocks: any[] = [];
     while (this.check(TokenType.ON_ERROR)) {
       this.advance();
-      if (this.check(TokenType.LPAREN)) {
-        this.advance();
-        // Skip error codes
-        while (!this.check(TokenType.RPAREN) && !this.isAtEnd()) {
-          this.advance();
+      // on-error [code {: code...}] ; code = statut (00102) ou *PROGRAM / *FILE / *ALL
+      const errorCodes: string[] = [];
+      while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
+        const token = this.advance();
+        if (token.type === TokenType.NUMBER || token.type === TokenType.SPECIAL_VALUE) {
+          errorCodes.push(token.value.toLowerCase());
+        } else if (token.type !== TokenType.COLON) {
+          throw new Error(`Code d'erreur invalide '${token.value}' après ON-ERROR à la ligne ${token.line}`);
         }
-        this.expect(TokenType.RPAREN);
       }
       this.expect(TokenType.SEMICOLON);
 
@@ -442,7 +444,7 @@ export class Parser {
       while (!this.check(TokenType.ON_ERROR) && !this.check(TokenType.ENDMON)) {
         catchBlock.push(this.parseStatement());
       }
-      catchBlocks.push({ block: catchBlock });
+      catchBlocks.push({ errorCodes, block: catchBlock });
     }
 
     this.expect(TokenType.ENDMON);
