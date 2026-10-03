@@ -8,9 +8,16 @@ interface Scope {
   variables: Map<string, any>;
   constants: Map<string, any>;
   types: Map<string, DataTypeNode>; // Clés : 'var' ou 'ds.champ', en minuscules
+  aliases: Map<string, string>;     // Champ de DS non qualifiée -> nom de la DS
 }
 
-const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), types: new Map() });
+const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), types: new Map(), aliases: new Map() });
+
+// Un nom visible est une variable, ou un champ de DS non qualifiée (dsName renseigné)
+interface Resolved {
+  scope: Scope;
+  dsName?: string;
+}
 
 export interface FieldDeclaration {
   name: string;
@@ -47,17 +54,39 @@ export class Runtime {
   }
 
   // Une procédure voit ses noms locaux puis les globaux, jamais ceux de son appelant
-  private findScope(kind: keyof Scope, name: string): Scope | undefined {
+  private visibleScopes(): Scope[] {
+    return this.frames.length > 0 ? [this.currentScope, this.globals] : [this.globals];
+  }
+
+  private findScope(kind: 'variables' | 'constants', name: string): Scope | undefined {
     const key = name.toLowerCase();
-    if (this.currentScope[kind].has(key)) return this.currentScope;
-    if (this.globals[kind].has(key)) return this.globals;
+    return this.visibleScopes().find(scope => scope[kind].has(key));
+  }
+
+  private resolve(name: string): Resolved | undefined {
+    const key = name.toLowerCase();
+    for (const scope of this.visibleScopes()) {
+      if (scope.variables.has(key)) return { scope };
+      const dsName = scope.aliases.get(key);
+      if (dsName !== undefined) return { scope, dsName };
+    }
     return undefined;
+  }
+
+  private assertUndeclared(name: string): void {
+    const key = name.toLowerCase();
+    if (this.currentScope.variables.has(key) || this.currentScope.aliases.has(key)) {
+      throw new Error(`'${name}' est déjà déclaré`);
+    }
   }
 
   // Déclare une variable dans la portée courante (dcl-s, paramètre) ;
   // son type s'applique ensuite à chaque affectation
   declareVariable(name: string, value: any, type?: DataTypeNode): void {
     const key = name.toLowerCase();
+    if (this.currentScope.aliases.has(key)) {
+      throw new Error(`'${name}' est déjà déclaré`);
+    }
     if (type) {
       this.currentScope.types.set(key, type);
     } else {
@@ -66,11 +95,16 @@ export class Runtime {
     this.currentScope.variables.set(key, coerce(value, type, name));
   }
 
-  // Les champs sont indexés en minuscules : ds.Champ et DS.CHAMP désignent le même champ
-  declareDataStructure(name: string, fields: FieldDeclaration[]): void {
+  // Les champs sont indexés en minuscules : ds.Champ et DS.CHAMP désignent le même champ.
+  // Les champs d'une DS non qualifiée sont aussi accessibles directement par leur nom.
+  declareDataStructure(name: string, fields: FieldDeclaration[], qualified: boolean): void {
     const ds: any = {};
     for (const field of fields) {
       const key = field.name.toLowerCase();
+      if (!qualified) {
+        this.assertUndeclared(field.name);
+        this.currentScope.aliases.set(key, name.toLowerCase());
+      }
       this.currentScope.types.set(`${name.toLowerCase()}.${key}`, field.type);
       ds[key] = coerce(field.value, field.type, `${name}.${field.name}`);
     }
@@ -79,8 +113,13 @@ export class Runtime {
 
   // Affecte la variable visible ; la crée dans la portée courante si elle n'existe pas
   setVariable(name: string, value: any): void {
+    const resolved = this.resolve(name);
+    if (resolved?.dsName) {
+      this.setField(resolved.dsName, name, value);
+      return;
+    }
     const key = name.toLowerCase();
-    const scope = this.findScope('variables', name) ?? this.currentScope;
+    const scope = resolved?.scope ?? this.currentScope;
     scope.variables.set(key, coerce(value, scope.types.get(key), name));
   }
 
@@ -98,14 +137,26 @@ export class Runtime {
     this.getVariable(dsName)[field.toLowerCase()] = coerce(value, this.getType(`${dsName}.${field}`), `${dsName}.${field}`);
   }
 
-  // Type déclaré d'une variable ('nom') ou d'un champ de DS ('ds.champ')
+  // Type déclaré d'une variable ('nom') ou d'un champ de DS ('ds.champ' ou 'champ' si non qualifiée)
   getType(name: string): DataTypeNode | undefined {
-    const owner = name.split('.')[0];
-    return this.findScope('variables', owner)?.types.get(name.toLowerCase());
+    const [owner, field] = name.toLowerCase().split('.');
+    const resolved = this.resolve(owner);
+    if (!resolved) return undefined;
+    if (resolved.dsName) return resolved.scope.types.get(`${resolved.dsName}.${owner}`);
+    return resolved.scope.types.get(field === undefined ? owner : `${owner}.${field}`);
+  }
+
+  // Valeur d'un nom visible, undefined s'il n'existe pas ou n'a pas de valeur
+  private lookup(name: string): any {
+    const resolved = this.resolve(name);
+    if (!resolved) return undefined;
+    return resolved.dsName
+      ? this.getField(resolved.dsName, name)
+      : resolved.scope.variables.get(name.toLowerCase());
   }
 
   getVariable(name: string): any {
-    const value = this.findScope('variables', name)?.variables.get(name.toLowerCase());
+    const value = this.lookup(name);
     if (value === undefined) {
       throw new Error(`Variable non déclarée: ${name}`);
     }
@@ -113,7 +164,7 @@ export class Runtime {
   }
 
   hasVariable(name: string): boolean {
-    return this.findScope('variables', name) !== undefined;
+    return this.resolve(name) !== undefined;
   }
 
   setConstant(name: string, value: any): void {
@@ -145,7 +196,7 @@ export class Runtime {
   // Variables hôtes SQL résolues dans la portée courante
   private hostVariables(): HostVariables {
     return {
-      get: name => (this.hasVariable(name) ? this.findScope('variables', name)!.variables.get(name.toLowerCase()) : undefined),
+      get: name => this.lookup(name),
       set: (name, value) => this.setVariable(name, value),
     };
   }

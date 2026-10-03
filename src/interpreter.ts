@@ -63,6 +63,8 @@ export class Interpreter {
         this.executeVariableDeclaration(node as any);
       } else if (node.type === 'ConstantDeclaration') {
         this.executeConstantDeclaration(node as any);
+      } else if (node.type === 'DataStructure') {
+        this.executeDataStructure(node as any);
       } else if (node.type === 'Procedure') {
         this.procedures.set(node.name.toLowerCase(), node);
       }
@@ -73,6 +75,7 @@ export class Interpreter {
       for (const node of ast.body) {
         if (node.type !== 'VariableDeclaration' &&
             node.type !== 'ConstantDeclaration' &&
+            node.type !== 'DataStructure' &&
             node.type !== 'Procedure') {
           this.executeNode(node);
         }
@@ -156,7 +159,7 @@ export class Interpreter {
       name: field.name,
       type: field.dataType,
       value: field.initialValue ? this.evaluate(field.initialValue) : defaultValue(field.dataType),
-    })));
+    })), node.isQualified);
   }
 
   // Appelle une procédure utilisateur, sinon une procédure du runtime.
