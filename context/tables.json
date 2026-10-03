@@ -1,0 +1,6 @@
+{
+  "CUSTOMERS": [
+    { "ID": 1, "NAME": "Dupont", "CITY": "Paris", "BALANCE": 1500.50 },
+    { "ID": 2, "NAME": "Martin", "CITY": "Lyon", "BALANCE": 230.00 }
+  ]
+}
