@@ -121,10 +121,17 @@ export class SQLEngine {
       rows = rows.filter(this.compileWhere(tail.slice(5), table, hostVars));
     }
 
-    // 3. Gestion INTO (la première ligne)
+    if (intoAt >= 0 && items[0] !== '*' && targets.length !== items.length) {
+      throw new SqlError(`SELECT INTO : ${items.length} colonne(s) pour ${targets.length} variable(s) hôte(s)`, -313, '07001');
+    }
+    // 3. Gestion INTO : autant de variables que de colonnes (SQLCOD -313), une seule ligne (SQLCOD -811)
     if (intoAt >= 0 && rows.length > 0) {
       const firstRow = rows[0];
       const selectedColumns = items[0] === '*' ? Object.keys(firstRow).map(k => k.toUpperCase()) : items;
+      if (targets.length !== selectedColumns.length) {
+        throw new SqlError(`SELECT INTO : ${selectedColumns.length} colonne(s) pour ${targets.length} variable(s) hôte(s)`, -313, '07001');
+      }
+      if (rows.length > 1) throw new SqlError('SELECT INTO : plusieurs lignes trouvées', -811, '21000');
 
       // Mapper colonne -> variable hôte ; une valeur NULL sans indicateur laisse la variable inchangée (SQLCOD -305)
       let nullColumn: string | undefined;

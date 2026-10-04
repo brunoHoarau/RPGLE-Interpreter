@@ -10,9 +10,10 @@ interface Scope {
   constants: Map<string, any>;
   types: Map<string, DataTypeNode>; // Clés : 'var' ou 'ds.champ', en minuscules
   aliases: Map<string, string>;     // Champ de DS non qualifiée -> nom de la DS
+  readOnly: Set<string>;            // Paramètres CONST de l'appel (minuscules)
 }
 
-const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), types: new Map(), aliases: new Map() });
+const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), types: new Map(), aliases: new Map(), readOnly: new Set() });
 
 // Un nom visible est une variable, ou un champ de DS non qualifiée (dsName renseigné)
 interface Resolved {
@@ -164,6 +165,15 @@ export class Runtime {
 
   hasVariable(name: string): boolean {
     return this.resolve(name) !== undefined;
+  }
+
+  // Paramètre CONST de la procédure en cours : il ne peut pas être transmis à un paramètre modifiable
+  markReadOnly(name: string): void {
+    this.currentScope.readOnly.add(name.toLowerCase());
+  }
+
+  isReadOnly(name: string): boolean {
+    return this.frames.length > 0 && this.currentScope.readOnly.has(name.toLowerCase());
   }
 
   setConstant(name: string, value: any): void {

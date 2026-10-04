@@ -370,7 +370,8 @@ test('un paramètre date d\'un programme appelé reçoit un texte : pas encore s
     dcl-pr suivant extpgm('SUIVANT');
       p char(10);
     end-pr;
-    suivant('2026-10-04');
+    dcl-s texte char(10) inz('2026-10-04');
+    suivant(texte);
   `, undefined, { resolveProgram: name => (name === 'SUIVANT' ? { source: callee } : undefined) }), /Paramètre P.*DATE.*pas encore support/i);
 });
 

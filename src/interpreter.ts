@@ -1,7 +1,7 @@
 import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, ParameterNode, DataTypeNode } from './types';
 import { Runtime } from './runtime';
 import { ExecutionContext, MockCase, emptyContext } from './context';
-import { checkAssignable, coerce, defaultValue, describeType, describeValue, formatChar } from './datatypes';
+import { checkAssignable, coerce, defaultValue, describeType, describeValue, formatChar, isDataStructure, sameDeclaredType } from './datatypes';
 import { DateTimeValue, FigurativeValue, RpgDuration, addDuration, compareDateTime, fromClock, isDateTime, isDateTimeType, isDuration, kindOf, parseIso, resolveFigurative } from './datetime';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
@@ -283,7 +283,7 @@ export class Interpreter {
     } else {
       value = this.evaluate(expr);
     }
-    checkAssignable(value, type, target);
+    checkAssignable(value, type, target, expr.valueType === 'string');
     return value;
   }
 
@@ -325,7 +325,7 @@ export class Interpreter {
 
     const params = proc.parameters;
     this.checkArgumentCount(proc.name, params, argExprs.length);
-    this.checkConstantArguments(params, argExprs);
+    this.checkReferenceArguments(params, argExprs);
     if (this.runtime.callDepth >= this.maxCallDepth) {
       throw new Error(`Profondeur de récursion maximale (${this.maxCallDepth}) atteinte dans ${proc.name}`);
     }
@@ -339,7 +339,10 @@ export class Interpreter {
     this.runtime.pushFrame(proc.name);
     this.returnTypes.push(proc.returnType);
     try {
-      params.forEach((p, i) => this.runtime.declareVariable(p.name, args[i], p.dataType));
+      params.forEach((p, i) => {
+        this.runtime.declareVariable(p.name, args[i], p.dataType);
+        if (p.isConst) this.runtime.markReadOnly(p.name);
+      });
       try {
         this.executeBlock(proc.body);
       } catch (e) {
@@ -371,19 +374,33 @@ export class Interpreter {
     return undefined;
   }
 
-  // Une constante DCL-C ne peut pas être passée à un paramètre par référence : le compilateur IBM i la refuse
-  private checkConstantArguments(params: ParameterNode[], argExprs: ExpressionNode[]): void {
+  // Un paramètre par référence (ni CONST ni VALUE) exige une variable modifiable du même type exact : le compilateur
+  // IBM i refuse un littéral, une expression, une constante, un paramètre CONST ou une variable d'un autre type
+  private checkReferenceArguments(params: ParameterNode[], argExprs: ExpressionNode[]): void {
     argExprs.forEach((arg, i) => {
       const param = params[i];
-      if (!param || param.isConst || param.byValue || arg.valueType !== 'identifier') return;
-      const name = String(arg.value);
-      if (this.runtime.hasVariable(name)) return;
-      try {
-        this.runtime.getConstant(name);
-      } catch {
-        return; // Ni variable ni constante : l'évaluation signalera l'erreur
+      if (!param || param.isConst || param.byValue) return;
+      const what = `passée à un paramètre modifiable ${param.name}`;
+      if (arg.valueType !== 'identifier') {
+        // Un indicateur *INxx est une variable : l'évaluation le traite comme avant
+        if (arg.valueType === 'special' && /^\*in(lr|\d\d)$/.test(arg.value)) return;
+        throw incompatibleTypes(`Valeur ou expression ${what}`);
       }
-      throw incompatibleTypes(`Constante ${name} passée à un paramètre modifiable ${param.name}`);
+      const name = String(arg.value);
+      const owner = name.split('.')[0]; // d.x : la structure de données porte le nom visible
+      if (!this.runtime.hasVariable(owner)) {
+        try {
+          this.runtime.getConstant(name);
+        } catch {
+          return; // Ni variable ni constante : l'évaluation signalera l'erreur
+        }
+        throw incompatibleTypes(`Constante ${name} ${what}`);
+      }
+      if (this.runtime.isReadOnly(owner)) throw incompatibleTypes(`Paramètre CONST ${name} ${what}`);
+      const declared = this.runtime.getType(name);
+      if (declared && !sameDeclaredType(declared, param.dataType)) {
+        throw incompatibleTypes(`Variable ${name} ${describeType(declared)} ${what} ${describeType(param.dataType)}`);
+      }
     });
   }
 
@@ -401,7 +418,7 @@ export class Interpreter {
     const target = proto.externalName.toUpperCase();
     const what = proto.kind === 'program' ? 'Programme' : 'Procédure externe';
     this.checkArgumentCount(proto.name, proto.parameters, argExprs.length);
-    this.checkConstantArguments(proto.parameters, argExprs);
+    this.checkReferenceArguments(proto.parameters, argExprs);
 
     const args = argExprs.map((arg, i) => coerce(this.valueFor(arg, proto.parameters[i].dataType, proto.parameters[i].name), proto.parameters[i].dataType, proto.parameters[i].name));
     const describe = (v: any) => (typeof v === 'string' ? `'${v.trimEnd()}'` : String(v));
@@ -500,6 +517,7 @@ export class Interpreter {
   }
 
   private assignTo(variable: string, value: any): void {
+    if (!variable.includes('.') && isDataStructure(this.runtime.lookup(variable))) throw this.dataStructureAsValue(variable);
     // Gestion des structures de données qualifiées
     if (variable.includes('.')) {
         const [dsName, fieldName] = variable.split('.');
@@ -595,6 +613,10 @@ export class Interpreter {
     return this.callProcedure(node.name, node.args);
   }
 
+  private dataStructureAsValue(name: string): Error {
+    return new NotSupportedError(`Structure de données ${name.toUpperCase()} utilisée comme valeur`);
+  }
+
   private executeDsply(node: any): void {
     let msg = '';
     if (node.message) {
@@ -615,6 +637,11 @@ export class Interpreter {
     this.runtime.addOutput(`[DSPLY${extenderInfo}] ${msg}${queueInfo}`);
 
     if (node.responseVar) {
+      // La réponse simulée est un caractère : les autres types de variable ne sont pas pris en charge
+      const responseType = this.runtime.getType(node.responseVar);
+      if (responseType && responseType.typeName !== 'char' && responseType.typeName !== 'varchar') {
+        throw new NotSupportedError(`Réponse de DSPLY dans une variable de type ${describeType(responseType)}`);
+      }
       const simulatedResponse = 'Y'; 
       this.runtime.addOutput(`  -> (Simulé) Réponse '${simulatedResponse}' enregistrée dans la variable '${node.responseVar}'`);
       this.assignTo(node.responseVar, simulatedResponse);
@@ -702,7 +729,9 @@ export class Interpreter {
       }
 
       if (this.runtime.hasVariable(expr.value)) {
-          return this.runtime.getVariable(expr.value);
+          const value = this.runtime.getVariable(expr.value);
+          if (isDataStructure(value)) throw this.dataStructureAsValue(expr.value);
+          return value;
       }
       try {
           return this.runtime.getConstant(expr.value);
