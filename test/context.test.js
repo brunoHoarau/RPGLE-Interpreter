@@ -82,9 +82,24 @@ test('tables.json : clés, format et types', () => {
   assert.deepEqual(ctx.tables.CLIENT.columns, [{ name: 'NUMCLI', type: 'packed(7:0)' }, { name: 'NOM', type: 'CHAR(30)' }]);
 });
 
-test('tables.json : clé absente du schéma ou type inconnu refusés', () => {
+test('tables.json : clé absente du schéma refusée', () => {
   const badKey = folderWith({ 'tables.json': '{ "T": { "schema": { "a": "int(10)" }, "keys": ["b"], "data": [] } }' });
   assert.throws(() => loadContextFromFolder(badKey), /clé 'B'.*schéma/i);
-  const badType = folderWith({ 'tables.json': '{ "T": { "schema": { "a": "blob(10)" }, "data": [] } }' });
-  assert.throws(() => loadContextFromFolder(badType), /type 'blob\(10\)'.*inconnu/i);
+});
+
+test('tables.json : les types du schéma sont conservés tels quels', () => {
+  const dir = folderWith({ 'tables.json': '{ "T": { "schema": { "a": "VARCHAR", "b": "DOUBLE", "c": "CLOB" }, "data": [] } }' });
+  const ctx = loadContextFromFolder(dir);
+  assert.deepEqual(ctx.tables.T.columns, [{ name: 'A', type: 'VARCHAR' }, { name: 'B', type: 'DOUBLE' }, { name: 'C', type: 'CLOB' }]);
+});
+
+test('tables.json : keys et format mal formés refusés', () => {
+  const badKeys = folderWith({ 'tables.json': '{ "T": { "schema": { "a": "INT" }, "keys": "a", "data": [] } }' });
+  assert.throws(() => loadContextFromFolder(badKeys), /Table 'T'.*"keys" doit être une liste de noms de colonnes/);
+  const badKeys2 = folderWith({ 'tables.json': '{ "T": { "schema": { "a": "INT" }, "keys": [1], "data": [] } }' });
+  assert.throws(() => loadContextFromFolder(badKeys2), /"keys" doit être une liste/);
+  const badFormat = folderWith({ 'tables.json': '{ "T": { "schema": { "a": "INT" }, "format": "", "data": [] } }' });
+  assert.throws(() => loadContextFromFolder(badFormat), /Table 'T'.*"format" doit être un nom/);
+  const badFormat2 = folderWith({ 'tables.json': '{ "T": { "schema": { "a": "INT" }, "format": 5, "data": [] } }' });
+  assert.throws(() => loadContextFromFolder(badFormat2), /"format" doit être un nom/);
 });

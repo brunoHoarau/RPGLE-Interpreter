@@ -34,7 +34,6 @@ export class Runtime {
   public status = 0; // Code de la dernière erreur interceptée par MONITOR (%STATUS)
   private callStack: string[] = [];
 
-
   // 🆕 NOUVEAUX ÉLÉMENTS (avec 'private')
   private context: ExecutionContext;
   private sqlEngine: SQLEngine;

@@ -1,7 +1,5 @@
 // Définit la structure du contexte fourni par l'utilisateur
 
-import { parseFieldType } from './files';
-
 export interface ColumnDefinition {
   name: string;
   type: string; // 'INT', 'CHAR(50)', 'DECIMAL(9,2)', etc.
@@ -81,14 +79,14 @@ function normalizeTables(raw: any, sourcePath: string): { [name: string]: TableD
     if (table && table.schema && Array.isArray(table.data)) {
       const columns: ColumnDefinition[] = [];
       for (const colName in table.schema) {
-        const type = table.schema[colName];
-        if (typeof type !== 'string' || parseFieldType(type) === undefined) {
-          throw new Error(`Table '${tableName}' de ${sourcePath} : type '${type}' de la colonne ${colName} inconnu`);
-        }
-        columns.push({ name: colName.toUpperCase(), type });
+        // Le type reste un texte : il n'est validé qu'à la déclaration DCL-F
+        columns.push({ name: colName.toUpperCase(), type: table.schema[colName] });
       }
       const definition: TableDefinition = { columns, data: table.data };
-      if (Array.isArray(table.keys)) {
+      if (table.keys !== undefined) {
+        if (!Array.isArray(table.keys) || !table.keys.every((k: any) => typeof k === 'string')) {
+          throw new Error(`Table '${tableName}' de ${sourcePath} : "keys" doit être une liste de noms de colonnes`);
+        }
         definition.keys = table.keys.map((key: any) => String(key).toUpperCase());
         for (const key of definition.keys!) {
           if (!columns.some(c => c.name === key)) {
@@ -96,7 +94,12 @@ function normalizeTables(raw: any, sourcePath: string): { [name: string]: TableD
           }
         }
       }
-      if (typeof table.format === 'string') definition.format = table.format.toUpperCase();
+      if (table.format !== undefined) {
+        if (typeof table.format !== 'string' || table.format.trim() === '') {
+          throw new Error(`Table '${tableName}' de ${sourcePath} : "format" doit être un nom`);
+        }
+        definition.format = table.format.toUpperCase();
+      }
       result[tableName.toUpperCase()] = definition;
     } else if (Array.isArray(table)) {
       const columns: ColumnDefinition[] = table.length > 0
