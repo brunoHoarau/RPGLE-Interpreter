@@ -119,7 +119,7 @@ export class Parser {
 
   // Mots-clés d'une déclaration jusqu'au ';' : INZ, et POS pour un champ de DS (rangé dans fieldPos).
   // Renvoie la valeur de INZ(...), undefined pour INZ seul (valeur par défaut du type).
-  private parseDeclarationKeywords(context: string, dataType: DataTypeNode, fieldPos?: { pos?: number }): ExpressionNode | undefined {
+  private parseDeclarationKeywords(context: string, dataType: DataTypeNode, fieldPos?: { pos?: number }, fieldName = ''): ExpressionNode | undefined {
     let initialValue: ExpressionNode | undefined;
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
       const token = this.peek();
@@ -132,10 +132,11 @@ export class Parser {
         }
       } else if (fieldPos && token.type === TokenType.IDENTIFIER && token.value.toLowerCase() === 'pos') {
         this.advance();
+        if (fieldPos.pos !== undefined) throw new Error(`POS indiqué deux fois pour le champ ${fieldName.toUpperCase()} à la ligne ${token.line}`);
         this.expect(TokenType.LPAREN);
         const arg = this.advance();
-        if (arg.type !== TokenType.NUMBER || !/^[0-9]+$/.test(arg.value) || parseInt(arg.value) < 1 || !this.check(TokenType.RPAREN)) {
-          throw new Error(`POS(${arg.type === TokenType.RPAREN ? '' : arg.value}) invalide à la ligne ${arg.line} : un entier supérieur ou égal à 1 est attendu`);
+        if (arg.type !== TokenType.NUMBER || !/^[0-9]+$/.test(arg.value) || parseInt(arg.value) < 1 || arg.value.length > 8 || parseInt(arg.value) > 16773104 || !this.check(TokenType.RPAREN)) {
+          throw new Error(`POS(${arg.type === TokenType.RPAREN ? '' : arg.value}) invalide à la ligne ${arg.line} : un entier compris entre 1 et 16773104 est attendu`);
         }
         this.advance();
         fieldPos.pos = parseInt(arg.value);
@@ -241,7 +242,7 @@ export class Parser {
       this.rememberDateTime(`${name}.${fieldName}`, fieldType);
       if (!isQualified) this.rememberDateTime(fieldName, fieldType);
       const position: { pos?: number } = {};
-      const initialValue = this.parseDeclarationKeywords('champ de DS', fieldType, position);
+      const initialValue = this.parseDeclarationKeywords('champ de DS', fieldType, position, fieldName);
       this.expect(TokenType.SEMICOLON);
       layout.push({ name: fieldName, type: fieldType, pos: position.pos, token: fieldToken });
       fields.push({ name: fieldName, dataType: fieldType, initialValue });
@@ -259,6 +260,7 @@ export class Parser {
     if (!layout.some(f => f.pos !== undefined)) return;
     const placed: { name: string; start: number; end: number }[] = [];
     let nextByte = 1;
+    let maxEnd = 0;
     for (const field of layout) {
       const type = field.type;
       if (type.length === undefined && ['char', 'varchar', 'zoned', 'packed'].includes(type.typeName)) {
@@ -267,12 +269,16 @@ export class Parser {
       if (type.typeName === 'varchar' && type.decimals !== undefined && type.decimals !== 2 && type.decimals !== 4) {
         throw unsupported(`VARCHAR(${type.length}:${type.decimals})`, field.token);
       }
+      if (field.pos === undefined && nextByte !== maxEnd + 1) {
+        throw unsupported(`Champ de DS sans POS après un POS en arrière (${field.name.toUpperCase()})`, field.token);
+      }
       const start = field.pos ?? nextByte;
       const end = start + byteLength(type) - 1;
       const clash = placed.find(p => start <= p.end && p.start <= end);
       if (clash) throw unsupported(`Champs de DS qui se chevauchent (${clash.name.toUpperCase()} et ${field.name.toUpperCase()})`, field.token);
       placed.push({ name: field.name, start, end });
       nextByte = end + 1;
+      maxEnd = Math.max(maxEnd, end);
     }
   }
 
@@ -312,7 +318,7 @@ export class Parser {
   // dcl-pi nom|*n [type-retour] [mots-clés]; paramètres... end-pi;
   private parseProcedureInterface(): { returnType?: DataTypeNode; parameters: ParameterNode[] } {
     this.expect(TokenType.DCL_PI);
-    if (!this.check(TokenType.IDENTIFIER) && !this.check(TokenType.SPECIAL_VALUE)) {
+    if (!this.isName() && !this.check(TokenType.SPECIAL_VALUE)) {
       throw new Error(`Nom ou *N attendu après DCL-PI à la ligne ${this.peek().line}`);
     }
     this.advance();
@@ -471,6 +477,11 @@ export class Parser {
     if (end !== undefined && this.peekNext()?.type !== end) return undefined;
     this.advance();
     return { type: 'Expression', value: token.value, valueType: 'special' };
+  }
+
+  private isTypeTokenAt(index: number): boolean {
+    const type = this.tokens[index]?.type;
+    return type !== undefined && TYPE_TOKENS.includes(type);
   }
 
   private isTypeToken(): boolean {
@@ -657,7 +668,7 @@ export class Parser {
   private refuseDateHostVariable(colon: Token): void {
     let i = this.pos;
     let name = '';
-    while (this.tokens[i]?.type === TokenType.IDENTIFIER) {
+    while (this.tokens[i]?.type === TokenType.IDENTIFIER || this.isTypeTokenAt(i)) {
       name += this.tokens[i].value;
       if (this.tokens[i + 1]?.type !== TokenType.DOT) break;
       name += '.';
@@ -742,13 +753,13 @@ export class Parser {
     const lower = name.toLowerCase();
 
     // CALLP [(E)] proc(...) : CALLP est facultatif en free form
-    if (lower === 'callp' && (this.check(TokenType.IDENTIFIER) || this.check(TokenType.LPAREN))) {
+    if (lower === 'callp' && (this.isName() || this.check(TokenType.LPAREN))) {
       if (this.check(TokenType.LPAREN)) this.skipParenthesized();
       return this.parseAssignmentOrCall();
     }
 
     // EVAL var = expr ; les extenseurs (H, M, R) ne sont pas supportés
-    if (lower === 'eval' && (this.check(TokenType.IDENTIFIER) || this.check(TokenType.LPAREN))) {
+    if (lower === 'eval' && (this.isName() || this.check(TokenType.LPAREN))) {
       if (this.check(TokenType.LPAREN)) {
         const extender = this.peekNext();
         throw unsupported(`EVAL(${(extender?.value ?? '').toUpperCase()})`, nameToken);
@@ -822,7 +833,7 @@ export class Parser {
     if (this.isTypeToken()) {
       // Un mot de type en début d'instruction est un nom s'il est utilisé comme tel
       const next = this.peekNext()?.type;
-      if (next === TokenType.EQUALS || next === TokenType.DOT || next === TokenType.LPAREN ||
+      if (next === TokenType.EQUALS || next === TokenType.DOT || next === TokenType.SEMICOLON || next === TokenType.LPAREN ||
           (next !== undefined && Parser.COMPOUND_OPERATORS.has(next))) {
         return this.parseAssignmentOrCall();
       }

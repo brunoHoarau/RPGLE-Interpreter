@@ -1,7 +1,7 @@
 // Constructions courantes débloquées par le lot « gains rapides »
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parse, run } = require('./helpers');
+const { parse, run, runRaw } = require('./helpers');
 
 const NOT_SUPPORTED = /pas encore support/i;
 const INCOMPATIBLE = /types incompatibles/i;
@@ -209,4 +209,94 @@ test('POS : cas de chevauchement et de syntaxe complémentaires', () => {
   assert.throws(() => parse(`dcl-ds d; a ind pos(x); end-ds;`), /POS\(x\) invalide/);
   assert.throws(() => parse(`dcl-ds d; a ind pos(); end-ds;`), /POS\(\) invalide/);
   assert.throws(() => parse(`dcl-ds d; a ind pos; end-ds;`));
+});
+
+// --- Corrections de la relecture finale ---
+
+test('POS en arrière suivi d\'un champ sans POS : refusé', () => {
+  assert.throws(() => parse(`dcl-ds d; a char(2) pos(10); b char(2) pos(1); c char(2); end-ds;`),
+    err => NOT_SUPPORTED.test(err.message) && /sans POS/i.test(err.message));
+  assert.doesNotThrow(() => parse(`dcl-ds d; a char(2) pos(1); b char(2) pos(10); c char(2); end-ds;`));
+});
+
+test('EVAL et CALLP suivis d\'un nom de type', () => {
+  const out = run(`
+    dcl-s zoned zoned(4:0);
+    eval zoned = 5;
+    eval zoned += 1;
+    dsply %char(zoned);
+    callp time(2);
+    time(2);
+    dcl-proc time;
+      dcl-pi *n int(10);
+        n int(10) value;
+      end-pi;
+      dsply 'time ' + %char(n);
+      return n;
+    end-proc;
+  `);
+  assert.deepEqual(out, ['6', 'time 2', 'time 2']);
+});
+
+test('DCL-PI avec un nom de type', () => {
+  const out = run(`
+    dsply %char(time(3));
+    dcl-proc time;
+      dcl-pi time int(10);
+        n int(10) value;
+      end-pi;
+      return n + 1;
+    end-proc;
+  `);
+  assert.deepEqual(out, ['4']);
+});
+
+test('POS répété refusé', () => {
+  assert.throws(() => parse(`dcl-ds d; a char(1) pos(1) pos(5); end-ds;`), /POS indiqué deux fois pour le champ A/);
+});
+
+test('POS démesuré refusé', () => {
+  assert.throws(() => parse(`dcl-ds d; a char(1) pos(99999999999999999999); end-ds;`), /POS\(.*\)/);
+  assert.throws(() => parse(`dcl-ds d; a char(1) pos(16773105); end-ds;`), /POS\(.*\)/);
+});
+
+test('appel sans parenthèses d\'une procédure nommée comme un type', () => {
+  const out = run(`
+    time;
+    dcl-proc time;
+      dsply 'appel';
+    end-proc;
+  `);
+  assert.deepEqual(out, ['appel']);
+});
+
+test('trace et réécriture d\'un paramètre *N de bouchon', () => {
+  const src = `
+    dcl-pr calcul extpgm('CALCUL');
+      *n char(10) const;
+      *n packed(5:0);
+    end-pr;
+    dcl-s r packed(5:0);
+    calcul('A' : r);
+    dsply %char(r);
+  `;
+  const ctx = { tables: {}, files: {}, programs: { CALCUL: { calls: [{ set: { '*N(2)': 9 } }] } } };
+  const raw = runRaw(src, ctx);
+  assert.ok(raw.some(l => /\[APPEL\]/.test(l) && l.includes("*N(1)='A'")), raw.join('\n'));
+  assert.deepEqual(run(src, { tables: {}, files: {}, programs: { CALCUL: { calls: [{ set: { '*N(2)': 9 } }] } } }), ['9']);
+});
+
+test('champ de DS non qualifiée nommé comme un type avec +=', () => {
+  assert.deepEqual(run(`
+    dcl-ds t; int int(10) inz(1); end-ds;
+    int += 2;
+    dsply %char(int);
+  `), ['3']);
+});
+
+test('variable hôte de type date refusée dans exec sql', () => {
+  assert.throws(() => parse(`
+    dcl-s date date;
+    exec sql select name into :n from customers where id = :date;
+  `), NOT_SUPPORTED);
 });
