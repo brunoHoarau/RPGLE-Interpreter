@@ -1,5 +1,5 @@
 import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, ParameterNode, DataTypeNode, FileDeclarationNode, FileOperationNode } from './types';
-import { NativeFile, FileResult, parseFieldType } from './files';
+import { NativeFile, FileResult, parseFieldType, fitsField } from './files';
 import { Runtime } from './runtime';
 import { ExecutionContext, MockCase, emptyContext } from './context';
 import { checkAssignable, coerce, defaultValue, describeType, describeValue, formatChar, isDataStructure, sameDeclaredType } from './datatypes';
@@ -114,7 +114,7 @@ const NUMERIC_TYPES = new Set(['int', 'uns', 'packed', 'zoned']);
 interface FileState {
   file: NativeFile;
   open: boolean;
-  eof: boolean;
+  eof: boolean | undefined;   // undefined : inconnu (après un CHAIN non trouvé)
   found: boolean;
   equal: boolean;
 }
@@ -188,7 +188,7 @@ export class Interpreter {
     });
 
     // Fichiers : avant les autres déclarations, leurs zones sont des variables globales
-    for (const declaration of ast.files ?? []) this.declareFile(declaration, parameters.map(p => p.name.toLowerCase()));
+    for (const declaration of ast.files ?? []) this.declareFile(declaration, parameters);
 
     // Première passe : déclarer variables, constantes, procédures
     for (const node of ast.body) {
@@ -293,18 +293,25 @@ export class Interpreter {
 
   // --- Fichiers natifs (lecture) ---
 
-  // Au niveau du programme, un nom de zone de fichier ne peut pas être redéclaré (une procédure peut le masquer)
+  // Au niveau du programme, un nom de zone de fichier ne peut pas être redéclaré (une procédure peut le masquer).
+  // Une variable de même type est valide sur IBM i (elle partage la zone) mais n'est pas simulée ;
+  // une structure de données ou une constante de même nom est un doublon refusé par le compilateur.
   private refuseFileFieldName(name: string, type?: DataTypeNode): void {
     if (this.runtime.callDepth > 0) return;
     const field = this.fileFields.get(String(name).toLowerCase());
     if (!field) return;
-    if (type && !sameDeclaredType(field.type, type)) {
-      throw incompatibleTypes(`Variable ${name} ${describeType(type)} déclarée comme zone de fichier ${describeType(field.type)}`);
-    }
+    if (type) this.refuseSameNameAsField(String(name).toUpperCase(), type, field.type, field.file, 'Variable');
     throw new Error(`${String(name).toUpperCase()} est déjà déclaré (zone du fichier ${field.file})`);
   }
 
-  private declareFile(node: FileDeclarationNode, parameterNames: string[]): void {
+  private refuseSameNameAsField(name: string, type: DataTypeNode, fieldType: DataTypeNode, file: string, what: string): never {
+    if (!sameDeclaredType(fieldType, type)) {
+      throw incompatibleTypes(`${what} ${name} ${describeType(type)} déclarée comme zone de fichier ${describeType(fieldType)}`);
+    }
+    throw new NotSupportedError(`${what} ${name} : ${name} porte le nom d'une zone du fichier ${file}`);
+  }
+
+  private declareFile(node: FileDeclarationNode, parameters: ParameterNode[]): void {
     const name = node.name.toUpperCase();
     const tableName = Object.keys(this.context.tables).find(n => n.toUpperCase() === name);
     const table = tableName === undefined ? undefined : this.context.tables[tableName];
@@ -322,7 +329,9 @@ export class Interpreter {
     });
     const format = (table.format ?? name + 'F').toUpperCase();
     // Le moteur SQL remplace table.data à chaque DELETE : la source est relue à chaque opération
-    const file = new NativeFile(name, format, fields, node.keyed ? table.keys! : [], () => table.data);
+    // Seul le moteur SQL modifie les données pendant l'exécution : il incrémente table.revision
+    const file = new NativeFile(name, format, fields, node.keyed ? table.keys! : [], () => table.data,
+      { rowsDeleted: () => table.deletedRows === true, revision: () => table.revision ?? 0 });
     const state: FileState = { file, open: !node.usropn, eof: false, found: false, equal: false };
     this.files.set(name, state);
     this.files.set(format, state);
@@ -336,9 +345,8 @@ export class Interpreter {
         }
         continue;
       }
-      if (parameterNames.includes(key)) {
-        throw new Error(`La zone ${field.name} du fichier ${name} porte le nom d'un paramètre du programme`);
-      }
+      const parameter = parameters.find(p => p.name.toLowerCase() === key);
+      if (parameter) this.refuseSameNameAsField(field.name, parameter.dataType, field.type, name, 'Paramètre');
       this.fileFields.set(key, { type: field.type, file: name });
       this.runtime.declareVariable(field.name, defaultValue(field.type), field.type);
     }
@@ -360,11 +368,12 @@ export class Interpreter {
       file.reset();
       return;
     }
-    if (!state.open) throw new RpgError(1211, `Fichier ${file.name} non ouvert (RNX1211)`);
     if (node.operation === 'close') {
+      if (!state.open) throw new NotSupportedError(`CLOSE du fichier ${file.name} déjà fermé (comportement IBM i non vérifié)`);
       state.open = false;
       return;
     }
+    if (!state.open) throw new RpgError(1211, `Fichier ${file.name} non ouvert (RNX1211)`);
 
     const key = (node.key ?? []).map(expr => this.evaluate(expr));
     let result: FileResult;
@@ -373,7 +382,12 @@ export class Interpreter {
       case 'readp': result = file.readp(); break;
       case 'reade': result = file.reade(key); break;
       case 'readpe': result = file.readpe(key); break;
-      case 'chain': result = file.keyed ? file.chain(key) : file.chainRrn(key[0]); break;
+      case 'chain':
+        if (!file.keyed && key.length > 1) {
+          throw incompatibleTypes(`CHAIN par numéro d'enregistrement avec une liste de ${key.length} valeurs sur le fichier sans clé ${file.name}`);
+        }
+        result = file.keyed ? file.chain(key) : file.chainRrn(key[0]);
+        break;
       case 'setll': result = file.setll(node.special ?? key); break;
       case 'setgt': result = file.setgt(node.special ?? key); break;
       default: throw new Error(`Opération ${node.operation} non supportée`);
@@ -384,15 +398,20 @@ export class Interpreter {
       case 'read': case 'readp': case 'reade': case 'readpe':
         state.eof = this.lastIndicators.eof = result.eof;
         break;
+      // %EOF(fichier) remis à *OFF par SETLL, SETGT et CHAIN réussis (%EOF sans argument inchangé) ;
+      // après un CHAIN non trouvé, sa valeur IBM i n'est pas vérifiée : inconnue
       case 'chain':
         state.found = this.lastIndicators.found = result.found;
+        state.eof = result.found ? false : undefined;
         break;
       case 'setll':
         state.found = this.lastIndicators.found = result.found;
         state.equal = this.lastIndicators.equal = result.equal;
+        state.eof = false;
         break;
       case 'setgt':
         state.found = this.lastIndicators.found = result.found;
+        state.eof = false;
         break;
     }
   }
@@ -403,6 +422,8 @@ export class Interpreter {
       const column = Object.keys(row).find(c => c.toUpperCase() === field.name);
       const raw = column === undefined ? undefined : row[column];
       const invalid = () => new Error(`Donnée invalide dans le fichier ${file.name} : zone ${field.name} = '${String(raw)}'`);
+      const tooBig = () => new Error(`Donnée invalide dans le fichier ${file.name} : zone ${field.name} = '${String(raw)}' `
+        + `(ne tient pas dans ${describeType(field.type)})`);
       if (raw === undefined || raw === null) throw invalid();
       const kind = field.type.typeName;
       let value = raw;
@@ -419,6 +440,9 @@ export class Interpreter {
       } else if (NUMERIC_TYPES.has(kind)) {
         if (typeof raw === 'string' && /^[+-]?\d+(\.\d+)?$/.test(raw)) value = Number(raw);
         else if (typeof raw !== 'number' || !Number.isFinite(raw)) throw invalid();
+        if (!fitsField(value, field.type)) throw tooBig();
+      } else if (!fitsField(raw, field.type)) {
+        throw tooBig();
       }
       this.runtime.setGlobal(field.name, value);
     }
@@ -431,7 +455,11 @@ export class Interpreter {
       const state = this.fileState(String(args[0].value));
       switch (builtin) {
         case '%open': return state.open;
-        case '%eof': return state.eof;
+        case '%eof':
+          if (state.eof === undefined) {
+            throw new NotSupportedError(`%EOF(${state.file.name}) après un CHAIN non trouvé`);
+          }
+          return state.eof;
         case '%found': return state.found;
         case '%equal': return state.equal;
       }
@@ -481,12 +509,13 @@ export class Interpreter {
   }
 
   private executeConstantDeclaration(node: any): void {
+    this.refuseFileFieldName(node.name);
     this.runtime.setConstant(node.name, this.evaluate(node.value));
   }
 
   private executeDataStructure(node: any): void {
     this.refuseFileFieldName(node.name);
-    if (!node.isQualified) for (const field of node.fields) this.refuseFileFieldName(field.name);
+    if (!node.isQualified) for (const field of node.fields) this.refuseFileFieldName(field.name, field.dataType);
     this.runtime.declareDataStructure(node.name, node.fields.map((field: any) => ({
       name: field.name,
       type: field.dataType,

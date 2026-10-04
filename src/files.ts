@@ -4,6 +4,7 @@
 import { DataTypeNode } from './types';
 import { isDateTimeType, kindOf, parseIso } from './datetime';
 import { NotSupportedError, incompatibleTypes } from './errors';
+import { describeType } from './datatypes';
 
 export interface FieldDefinition {
   name: string;          // En majuscules
@@ -73,33 +74,77 @@ export function ebcdicKey(text: string): string {
   return result;
 }
 
-type Cursor = { side: 'before' | 'after'; at: any[] | FileSpecial } | { side: 'lost' };
+const INT_BITS: { [digits: number]: number } = { 3: 8, 5: 16, 10: 32, 20: 64 };
+
+// La valeur tient-elle dans la zone sans troncature ni arrondi ? (texte : blancs de fin ignorés)
+export function fitsField(value: any, type: DataTypeNode): boolean {
+  const kind = type.typeName;
+  if (kind === 'int' || kind === 'uns') {
+    if (typeof value !== 'number' || !Number.isInteger(value)) return false;
+    const bits = INT_BITS[type.length ?? 10] ?? 32;
+    const [min, max] = kind === 'int' ? [-(2 ** (bits - 1)), 2 ** (bits - 1) - 1] : [0, 2 ** bits - 1];
+    return value >= min && value <= max;
+  }
+  if (kind === 'packed' || kind === 'zoned') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+    const decimals = type.decimals ?? 0;
+    const n = normalize(value);
+    if (Number(n.toFixed(decimals)) !== n) return false;
+    return Math.abs(n) < 10 ** ((type.length ?? 15) - decimals);
+  }
+  if (kind === 'char' || kind === 'varchar') {
+    return type.length === undefined || String(value).replace(/ +$/, '').length <= type.length;
+  }
+  return true;
+}
+
+// Absorbe les erreurs d'arrondi binaire (0.1 + 0.2)
+const normalize = (n: number): number => Number(n.toPrecision(15));
+
+type Cursor =
+  | { side: 'before' | 'after'; at: any[] | FileSpecial }   // SETLL, SETGT, *START, *END, fin ou début de fichier
+  | { side: 'on'; at: any[] }                               // Sur le dernier enregistrement lu (READx, CHAIN trouvé)
+  | { side: 'lost' };                                       // Position IBM i non vérifiée
+
+interface Item { row: any; key: any[] }
+// Clé d'une ligne : colonnes et valeurs dont elle est tirée, génération du dernier tri qui contenait la ligne
+interface KeyEntry { columns: (string | undefined)[]; raw: any[]; key: any[]; sort: number }
 
 export class NativeFile {
   private sequence = new WeakMap<object, number>();
   private nextSequence = 0;
   private cursor: Cursor = { side: 'before', at: 'start' };
   private eofReached: 'read' | 'readp' | undefined;   // dernière lecture ayant donné %EOF, sans repositionnement
-  private initialRows: any[] = [];                    // lignes présentes à la construction ou au dernier reset()
+  // Numéros d'enregistrement : toutes les lignes déjà vues, et les tableaux sources déjà vus
+  // (le moteur SQL crée un tableau à chaque DELETE : l'ancien garde les lignes insérées puis supprimées)
+  private seen = new Set<object>();
+  private arrays: any[][] = [];
+  // Cache : clé de tri par ligne (recalculée si une zone clé change), ordre trié par tableau source
+  private keys_ = new WeakMap<object, KeyEntry>();
+  private recomputed = false;
+  private sorted: { source: any[]; length: number; revision: number | undefined; items: Item[] } | undefined;
+  private generation = 0;
 
   // source : tableau, ou fonction le renvoyant (relue à chaque opération : le moteur SQL peut remplacer le tableau)
+  // options.rowsDeleted : des lignes ont-elles été supprimées avant la déclaration du fichier (numéros d'enregistrement décalés) ?
+  // options.revision : numéro de version des données (change à chaque modification) ; sans lui, toutes les lignes
+  // sont revérifiées à chaque opération
   constructor(readonly name: string, readonly format: string, readonly fields: FieldDefinition[],
-              readonly keys: string[], private source: any[] | (() => any[])) {
+              readonly keys: string[], private source: any[] | (() => any[]),
+              private options: { rowsDeleted?: () => boolean; revision?: () => number } = {}) {
     for (const key of keys) {
       if (!fields.some(f => f.name === key)) {
         throw new Error(`Zone clé ${key} absente des zones du fichier ${name}`);
       }
     }
-    this.snapshot();
+    for (const row of this.observe()) {
+      this.seen.add(row);
+      this.sequenceOf(row);
+    }
   }
 
   private get rows(): any[] {
     return typeof this.source === 'function' ? this.source() : this.source;
-  }
-
-  private snapshot(): void {
-    this.initialRows = this.rows.slice();
-    this.initialRows.forEach(row => this.sequenceOf(row));
   }
 
   get keyed(): boolean {
@@ -111,60 +156,126 @@ export class NativeFile {
     return this.cursor.side === 'lost';
   }
 
+  // OPEN : retour au début ; les lignes déjà vues restent connues (un enregistrement supprimé garde son numéro)
   reset(): void {
     this.cursor = { side: 'before', at: 'start' };
     this.eofReached = undefined;
-    this.snapshot();
   }
 
   read(): FileResult {
+    this.checkPosition();
     if (this.eofReached === 'read') {
       throw new NotSupportedError(`READ de ${this.name} après la fin de fichier (comportement IBM i non vérifié)`);
     }
     this.eofReached = undefined;
-    const row = this.ordered().find(r => this.ahead(r));
-    if (!row) {
+    const item = this.next();
+    if (!item) {
       this.cursor = { side: 'after', at: 'end' };
       this.eofReached = 'read';
       return { found: false, eof: true, equal: false };
     }
-    this.cursor = { side: 'after', at: this.tuple(row) };
-    return { record: row, found: true, eof: false, equal: false };
+    return this.readOn(item);
   }
 
   readp(): FileResult {
+    this.checkPosition();
     if (this.eofReached === 'readp') {
       throw new NotSupportedError(`READP de ${this.name} après le début de fichier (comportement IBM i non vérifié)`);
     }
     this.eofReached = undefined;
-    const behind = this.ordered().filter(r => !this.ahead(r));
-    const row = behind[behind.length - 1];
-    if (!row) {
+    const item = this.previous();
+    if (!item) {
       this.cursor = { side: 'before', at: 'start' };
       this.eofReached = 'readp';
       return { found: false, eof: true, equal: false };
     }
-    this.cursor = { side: 'before', at: this.tuple(row) };
-    return { record: row, found: true, eof: false, equal: false };
+    return this.readOn(item);
   }
 
   reade(key: any[]): FileResult {
     const wanted = this.searchKey(key);
+    this.checkPosition();
     this.eofReached = undefined;
-    const row = this.ordered().find(r => this.ahead(r));
-    if (!row || this.compare(this.tuple(row), wanted) !== 0) return this.mismatch();
-    this.cursor = { side: 'after', at: this.tuple(row) };
-    return { record: row, found: true, eof: false, equal: false };
+    const item = this.next();
+    if (!item || this.compare(item.key, wanted) !== 0) return this.mismatch();
+    return this.readOn(item);
   }
 
   readpe(key: any[]): FileResult {
     const wanted = this.searchKey(key);
+    this.checkPosition();
     this.eofReached = undefined;
-    const behind = this.ordered().filter(r => !this.ahead(r));
-    const row = behind[behind.length - 1];
-    if (!row || this.compare(this.tuple(row), wanted) !== 0) return this.mismatch();
-    this.cursor = { side: 'before', at: this.tuple(row) };
-    return { record: row, found: true, eof: false, equal: false };
+    const item = this.previous();
+    if (!item || this.compare(item.key, wanted) !== 0) return this.mismatch();
+    return this.readOn(item);
+  }
+
+  chain(key: any[]): FileResult {
+    const wanted = this.searchKey(key);
+    this.eofReached = undefined;
+    const item = this.ordered().find(it => this.compare(it.key, wanted) === 0);
+    if (!item) {
+      this.cursor = { side: 'lost' };
+      return { found: false, eof: false, equal: false };
+    }
+    return this.readOn(item);
+  }
+
+  // Fichier sans clé : lecture par rang d'arrivée (1 = premier)
+  chainRrn(n: any): FileResult {
+    if (this.keyed) throw new Error(`Fichier ${this.name} avec clé : CHAIN par numéro d'enregistrement impossible`);
+    if (typeof n !== 'number') {
+      throw incompatibleTypes(`Numéro d'enregistrement ${typeof n === 'string' ? `'${n}'` : String(n)} pour le fichier ${this.name}`);
+    }
+    if (!Number.isInteger(n) || n < 1) throw new NotSupportedError(`Numéro d'enregistrement ${n} pour le fichier ${this.name}`);
+    const items = this.ordered();
+    const rows = this.rows;
+    const present = new Set<object>(rows);
+    const gone = (r: object) => !present.has(r);
+    if (this.options.rowsDeleted?.() || [...this.seen].some(gone) || this.arrays.some(a => a.some(gone))) {
+      throw new NotSupportedError(`Numéro d'enregistrement du fichier ${this.name} après suppression`);
+    }
+    this.eofReached = undefined;
+    const row = rows[n - 1];
+    if (!row) {
+      this.cursor = { side: 'lost' };
+      return { found: false, eof: false, equal: false };
+    }
+    return this.readOn(items.find(it => it.row === row)!);
+  }
+
+  setll(key: any[] | FileSpecial): FileResult {
+    if (key === 'start' || key === 'end') {
+      this.eofReached = undefined;
+      this.cursor = key === 'start' ? { side: 'before', at: 'start' } : { side: 'after', at: 'end' };
+      return { found: key === 'start' && this.rows.length > 0, eof: false, equal: false };
+    }
+    const wanted = this.searchKey(key);
+    this.eofReached = undefined;
+    const items = this.ordered();
+    this.cursor = { side: 'before', at: wanted };
+    return {
+      found: items.some(it => this.compare(it.key, wanted) >= 0),
+      eof: false,
+      equal: items.some(it => this.compare(it.key, wanted) === 0),
+    };
+  }
+
+  setgt(key: any[] | FileSpecial): FileResult {
+    if (key === 'start' || key === 'end') return this.setll(key);
+    const wanted = this.searchKey(key);
+    this.eofReached = undefined;
+    const items = this.ordered();
+    this.cursor = { side: 'after', at: wanted };
+    return { found: items.some(it => this.compare(it.key, wanted) > 0), eof: false, equal: false };
+  }
+
+  // --- Interne ---
+
+  // Lecture réussie : le fichier est positionné sur l'enregistrement lu
+  private readOn(item: Item): FileResult {
+    this.cursor = { side: 'on', at: item.key };
+    return { record: item.row, found: true, eof: false, equal: false };
   }
 
   // READE/READPE sans correspondance : %EOF, position IBM i non vérifiée
@@ -173,60 +284,41 @@ export class NativeFile {
     return { found: false, eof: true, equal: false };
   }
 
-  chain(key: any[]): FileResult {
-    const wanted = this.searchKey(key);
-    this.eofReached = undefined;
-    const row = this.ordered().find(r => this.compare(this.tuple(r), wanted) === 0);
-    if (!row) {
-      this.cursor = { side: 'lost' };
-      return { found: false, eof: false, equal: false };
+  private checkPosition(): void {
+    if (this.cursor.side === 'lost') {
+      throw new NotSupportedError(`Lecture séquentielle de ${this.name} après un CHAIN non trouvé ou un READE/READPE sans correspondance`);
     }
-    this.cursor = { side: 'after', at: this.tuple(row) };
-    return { record: row, found: true, eof: false, equal: false };
   }
 
-  // Fichier sans clé : lecture par rang d'arrivée (1 = premier)
-  chainRrn(n: number): FileResult {
-    if (this.keyed) throw new Error(`Fichier ${this.name} avec clé : CHAIN par numéro d'enregistrement impossible`);
+  // Premier enregistrement devant le curseur (lu par READ) ; les enregistrements devant forment la fin de l'ordre trié
+  private next(): Item | undefined {
+    const items = this.ordered();
+    return items[this.firstWhere(items, it => this.ahead(it.key))];
+  }
+
+  // Dernier enregistrement derrière le curseur (lu par READP) ; ceux de derrière forment le début de l'ordre trié
+  private previous(): Item | undefined {
+    const items = this.ordered();
+    return items[this.firstWhere(items, it => !this.behind(it.key)) - 1];
+  }
+
+  // Recherche dichotomique du premier élément vérifiant un prédicat monotone (faux… puis vrai…)
+  private firstWhere(items: Item[], predicate: (item: Item) => boolean): number {
+    let low = 0;
+    let high = items.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (predicate(items[middle])) high = middle;
+      else low = middle + 1;
+    }
+    return low;
+  }
+
+  private observe(): any[] {
     const rows = this.rows;
-    if (this.initialRows.some(r => !rows.includes(r))) {
-      throw new NotSupportedError(`Numéro d'enregistrement du fichier ${this.name} après suppression`);
-    }
-    this.eofReached = undefined;
-    const row = Number.isInteger(n) && n >= 1 ? rows[n - 1] : undefined;
-    if (!row) {
-      this.cursor = { side: 'lost' };
-      return { found: false, eof: false, equal: false };
-    }
-    this.cursor = { side: 'after', at: this.tuple(row) };
-    return { record: row, found: true, eof: false, equal: false };
+    if (this.arrays[this.arrays.length - 1] !== rows && !this.arrays.includes(rows)) this.arrays.push(rows);
+    return rows;
   }
-
-  setll(key: any[] | FileSpecial): FileResult {
-    this.eofReached = undefined;
-    if (key === 'start' || key === 'end') {
-      this.cursor = key === 'start' ? { side: 'before', at: 'start' } : { side: 'after', at: 'end' };
-      return { found: key === 'start' && this.rows.length > 0, eof: false, equal: false };
-    }
-    const wanted = this.searchKey(key);
-    this.cursor = { side: 'before', at: wanted };
-    const tuples = this.rows.map(r => this.tuple(r));
-    return {
-      found: tuples.some(tp => this.compare(tp, wanted) >= 0),
-      eof: false,
-      equal: tuples.some(tp => this.compare(tp, wanted) === 0),
-    };
-  }
-
-  setgt(key: any[] | FileSpecial): FileResult {
-    this.eofReached = undefined;
-    if (key === 'start' || key === 'end') return this.setll(key);
-    const wanted = this.searchKey(key);
-    this.cursor = { side: 'after', at: wanted };
-    return { found: this.rows.some(r => this.compare(this.tuple(r), wanted) > 0), eof: false, equal: false };
-  }
-
-  // --- Interne ---
 
   private sequenceOf(row: object): number {
     let s = this.sequence.get(row);
@@ -241,23 +333,22 @@ export class NativeFile {
     return this.fields.find(f => f.name === name)!;
   }
 
-  private valueOf(row: any, name: string): any {
-    const column = Object.keys(row).find(c => c.toUpperCase() === name);
-    return column === undefined ? undefined : row[column];
-  }
-
-  private invalidData(name: string, value: any): Error {
-    return new Error(`Donnée invalide dans le fichier ${this.name} : zone ${name} = '${String(value)}'`);
+  private invalidData(name: string, value: any, reason = ''): Error {
+    return new Error(`Donnée invalide dans le fichier ${this.name} : zone ${name} = '${String(value)}'${reason}`);
   }
 
   // Valeur de clé lue dans les données : nombre pour une zone numérique, texte EBCDIC sinon
-  private dataKey(row: any, name: string): any {
-    const kind = this.field(name).type.typeName;
-    const value = this.valueOf(row, name);
+  private dataKey(name: string, value: any): any {
+    const type = this.field(name).type;
+    const kind = type.typeName;
+    const tooBig = () => this.invalidData(name, value, ` (ne tient pas dans ${describeType(type)})`);
     if (NUMERIC.has(kind)) {
-      if (typeof value === 'number' && Number.isFinite(value)) return value;
-      if (typeof value === 'string' && /^[+-]?\d+(\.\d+)?$/.test(value)) return Number(value);
-      throw this.invalidData(name, value);
+      let n: number;
+      if (typeof value === 'number' && Number.isFinite(value)) n = value;
+      else if (typeof value === 'string' && /^[+-]?\d+(\.\d+)?$/.test(value)) n = Number(value);
+      else throw this.invalidData(name, value);
+      if (!fitsField(n, type)) throw tooBig();
+      return normalize(n);
     }
     if (isDateTimeType(kind)) {
       if (typeof value === 'string') {
@@ -274,17 +365,22 @@ export class NativeFile {
       throw this.invalidData(name, value);
     }
     if (value === undefined || value === null || typeof value === 'object') throw this.invalidData(name, value);
+    if (!fitsField(String(value), type)) throw tooBig();
     return ebcdicKey(String(value));
   }
 
-  // Valeur de clé fournie par le programme : doit avoir le genre de la zone
+  // Valeur de clé fournie par le programme : doit avoir le genre de la zone et y tenir
   private programKey(value: any, name: string): any {
     const type = this.field(name).type;
     const kind = type.typeName;
-    const refuse = () => incompatibleTypes(`Clé ${typeof value === 'string' ? `'${value}'` : String(value)} pour la zone ${name} (${kind})`);
+    const shown = typeof value === 'string' ? `'${value}'` : String(value);
+    const refuse = () => incompatibleTypes(`Clé ${shown} pour la zone ${name} (${kind})`);
+    const tooBig = () => new NotSupportedError(
+      `Clé ${shown} pour la zone ${name} ${describeType(type)} : valeur qui ne tient pas dans la zone (conversion IBM i non vérifiée)`);
     if (NUMERIC.has(kind)) {
       if (typeof value !== 'number' || !Number.isFinite(value)) throw refuse();
-      return value;
+      if (!fitsField(value, type)) throw tooBig();
+      return normalize(value);
     }
     if (isDateTimeType(kind)) {
       if (kindOf(value) !== kind) throw refuse();
@@ -295,18 +391,37 @@ export class NativeFile {
       return value ? '1' : '0';
     }
     if (typeof value !== 'string') throw refuse();
-    return ebcdicKey(type.length === undefined ? value : value.slice(0, type.length));
+    if (!fitsField(value, type)) throw tooBig();
+    return ebcdicKey(value);
   }
 
-  // Clé de tri d'un enregistrement : zones clés puis numéro d'arrivée
-  private tuple(row: any): any[] {
-    const values = this.keys.map(k => this.dataKey(row, k));
-    values.push(this.sequenceOf(row));
-    return values;
+  // Clé de tri d'un enregistrement : zones clés puis numéro d'arrivée (mise en cache tant que les zones clés sont inchangées)
+  private entryOf(row: any): KeyEntry {
+    const cached = this.keys_.get(row);
+    if (cached) {
+      let same = true;
+      for (let i = 0; i < cached.columns.length && same; i++) {
+        const column = cached.columns[i];
+        same = column !== undefined && row[column] === cached.raw[i];
+      }
+      if (same) return cached;
+    }
+    if (!cached) this.seen.add(row);
+    this.recomputed = true;
+    const names = Object.keys(row);
+    const columns = this.keys.map(k => names.find(c => c.toUpperCase() === k));
+    const raw = columns.map(c => (c === undefined ? undefined : row[c]));
+    const key = this.keys.map((k, i) => this.dataKey(k, raw[i]));
+    key.push(this.sequenceOf(row));
+    const entry = { columns, raw, key, sort: -1 };
+    this.keys_.set(row, entry);
+    return entry;
   }
 
   private searchKey(key: any[]): any[] {
-    if (!this.keyed) throw new Error(`Fichier ${this.name} sans clé : opération par clé impossible`);
+    if (!this.keyed) {
+      throw new NotSupportedError(`Positionnement par valeur sur le fichier sans clé ${this.name} (numéro d'enregistrement non simulé)`);
+    }
     if (key.length > this.keys.length) {
       throw new Error(`Clé de ${key.length} valeurs pour ${this.keys.length} zones clés du fichier ${this.name}`);
     }
@@ -323,19 +438,41 @@ export class NativeFile {
     return 0;
   }
 
-  private ordered(): any[] {
-    return this.rows.map(row => ({ row, key: this.tuple(row) }))
-      .sort((x, y) => this.compare(x.key, y.key))
-      .map(item => item.row);
+  // Enregistrements dans l'ordre des clés ; tri conservé tant que le tableau source et les clés sont inchangés
+  private ordered(): Item[] {
+    const rows = this.observe();
+    this.recomputed = false;
+    const s = this.sorted;
+    let valid = s !== undefined && s.source === rows && s.length === rows.length;
+    const revision = this.options.revision?.();
+    if (valid && revision !== undefined && s!.revision === revision) return s!.items;
+    for (let i = 0; i < rows.length; i++) {
+      if (this.entryOf(rows[i]).sort !== this.generation) valid = false;   // ligne absente du dernier tri
+    }
+    if (valid && !this.recomputed) return s!.items;
+    const entries = rows.map(row => this.entryOf(row));
+    this.generation++;
+    entries.forEach(entry => { entry.sort = this.generation; });
+    const items = rows.map((row, i) => ({ row, key: entries[i].key })).sort((x, y) => this.compare(x.key, y.key));
+    this.sorted = { source: rows, length: rows.length, revision, items };
+    return items;
   }
 
   // L'enregistrement est-il devant le curseur (lu par le prochain READ) ?
-  private ahead(row: any): boolean {
-    const c = this.cursor;
-    if (c.side === 'lost') throw new NotSupportedError(`Lecture séquentielle de ${this.name} après un CHAIN non trouvé`);
+  private ahead(key: any[]): boolean {
+    const c = this.cursor as Exclude<Cursor, { side: 'lost' }>;
     if (c.at === 'start') return true;
     if (c.at === 'end') return false;
-    const cmp = this.compare(this.tuple(row), c.at);
+    const cmp = this.compare(key, c.at);
     return c.side === 'before' ? cmp >= 0 : cmp > 0;
+  }
+
+  // L'enregistrement est-il derrière le curseur (lu par le prochain READP) ?
+  private behind(key: any[]): boolean {
+    const c = this.cursor as Exclude<Cursor, { side: 'lost' }>;
+    if (c.at === 'start') return false;
+    if (c.at === 'end') return true;
+    const cmp = this.compare(key, c.at);
+    return c.side === 'after' ? cmp <= 0 : cmp < 0;
   }
 }

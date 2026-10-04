@@ -113,7 +113,18 @@ export class Parser {
       const word = this.advance();
       const lower = word.value.toLowerCase();
       if (lower === 'disk') {
-        // périphérique par défaut
+        // périphérique par défaut ; DISK(*EXT) est équivalent
+        if (this.check(TokenType.LPAREN)) {
+          let text = '';
+          let i = this.pos + 1;
+          for (; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
+            text += this.tokens[i].value;
+          }
+          if (text.toLowerCase() !== '*ext' || this.tokens[i]?.type !== TokenType.RPAREN) {
+            throw unsupported(`DISK(${text.toUpperCase()}) de DCL-F`, word);
+          }
+          this.pos = i + 1;
+        }
       } else if (lower === 'keyed') {
         keyed = true;
       } else if (lower === 'usropn') {
