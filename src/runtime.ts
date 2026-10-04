@@ -119,6 +119,12 @@ export class Runtime {
     scope.variables.set(key, coerce(value, scope.types.get(key), name));
   }
 
+  // Affecte une variable globale, même depuis une procédure (zones des fichiers)
+  setGlobal(name: string, value: any): void {
+    const key = name.toLowerCase();
+    this.globals.variables.set(key, coerce(value, this.globals.types.get(key), name));
+  }
+
   getField(dsName: string, field: string): any {
     const ds = this.getVariable(dsName);
     const key = field.toLowerCase();

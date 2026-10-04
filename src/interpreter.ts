@@ -131,7 +131,7 @@ export class Interpreter {
   private options: InterpreterOptions;
   private programDepth = 0; // Niveau d'imbrication des appels de programmes source
   private files = new Map<string, FileState>();          // Par nom de fichier et par nom de format, en majuscules
-  private fileFields = new Map<string, DataTypeNode>();  // Zones des fichiers, en minuscules
+  private fileFields = new Map<string, { type: DataTypeNode; file: string }>(); // Zones des fichiers, en minuscules
   private lastIndicators = { eof: false, found: false, equal: false }; // %EOF, %FOUND, %EQUAL sans argument
 
   constructor(context?: ExecutionContext, options: InterpreterOptions = {}) {
@@ -188,7 +188,7 @@ export class Interpreter {
     });
 
     // Fichiers : avant les autres déclarations, leurs zones sont des variables globales
-    for (const declaration of ast.files ?? []) this.declareFile(declaration);
+    for (const declaration of ast.files ?? []) this.declareFile(declaration, parameters.map(p => p.name.toLowerCase()));
 
     // Première passe : déclarer variables, constantes, procédures
     for (const node of ast.body) {
@@ -287,16 +287,24 @@ export class Interpreter {
   }
 
   private executeVariableDeclaration(node: any): void {
-    const fieldType = this.fileFields.get(String(node.name).toLowerCase());
-    if (fieldType && !sameDeclaredType(fieldType, node.dataType)) {
-      throw incompatibleTypes(`Variable ${node.name} ${describeType(node.dataType)} déclarée comme zone de fichier ${describeType(fieldType)}`);
-    }
+    this.refuseFileFieldName(node.name, node.dataType);
     this.runtime.declareVariable(node.name, this.initialValue(node.initialValue, node.dataType, node.name), node.dataType);
   }
 
   // --- Fichiers natifs (lecture) ---
 
-  private declareFile(node: FileDeclarationNode): void {
+  // Au niveau du programme, un nom de zone de fichier ne peut pas être redéclaré (une procédure peut le masquer)
+  private refuseFileFieldName(name: string, type?: DataTypeNode): void {
+    if (this.runtime.callDepth > 0) return;
+    const field = this.fileFields.get(String(name).toLowerCase());
+    if (!field) return;
+    if (type && !sameDeclaredType(field.type, type)) {
+      throw incompatibleTypes(`Variable ${name} ${describeType(type)} déclarée comme zone de fichier ${describeType(field.type)}`);
+    }
+    throw new Error(`${String(name).toUpperCase()} est déjà déclaré (zone du fichier ${field.file})`);
+  }
+
+  private declareFile(node: FileDeclarationNode, parameterNames: string[]): void {
     const name = node.name.toUpperCase();
     const tableName = Object.keys(this.context.tables).find(n => n.toUpperCase() === name);
     const table = tableName === undefined ? undefined : this.context.tables[tableName];
@@ -323,12 +331,15 @@ export class Interpreter {
       const key = field.name.toLowerCase();
       const existing = this.fileFields.get(key);
       if (existing) {
-        if (!sameDeclaredType(existing, field.type)) {
-          throw incompatibleTypes(`Zone ${field.name} du fichier ${name} ${describeType(field.type)} déjà déclarée par un autre fichier ${describeType(existing)}`);
+        if (!sameDeclaredType(existing.type, field.type)) {
+          throw incompatibleTypes(`Zone ${field.name} du fichier ${name} ${describeType(field.type)} déjà déclarée par un autre fichier ${describeType(existing.type)}`);
         }
         continue;
       }
-      this.fileFields.set(key, field.type);
+      if (parameterNames.includes(key)) {
+        throw new Error(`La zone ${field.name} du fichier ${name} porte le nom d'un paramètre du programme`);
+      }
+      this.fileFields.set(key, { type: field.type, file: name });
       this.runtime.declareVariable(field.name, defaultValue(field.type), field.type);
     }
   }
@@ -345,6 +356,7 @@ export class Interpreter {
     if (node.operation === 'open') {
       if (state.open) throw new RpgError(1215, `Fichier ${file.name} déjà ouvert (RNX1215)`);
       state.open = true;
+      state.eof = state.found = state.equal = false;
       file.reset();
       return;
     }
@@ -408,7 +420,7 @@ export class Interpreter {
         if (typeof raw === 'string' && /^[+-]?\d+(\.\d+)?$/.test(raw)) value = Number(raw);
         else if (typeof raw !== 'number' || !Number.isFinite(raw)) throw invalid();
       }
-      this.runtime.setVariable(field.name, coerce(value, field.type, field.name));
+      this.runtime.setGlobal(field.name, value);
     }
   }
 
@@ -417,10 +429,21 @@ export class Interpreter {
     const builtin = name.toLowerCase();
     if (args.length > 0) {
       const state = this.fileState(String(args[0].value));
-      return builtin === '%open' ? state.open : builtin === '%eof' ? state.eof : builtin === '%found' ? state.found : state.equal;
+      switch (builtin) {
+        case '%open': return state.open;
+        case '%eof': return state.eof;
+        case '%found': return state.found;
+        case '%equal': return state.equal;
+      }
+    } else {
+      if (this.files.size === 0) throw new Error(`${name.toUpperCase()} sans fichier déclaré`);
+      switch (builtin) {
+        case '%eof': return this.lastIndicators.eof;
+        case '%found': return this.lastIndicators.found;
+        case '%equal': return this.lastIndicators.equal;
+      }
     }
-    if (this.files.size === 0) throw new Error(`${name.toUpperCase()} sans fichier déclaré`);
-    return builtin === '%eof' ? this.lastIndicators.eof : builtin === '%found' ? this.lastIndicators.found : this.lastIndicators.equal;
+    throw new Error(`Fonction ${name.toUpperCase()} inattendue pour un fichier`);
   }
 
   // Valeur de INZ ; INZ(*SYS) et INZ(*JOB) lisent l'horloge (*JOB : date du jour, faute de travail IBM i)
@@ -462,6 +485,8 @@ export class Interpreter {
   }
 
   private executeDataStructure(node: any): void {
+    this.refuseFileFieldName(node.name);
+    if (!node.isQualified) for (const field of node.fields) this.refuseFileFieldName(field.name);
     this.runtime.declareDataStructure(node.name, node.fields.map((field: any) => ({
       name: field.name,
       type: field.dataType,

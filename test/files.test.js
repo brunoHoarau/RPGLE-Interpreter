@@ -181,3 +181,55 @@ test('décisions complémentaires : type inconnu, %EOF sans fichier, erreurs pro
   assert.throws(() => run(`dow not %eof(); enddo;`, context()), /%EOF sans fichier déclaré/);
   assert.throws(() => run(`dcl-f client keyed; read client; read client; read client; read client; read client;`, context()), NOT_SUPPORTED);
 });
+
+test('lecture dans une procédure : les zones du fichier sont globales', () => {
+  const out = run(`
+    dcl-f client keyed;
+    dcl-proc lire;
+      dcl-s nom char(5) inz('loc');
+      read client;
+      dsply 'local ' + nom;
+    end-proc;
+    dcl-proc lire2;
+      read client;
+    end-proc;
+    lire();
+    dsply 'global ' + nom;
+    lire2();
+    dsply 'global ' + nom;
+  `, context());
+  assert.deepEqual(out, ['local loc', 'global Dupont', 'global Martin']);
+});
+
+test('zone de fichier portant le nom d\'un paramètre ou d\'une variable du programme', () => {
+  const ctx = context();
+  const callee = `dcl-pi *n; nom char(10); end-pi; dcl-f client keyed; dsply nom;`;
+  assert.throws(() => run(`
+    dcl-pr sp extpgm('SP'); nom char(10); end-pr;
+    dcl-s x char(10) inz('a');
+    sp(x);
+  `, ctx, { resolveProgram: n => (n === 'SP' ? { source: callee } : undefined) }),
+  /La zone NOM du fichier CLIENT porte le nom d'un paramètre du programme/);
+  assert.throws(() => run(`dcl-f client; dcl-s nom char(10);`, context()), /NOM est déjà déclaré \(zone du fichier CLIENT\)/);
+  assert.throws(() => run(`dcl-f client; dcl-ds d; nom char(10); end-ds;`, context()), /NOM est déjà déclaré \(zone du fichier CLIENT\)/);
+});
+
+test('OPEN remet %EOF à faux', () => {
+  const out = run(`
+    dcl-f client keyed;
+    setll *end client;
+    readp client;
+    readp client;
+    readp client;
+    readp client;
+    if %eof(client);
+      dsply 'eof';
+    endif;
+    close client;
+    open client;
+    if not %eof(client);
+      dsply 'plus eof';
+    endif;
+  `, context());
+  assert.deepEqual(out, ['eof', 'plus eof']);
+});

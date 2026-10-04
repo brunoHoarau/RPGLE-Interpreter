@@ -139,12 +139,13 @@ Format *ISO uniquement : date `2026-10-04`, heure `13.45.00`, timestamp `2026-10
 }
 ```
 
-- **Déclaration** : `dcl-f client;` (ordre d'arrivée des lignes), `dcl-f client keyed;` (ordre des `keys`), `usropn` (le fichier reste fermé jusqu'à `open`). Les zones deviennent des variables globales du programme, au type de leur colonne ; `format` vaut `<FICHIER>F` par défaut et peut remplacer le nom du fichier dans `read`, `readp`, `reade`, `readpe`.
+- **Déclaration** : `dcl-f client;` (ordre d'arrivée des lignes), `dcl-f client keyed;` (ordre des `keys`), `usropn` (le fichier reste fermé jusqu'à `open`). Les zones deviennent des variables globales du programme (une lecture dans une procédure les met à jour même si la procédure a une variable locale de même nom ; un `dcl-s`, une zone de `dcl-ds` ou un paramètre du programme de même nom est refusé), au type de leur colonne ; `format` vaut `<FICHIER>F` par défaut et peut remplacer le nom du fichier dans `read`, `readp`, `reade`, `readpe`.
 - **Types de zones** : `char(n)`, `varchar(n)`, `packed`/`decimal`, `zoned`/`numeric`, `int`, `uns`, `smallint`, `bigint`, `ind`, `date`, `time`, `timestamp` ; les dates et heures s'écrivent en texte *ISO dans `data`, les indicateurs `"1"`/`"0"`.
 - **Opérations** : `read`, `readp`, `reade`, `readpe`, `chain`, `setll`, `setgt` (clé simple ou liste `(a : b)`, clé partielle acceptée, `*start`/`*loval`/`*end`/`*hival`), `open`, `close`. `chain` sur un fichier sans clé lit par numéro d'enregistrement.
 - **Fonctions** : `%eof`, `%found`, `%equal`, `%open`, avec un nom de fichier ou de format, ou sans argument (dernière opération qui a positionné cet indicateur).
 - **Ordre des clés caractère** : l'ordre EBCDIC d'IBM i (minuscules avant majuscules avant chiffres). Un caractère hors du jeu invariant dans une clé est refusé.
-- **Statuts** : opération sur un fichier `usropn` non ouvert : 01211 (RNX1211) ; `open` d'un fichier déjà ouvert : 01215 (RNX1215). Ils sont interceptables par `MONITOR`/`ON-ERROR 01211` ou `*FILE`.
+- **Données** : une valeur plus longue que la zone est tronquée à la longueur déclarée (comme un déplacement) ; une zone absente ou `null` dans une ligne de `tables.json` est une erreur.
+- **Statuts** : opération sur un fichier `usropn` non ouvert : 01211 (RNX1211) ; `open` d'un fichier déjà ouvert : 01215 (RNX1215). `open` remet `%EOF`, `%FOUND` et `%EQUAL` du fichier à `*OFF` et repositionne au début. Ils sont interceptables par `MONITOR`/`ON-ERROR 01211` ou `*FILE`.
 - **Données partagées avec le SQL** : un `INSERT`, `UPDATE` ou `DELETE` est vu par les lectures suivantes. Un programme appelé a sa propre position dans le fichier.
 - **Refusé** (« pas encore supporté ») : écriture (`WRITE`, `UPDATE`, `DELETE`), `PREFIX`, `RENAME` et autres mots-clés de `dcl-f`, `%KDS`, `READE`/`READPE` sans clé, extenseurs d'opération (`chain(e)`), lecture séquentielle après un `CHAIN` non trouvé, après une fin de fichier ou après un `READE`/`READPE` sans correspondance, `CHAIN` par numéro d'enregistrement après une suppression, fichiers écran et impression.
 
