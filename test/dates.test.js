@@ -451,6 +451,11 @@ test('durée mal placée ou d\'un mauvais type : types incompatibles', () => {
     `dcl-s n int(10); n = %len(%days(1));`,
     `dcl-s d date; d = d + %days('x');`,
     `dcl-s d date; d = d + %days(d);`,
+    `dcl-s d date; d = %days(1) - d;`,
+    `dcl-s i int(10); for i = 1 to %days(3); endfor;`,
+    `dcl-s i int(10); for i = 1 to 3 by %days(1); endfor;`,
+    `dcl-s i int(10); for i = 1 to D'2026-01-01'; endfor;`,
+    `dcl-s i int(10); for i = %days(1) to 3; endfor;`,
   ]) {
     assert.throws(() => run(src), INCOMPATIBLE, src);
   }

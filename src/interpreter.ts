@@ -77,6 +77,7 @@ function applyDuration(value: DateTimeValue, duration: RpgDuration, sign: 1 | -1
     case 'wrap': throw new Error(`${what} passe minuit : pas encore supporté par l'interpréteur`);
     case '24h': throw new Error(`Calcul sur la valeur 24.00.00 (${what}) : pas encore supporté par l'interpréteur`);
   }
+  throw new Error(`Cas imprévu : ${result}`);
 }
 
 // Un bouchon JSON donne les dates, heures et timestamps en texte *ISO
@@ -494,20 +495,29 @@ export class Interpreter {
     }
   }
 
+  // Borne d'une boucle FOR : ni date, ni durée, ni constante figurative
+  private numericBound(expr: ExpressionNode, what: string): any {
+    const value = this.evaluate(expr);
+    if (isDateTime(value) || isDuration(value) || value instanceof FigurativeValue) {
+      throw incompatibleTypes(`FOR, ${what} ${describeValue(value)}`);
+    }
+    return value;
+  }
+
   private executeLoop(node: any): void {
     if (node.loopType === 'for') {
       // La variable de boucle est relue à chaque tour : le corps peut la modifier,
       // et elle vaut limite + pas en sortie de boucle, comme en RPG.
       const varName = node.variable;
-      const limit = this.evaluate(node.limit);
-      const step = node.step ? this.evaluate(node.step) : 1;
+      const limit = this.numericBound(node.limit, 'limite');
+      const step = node.step ? this.numericBound(node.step, 'pas') : 1;
       const delta = node.direction === 'to' ? step : -step;
       const inRange = () => {
         const i = this.runtime.getVariable(varName);
         return node.direction === 'to' ? i <= limit : i >= limit;
       };
 
-      this.runtime.setVariable(varName, this.evaluate(node.init));
+      this.runtime.setVariable(varName, this.numericBound(node.init, 'valeur initiale'));
       while (inRange()) {
         if (!this.runIteration(node.body)) return;
         this.runtime.setVariable(varName, this.runtime.getVariable(varName) + delta);
