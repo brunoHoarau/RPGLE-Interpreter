@@ -139,6 +139,10 @@ export class SQLEngine {
     if (close < 0 || sql.slice(close + 1).trim() !== '') throw new Error('Syntaxe INSERT invalide');
     const values = this.splitTopLevel(sql.slice(match[0].length, close), ',')
       .map(v => this.compileValue(v, null)({}, hostVars));
+    this.checkColumns(table, columns);
+    if (values.length !== columns.length) {
+      throw new Error(`INSERT : ${columns.length} colonnes pour ${values.length} valeurs`);
+    }
 
     const newRow: any = {};
     columns.forEach((col, idx) => newRow[col] = values[idx]);
@@ -150,16 +154,25 @@ export class SQLEngine {
 
   // === UPDATE ===
   private executeUpdate(sql: string, hostVars: HostVariables): SQLResult {
-    const setMatch = sql.match(/UPDATE\s+(\w+)\s+SET\s+(.+?)\s+WHERE\s+(.+)/i);
-    if (!setMatch) throw new Error('Syntaxe UPDATE invalide');
+    const head = sql.match(/^UPDATE\s+(\w+)\s+SET\s+/i);
+    if (!head) throw new Error('Syntaxe UPDATE invalide');
 
-    const table = this.getTable(setMatch[1]);
-    const matches = this.compileWhere(setMatch[3], table, hostVars);
-    const targets = table.data.filter(matches);
-    const assignments = this.splitTopLevel(setMatch[2], ',').map(assign => {
+    const table = this.getTable(head[1]);
+    const rest = sql.slice(head[0].length);
+    const whereAt = this.findTopLevelWord(rest, 'WHERE');
+    const setClause = whereAt < 0 ? rest : rest.slice(0, whereAt);
+    const targets = whereAt < 0
+      ? [...table.data]
+      : table.data.filter(this.compileWhere(rest.slice(whereAt + 5), table, hostVars));
+    const known = this.columnNames(table);
+    const assignments = this.splitTopLevel(setClause, ',').map(assign => {
       const eq = this.splitTopLevel(assign, '=');
+      // SET (a, b) = (...) : liste de colonnes
+      if (/^\s*\(/.test(eq[0])) throw new NotSupportedError(`Clause SET '${assign.trim()}'`);
       if (eq.length !== 2 || !/^\s*\w+\s*$/.test(eq[0])) throw new Error(`Clause SET invalide : ${assign.trim()}`);
-      return { col: eq[0].trim().toUpperCase(), value: this.compileValue(eq[1], this.columnNames(table)) };
+      const col = eq[0].trim().toUpperCase();
+      this.checkColumns(table, [col]);
+      return { col, value: this.compileValue(eq[1], known) };
     });
     for (const row of targets) {
       // Toutes les expressions lisent la ligne avant mise à jour
@@ -227,6 +240,40 @@ export class SQLEngine {
       for (const key of Object.keys(row)) names.add(key.toUpperCase());
     }
     return names;
+  }
+
+  // Une colonne qui n'existe pas dans la table est une erreur SQL (table sans aucune colonne connue : pas de contrôle)
+  private checkColumns(table: TableDefinition, columns: string[]): void {
+    const known = this.columnNames(table);
+    if (known.size === 0) return;
+    for (const col of columns) {
+      if (!known.has(col)) throw new Error(`Colonne inconnue: ${col}`);
+    }
+  }
+
+  // Position d'un mot entier hors littéraux et parenthèses, -1 si absent
+  private findTopLevelWord(text: string, word: string): number {
+    let depth = 0;
+    let inString = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (ch === "'") {
+          if (text[i + 1] === "'") i++;
+          else inString = false;
+        }
+      } else if (ch === "'") {
+        inString = true;
+      } else if (ch === '(') {
+        depth++;
+      } else if (ch === ')') {
+        depth--;
+      } else if (depth === 0 && /\s/.test(text[i - 1] ?? ' ') && text.substr(i, word.length).toUpperCase() === word
+        && /\s|$/.test(text[i + word.length] ?? '')) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   // Découpe sur un séparateur hors littéraux chaîne et hors parenthèses
@@ -384,23 +431,25 @@ export class SQLEngine {
       return parseAtom();
     };
 
+    // 15 chiffres significatifs, comme les décimaux : balance + 0.1 ne laisse pas de résidu binaire
+    const exact = (n: number) => Number(n.toPrecision(15));
+
     const binary = (op: string, left: Evaluator, right: Evaluator): Evaluator => (row, hv) => {
       const a = numeric(left(row, hv));
       const b = numeric(right(row, hv));
       if (a === null || b === null) return null;
       switch (op) {
-        case '+': return a + b;
-        case '-': return a - b;
-        case '*': return a * b;
-        default:
-          if (b === 0) throw new Error('Division par zéro');
-          return a / b;
+        case '+': return exact(a + b);
+        case '-': return exact(a - b);
+        default: return exact(a * b);
       }
     };
 
     const parseTerm = (): Evaluator => {
       let left = parseFactor();
       while (isOp('*') || isOp('/')) {
+        // Précision et échelle du quotient DB2 non simulées
+        if (isOp('/')) throw new NotSupportedError('Division dans une expression SQL');
         const op = tokens[pos++].value;
         left = binary(op, left, parseFactor());
       }

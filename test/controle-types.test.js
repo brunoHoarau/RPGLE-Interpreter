@@ -164,3 +164,50 @@ test('DSPLY : une réponse nommée comme un type est une variable', () => {
 test('DSPLY : une valeur spéciale ne peut pas être la réponse', () => {
   assert.throws(() => parse(`dsply 'a' '' *ext;`), /réponse de DSPLY doit être une variable/i);
 });
+
+test('SQL : colonne inconnue dans SET ou INSERT = erreur SQL, rien n\'est créé', () => {
+  const ctx = customersContext();
+  const out = runRaw(`exec sql update customers set blance = 5 where id = 2;`, ctx);
+  assert.ok(out.some(l => /SQLCOD=-1/.test(l) && /BLANCE/.test(l)));
+  assert.deepEqual(Object.keys(ctx.tables.CUSTOMERS.data[1]), ['ID', 'NAME', 'CITY', 'BALANCE']);
+  const ctx2 = customersContext();
+  const out2 = runRaw(`exec sql insert into customers (id, nom) values (4, 'x');`, ctx2);
+  assert.ok(out2.some(l => /SQLCOD=-1/.test(l)));
+  assert.equal(ctx2.tables.CUSTOMERS.data.length, 3);
+});
+
+test('SQL INSERT : nombre de valeurs différent du nombre de colonnes', () => {
+  const ctx = customersContext();
+  const out = runRaw(`exec sql insert into customers (id, name, city) values (4, 'x');`, ctx);
+  assert.ok(out.some(l => /SQLCOD=-1/.test(l) && /3 colonnes pour 2 valeurs/.test(l)));
+  assert.equal(ctx.tables.CUSTOMERS.data.length, 3);
+});
+
+test('SQL SET : arithmétique décimale exacte, division refusée', () => {
+  const ctx = customersContext();
+  run(`exec sql update customers set balance = balance + 0.1 where id = 2;`, ctx);
+  assert.equal(ctx.tables.CUSTOMERS.data[1].BALANCE, 230.1);
+  assert.throws(() => run(`exec sql update customers set balance = balance / 2 where id = 2; dsply 'x';`, customersContext()), NOT_SUPPORTED);
+});
+
+test('SQL UPDATE sans WHERE : toutes les lignes', () => {
+  const ctx = customersContext();
+  const out = runRaw(`exec sql update customers set city = 'X';`, ctx);
+  assert.deepEqual(ctx.tables.CUSTOMERS.data.map(r => r.CITY), ['X', 'X', 'X']);
+  assert.ok(out.some(l => /3 ligne/.test(l)));
+});
+
+test('SQL SET : liste de colonnes et sous-requête refusées', () => {
+  for (const sql of [
+    `exec sql update customers set (name, city) = ('a', 'b') where id = 1;`,
+    `exec sql update customers set balance = (select max(balance) from customers) where id = 1;`,
+  ]) {
+    assert.throws(() => run(`${sql} dsply 'continue';`, customersContext()), NOT_SUPPORTED, sql);
+  }
+});
+
+test('SQL UPDATE : WHERE cherché hors littéraux', () => {
+  const ctx = customersContext();
+  run(`exec sql update customers set city = 'x where y' where id = 1;`, ctx);
+  assert.deepEqual(ctx.tables.CUSTOMERS.data.map(r => r.CITY), ['x where y', 'Lyon', 'Marseille']);
+});
