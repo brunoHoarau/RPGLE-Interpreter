@@ -673,6 +673,29 @@ export class Parser {
     return { type: 'SQL', sql };
 }
 
+  private static readonly COMPOUND_OPERATORS = new Map<TokenType, string>([
+    [TokenType.PLUS_EQUALS, '+'],
+    [TokenType.MINUS_EQUALS, '-'],
+    [TokenType.MULTIPLY_EQUALS, '*'],
+    [TokenType.DIVIDE_EQUALS, '/'],
+    [TokenType.POWER_EQUALS, '**'],
+  ]);
+
+  private checkCompound(): boolean {
+    return Parser.COMPOUND_OPERATORS.has(this.peek().type);
+  }
+
+  private advanceCompound(): string {
+    return Parser.COMPOUND_OPERATORS.get(this.advance().type)!;
+  }
+
+  // x op= e  équivaut à  x = x op (e)
+  private compoundValue(target: string, operator: string): ExpressionNode {
+    const right = this.parseExpression();
+    const left: ExpressionNode = { type: 'Expression', value: target, valueType: 'identifier' };
+    return { type: 'Expression', operator, left, right };
+  }
+
   private parseAssignmentOrCall(): ASTNode {
     const nameToken = this.expect(TokenType.IDENTIFIER);
     let name = nameToken.value;
@@ -693,7 +716,7 @@ export class Parser {
       return this.parseAssignmentOrCall();
     }
 
-    const isNameUse = this.check(TokenType.EQUALS) || this.check(TokenType.DOT) || this.check(TokenType.LPAREN);
+    const isNameUse = this.check(TokenType.EQUALS) || this.checkCompound() || this.check(TokenType.DOT) || this.check(TokenType.LPAREN);
     if (UNSUPPORTED_OPCODES.has(lower) && !isNameUse) {
       throw unsupported(`L'opération ${name.toUpperCase()}`, nameToken);
     }
@@ -708,6 +731,13 @@ export class Parser {
       this.advance();
       const allowed = this.dateTimeNames.has(name.toLowerCase()) ? ['*loval', '*hival'] : [];
       const value = this.parseDateTimeSpecial(allowed, TokenType.SEMICOLON) ?? this.parseExpression();
+      this.expect(TokenType.SEMICOLON);
+      return { type: 'Assignment', variable: name, value };
+    }
+
+    if (this.checkCompound()) {
+      const operator = this.advanceCompound();
+      const value = this.compoundValue(name, operator);
       this.expect(TokenType.SEMICOLON);
       return { type: 'Assignment', variable: name, value };
     }
@@ -760,10 +790,17 @@ export class Parser {
     if (token.type === TokenType.SPECIAL_VALUE && INDICATOR.test(token.value)) {
       // *INLR = *ON; *IN50 = ...;
       this.advance();
+      const variable = token.value.toLowerCase();
+      if (this.checkCompound()) {
+        const operator = this.advanceCompound();
+        const value = this.compoundValue(variable, operator);
+        this.expect(TokenType.SEMICOLON);
+        return { type: 'Assignment', variable, value };
+      }
       this.expect(TokenType.EQUALS);
       const value = this.parseExpression();
       this.expect(TokenType.SEMICOLON);
-      return { type: 'Assignment', variable: token.value.toLowerCase(), value };
+      return { type: 'Assignment', variable, value };
     }
 
     throw new Error(`Instruction inattendue '${token.value.toUpperCase()}' à la ligne ${token.line}`);
