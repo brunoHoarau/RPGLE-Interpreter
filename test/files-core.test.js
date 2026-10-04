@@ -134,3 +134,79 @@ test('reset : retour au début', () => {
   file.reset();
   assert.equal(file.read().record.NUMCLI, 1);
 });
+
+const dt = require(path.join(__dirname, '..', 'out', 'datetime'));
+const INVALID = /Donnée invalide dans le fichier CLIENT : zone NUMCLI = /;
+
+test('données invalides : erreur claire, jamais de NaN dans le tri', () => {
+  for (const bad of [undefined, null, '', 'x', '1e3', NaN]) {
+    const rows = [{ NUMCLI: 1, NOM: 'a' }, { NUMCLI: bad, NOM: 'b' }];
+    const file = new f.NativeFile('CLIENT', 'CLIENTF', CLIENT_FIELDS, ['NUMCLI'], rows);
+    assert.throws(() => file.read(), INVALID, String(bad));
+  }
+  const ok = new f.NativeFile('CLIENT', 'CLIENTF', CLIENT_FIELDS, ['NUMCLI'], [{ NUMCLI: '12', NOM: 'a' }, { NUMCLI: '-3.5', NOM: 'b' }]);
+  assert.equal(ok.read().record.NOM, 'b');
+  assert.throws(() => new f.NativeFile('CLIENT', 'CLIENTF', CLIENT_FIELDS, ['INCONNU'], []), /INCONNU.*CLIENT/);
+});
+
+test('clés date : ISO côté données, valeur de date côté programme', () => {
+  const fields = [{ name: 'D', type: t('date') }];
+  const file = new f.NativeFile('T', 'TF', fields, ['D'], [{ D: '2024-05-02' }, { D: '2023-12-31' }]);
+  assert.equal(file.chain([dt.parseIso('date', '2024-05-02')]).found, true);
+  assert.throws(() => file.chain(['2024-05-02']), INCOMPATIBLE);
+  assert.throws(() => file.chain([dt.parseIso('time', '10.00.00')]), INCOMPATIBLE);
+  const bad = new f.NativeFile('T', 'TF', fields, ['D'], [{ D: '2024-02-30' }]);
+  assert.throws(() => bad.read(), /Donnée invalide dans le fichier T : zone D = '2024-02-30'/);
+  const ind = new f.NativeFile('T', 'TF', [{ name: 'I', type: t('ind') }], ['I'], [{ I: true }]);
+  assert.equal(ind.chain([true]).found, true);
+  assert.throws(() => ind.chain(['1']), INCOMPATIBLE);
+});
+
+test('READE/READPE sans correspondance : position perdue', () => {
+  const file = new f.NativeFile('CLIENT', 'CLIENTF', CLIENT_FIELDS, ['NUMCLI'], clients());
+  file.setll([1]);
+  assert.equal(file.reade([2]).eof, true);
+  assert.equal(file.positionLost, true);
+  assert.throws(() => file.read(), NOT_SUPPORTED);
+  file.setll('end');
+  assert.equal(file.reade([2]).eof, true);
+  assert.equal(file.positionLost, true);
+});
+
+test('READ après %EOF refusé, READP reste valide (et symétrique)', () => {
+  const file = new f.NativeFile('CLIENT', 'CLIENTF', CLIENT_FIELDS, ['NUMCLI'], clients());
+  file.setll('end');
+  assert.equal(file.read().eof, true);
+  assert.throws(() => file.read(), NOT_SUPPORTED);
+  assert.equal(file.readp().record.NOM, 'Durand');
+  file.setll('start');
+  assert.equal(file.readp().eof, true);
+  assert.throws(() => file.readp(), NOT_SUPPORTED);
+  assert.equal(file.read().record.NOM, 'Dupont');
+});
+
+test('CHAIN par rang : refusé si clé ou après suppression', () => {
+  const keyed = new f.NativeFile('CLIENT', 'CLIENTF', CLIENT_FIELDS, ['NUMCLI'], clients());
+  assert.throws(() => keyed.chainRrn(1), /avec clé/);
+  const rows = clients();
+  const file = new f.NativeFile('CLIENT', 'CLIENTF', CLIENT_FIELDS, [], rows);
+  rows.splice(0, 1);
+  assert.throws(() => file.chainRrn(1), NOT_SUPPORTED);
+  file.reset();
+  assert.equal(file.chainRrn(1).record.NOM, 'Dupont');
+});
+
+test('tableau partagé remplacé : source fonction relue à chaque opération', () => {
+  let rows = clients();
+  const file = new f.NativeFile('CLIENT', 'CLIENTF', CLIENT_FIELDS, ['NUMCLI'], () => rows);
+  assert.equal(file.read().record.NUMCLI, 1);
+  rows = rows.filter(r => r.NUMCLI !== 2);
+  assert.equal(file.read().record.NUMCLI, 3);
+});
+
+test('clé caractère : seuls les espaces de fin sont ôtés, clé tronquée à la zone', () => {
+  assert.throws(() => f.ebcdicKey('a\t'), NOT_SUPPORTED);
+  assert.equal(f.ebcdicKey('a  '), f.ebcdicKey('a'));
+  const file = new f.NativeFile('T', 'TF', [{ name: 'CODE', type: t('char', 3) }], ['CODE'], [{ CODE: 'ABC' }]);
+  assert.equal(file.chain(['ABCDEF']).found, true);
+});
