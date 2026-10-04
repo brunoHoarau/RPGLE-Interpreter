@@ -75,3 +75,79 @@ test('les opérateurs ordinaires restent inchangés', () => {
   `);
   assert.deepEqual(out, ['ok', '-1']);
 });
+
+test('paramètres *N dans un prototype', () => {
+  const ctx = { tables: {}, files: {}, programs: { CALCUL: { calls: [{ set: { resultat: 7 } }] } } };
+  const out = run(`
+    dcl-pr calcul extpgm('CALCUL');
+      *n char(10) const;
+      resultat packed(5:0);
+      *N packed(4:0) options(*nopass);
+    end-pr;
+    dcl-s r packed(5:0);
+    calcul('A' : r);
+    dsply %char(r);
+  `, ctx);
+  assert.deepEqual(out, ['7']);
+});
+
+test('*N reste interdit comme nom de paramètre de DCL-PI', () => {
+  assert.throws(() => parse(`dcl-proc p; dcl-pi *n; *n int(5); end-pi; end-proc;`));
+});
+
+test('%STATUS sans parenthèses', () => {
+  const out = run(`
+    dcl-s n int(5) inz(1);
+    monitor;
+      n = n / 0;
+    on-error;
+      if %status = 102;
+        dsply 'statut ' + %char(%status);
+      endif;
+    endmon;
+  `);
+  assert.deepEqual(out, ['statut 102']);
+});
+
+test('%EOF, %FOUND et %ERROR restent refusés', () => {
+  for (const src of ['if %eof; endif;', 'if %found(f); endif;', 'if %error; endif;']) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
+  }
+});
+
+test('variables, champs et paramètres nommés comme un type', () => {
+  const out = run(`
+    dcl-s zoned zoned(4:0);
+    dcl-s packed packed(5) inz(9);
+    dcl-s date date inz(D'2026-10-04');
+    dcl-s pointer int(5) inz(3);
+    dcl-ds char qualified;
+      int int(10) inz(4);
+    end-ds;
+    zoned = 8 + 47;
+    zoned += 1;
+    if packed = 9 or zoned = 0;
+      dsply %char(zoned);
+    endif;
+    char.int += pointer;
+    dsply %char(char.int);
+    dsply date;
+    dsply %char(time(2));
+    dcl-proc time;
+      dcl-pi *n int(10);
+        varchar int(10) value;
+      end-pi;
+      return varchar * 10;
+    end-proc;
+  `);
+  assert.deepEqual(out, ['56', '7', '2026-10-04', '20']);
+});
+
+test('un mot de type reste un type en position de type', () => {
+  assert.throws(() => parse(`dcl-s p pointer;`), NOT_SUPPORTED);
+  assert.throws(() => parse(`dcl-s x float(8);`), NOT_SUPPORTED);
+});
+
+test('affectation composée sur un élément de tableau : refusée explicitement', () => {
+  assert.throws(() => parse(`dcl-s x int(5); x(1) += 2;`), NOT_SUPPORTED);
+});

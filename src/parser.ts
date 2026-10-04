@@ -31,8 +31,8 @@ const UNSUPPORTED_OPCODES = new Set([
 const INDICATOR = /^\*in(lr|\d\d)$/;
 const SUPPORTED_SPECIAL_VALUES = new Set(['*on', '*off', '*zero', '*zeros', '*blank', '*blanks']);
 
-// Fonctions dont le 2e argument est un format de date (*ISO, *EUR...)
-const NO_ARGUMENT_BUILTINS = new Set(['%date', '%time', '%timestamp']);
+// Fonctions valides sans parenthèses
+const NO_ARGUMENT_BUILTINS = new Set(['%date', '%time', '%timestamp', '%status']);
 const FORMAT_BUILTINS = new Set(['%char', '%date', '%time', '%timestamp']);
 
 // Position (0 = 1er argument) de l'unité de date (*DAYS, *M...) dans %DIFF et %SUBDT
@@ -108,7 +108,7 @@ export class Parser {
 
   private parseVariableDeclaration(): ASTNode {
     this.expect(TokenType.DCL_S);
-    const name = this.expect(TokenType.IDENTIFIER).value;
+    const name = this.expectName().value;
     const dataType = this.parseDataType();
     this.rememberDateTime(name, dataType);
     const initialValue = this.parseDeclarationKeywords('DCL-S', dataType);
@@ -195,7 +195,7 @@ export class Parser {
 
   private parseConstantDeclaration(): ASTNode {
     this.expect(TokenType.DCL_C);
-    const name = this.expect(TokenType.IDENTIFIER).value;
+    const name = this.expectName().value;
     const value = this.parseExpression();
     this.expect(TokenType.SEMICOLON);
     return { type: 'ConstantDeclaration', name, value };
@@ -203,7 +203,7 @@ export class Parser {
 
   private parseDataStructure(): ASTNode {
     this.expect(TokenType.DCL_DS);
-    const name = this.expect(TokenType.IDENTIFIER).value;
+    const name = this.expectName().value;
     let isQualified = false;
     const fields: any[] = [];
 
@@ -224,7 +224,7 @@ export class Parser {
 
     // 2. Champs jusqu'à 'end-ds'
     while (!this.check(TokenType.END_DS) && !this.isAtEnd()) {
-      const fieldName = this.expect(TokenType.IDENTIFIER).value;
+      const fieldName = this.expectName().value;
       const fieldType = this.parseDataType();
       this.rememberDateTime(`${name}.${fieldName}`, fieldType);
       if (!isQualified) this.rememberDateTime(fieldName, fieldType);
@@ -241,7 +241,7 @@ export class Parser {
 
   private parseProcedure(): ASTNode {
     this.expect(TokenType.DCL_PROC);
-    const name = this.expect(TokenType.IDENTIFIER).value;
+    const name = this.expectName().value;
     this.skipToSemicolon(); // Mots-clés : export, etc.
 
     let returnType: DataTypeNode | undefined;
@@ -298,7 +298,7 @@ export class Parser {
     this.expect(TokenType.SEMICOLON);
 
     while (!this.check(TokenType.END_PI) && !this.isAtEnd()) {
-      parameters.push(this.parseParameter());
+      parameters.push(this.parseParameter(parameters.length + 1, false));
     }
     this.expect(TokenType.END_PI);
     this.skipToSemicolon();
@@ -307,8 +307,11 @@ export class Parser {
     return { returnType, parameters };
   }
 
-  private parseParameter(): ParameterNode {
-    const name = this.expect(TokenType.IDENTIFIER).value;
+  // *N (paramètre sans nom) n'existe que dans un prototype : nom interne *N(position)
+  private parseParameter(position: number, allowUnnamed: boolean): ParameterNode {
+    const unnamed = allowUnnamed && this.check(TokenType.SPECIAL_VALUE) && this.peek().value.toLowerCase() === '*n';
+    if (unnamed) this.advance();
+    const name = unnamed ? `*N(${position})` : this.expectName().value;
     const dataType: DataTypeNode = this.parseDataType();
     let isConst = false;
     let byValue = false;
@@ -345,7 +348,7 @@ export class Parser {
   // Sans EXTPGM ni EXTPROC, le prototype désigne une procédure du même nom.
   private parsePrototype(): ASTNode {
     this.expect(TokenType.DCL_PR);
-    const name = this.expect(TokenType.IDENTIFIER).value;
+    const name = this.expectName().value;
 
     const next = this.peek();
     const isLikeKeyword = next.type === TokenType.IDENTIFIER && /^like(ds|rec)?$/i.test(next.value);
@@ -380,7 +383,7 @@ export class Parser {
     } else {
       this.expect(TokenType.SEMICOLON);
       while (!this.check(TokenType.END_PR) && !this.isAtEnd()) {
-        parameters.push(this.parseParameter());
+        parameters.push(this.parseParameter(parameters.length + 1, true));
       }
       this.expect(TokenType.END_PR);
       this.skipToSemicolon();
@@ -529,7 +532,7 @@ export class Parser {
     const loopType = this.advance().value as 'dow' | 'dou' | 'for';
 
     if (loopType === 'for') {
-      const varName = this.expect(TokenType.IDENTIFIER).value;
+      const varName = this.expectName().value;
       this.expect(TokenType.EQUALS);
       const init = this.parseExpression();
       const direction = this.advance().value as 'to' | 'downto';
@@ -697,7 +700,7 @@ export class Parser {
   }
 
   private parseAssignmentOrCall(): ASTNode {
-    const nameToken = this.expect(TokenType.IDENTIFIER);
+    const nameToken = this.expectName();
     let name = nameToken.value;
     const lower = name.toLowerCase();
 
@@ -724,7 +727,7 @@ export class Parser {
     // Notation pointée : client.id
     while (this.check(TokenType.DOT)) {
       this.advance();
-      name += '.' + this.expect(TokenType.IDENTIFIER).value;
+      name += '.' + this.expectName().value;
     }
 
     if (this.check(TokenType.EQUALS)) {
@@ -744,7 +747,7 @@ export class Parser {
 
     if (this.check(TokenType.LPAREN)) {
       const args = this.parseCallArguments();
-      if (this.check(TokenType.EQUALS)) {
+      if (this.check(TokenType.EQUALS) || this.checkCompound()) {
         throw unsupported('Les tableaux (affectation indicée)', nameToken);
       }
       this.expect(TokenType.SEMICOLON);
@@ -779,6 +782,14 @@ export class Parser {
       return { type: 'Iter' } as any;
     }
     if (this.check(TokenType.IDENTIFIER)) return this.parseAssignmentOrCall();
+    if (this.isTypeToken()) {
+      // Un mot de type en début d'instruction est un nom s'il est utilisé comme tel
+      const next = this.peekNext()?.type;
+      if (next === TokenType.EQUALS || next === TokenType.DOT || next === TokenType.LPAREN ||
+          (next !== undefined && Parser.COMPOUND_OPERATORS.has(next))) {
+        return this.parseAssignmentOrCall();
+      }
+    }
 
     const token = this.peek();
     if (FILE_OPERATION_TOKENS.includes(token.type)) {
@@ -1010,14 +1021,14 @@ export class Parser {
       return { type: 'Expression', value: { name, args }, valueType: 'builtin' };
     }
 
-    if (this.check(TokenType.IDENTIFIER)) {
+    if (this.isName()) {
         // 🔥 CORRECTION : Gérer la notation pointée dans les expressions
         let name = this.advance().value;
 
         // Si on a un '.', on continue à lire les parties suivantes
         while (this.check(TokenType.DOT)) {
             this.advance(); // Consomme le '.'
-            const nextPart = this.expect(TokenType.IDENTIFIER).value;
+            const nextPart = this.expectName().value;
             name += '.' + nextPart;
         }
 
@@ -1061,6 +1072,15 @@ export class Parser {
   private expect(type: TokenType): Token {
     if (this.check(type)) return this.advance();
     throw new Error(`Attendu ${TokenType[type]} à la ligne ${this.peek().line}, reçu ${TokenType[this.peek().type]}`);
+  }
+
+  // Un nom : IDENTIFIER, ou un mot de type (char, zoned, date...) qui est aussi un nom valide en RPG
+  private isName(): boolean {
+    return this.check(TokenType.IDENTIFIER) || this.isTypeToken();
+  }
+
+  private expectName(): Token {
+    return this.isName() ? this.advance() : this.expect(TokenType.IDENTIFIER);
   }
 
   private isAtEnd(): boolean {
