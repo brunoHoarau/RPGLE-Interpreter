@@ -548,7 +548,12 @@ export class Interpreter {
       msg = String(value).trimEnd();
     }
 
-    const queueInfo = node.queue ? ` (File: ${this.evaluate(node.queue)})` : '';
+    let queueInfo = '';
+    if (node.queue) {
+      // File vide ou *BLANK : file par défaut, rien à afficher
+      const queue = String(this.evaluate(node.queue)).trim();
+      if (queue !== '' && !/^\*blanks?$/i.test(queue)) queueInfo = ` (File: ${queue})`;
+    }
     const extenderInfo = node.hasErrorExtender ? ' [Gestion d\'erreur active]' : '';
 
     this.runtime.addOutput(`[DSPLY${extenderInfo}] ${msg}${queueInfo}`);
@@ -556,7 +561,7 @@ export class Interpreter {
     if (node.responseVar) {
       const simulatedResponse = 'Y'; 
       this.runtime.addOutput(`  -> (Simulé) Réponse '${simulatedResponse}' enregistrée dans la variable '${node.responseVar}'`);
-      this.runtime.setVariable(node.responseVar, simulatedResponse);
+      this.assignTo(node.responseVar, simulatedResponse);
     }
   }
 

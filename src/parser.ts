@@ -1150,8 +1150,9 @@ export class Parser {
     }
 
     // 2. Collecter tous les paramètres jusqu'au ';'
-    // Les paramètres après le message peuvent être des valeurs spéciales
-    // propres à DSPLY (*BLANK = pas de réponse, *EXT, *JOBLOG...)
+    // DSPLY message {file-de-messages {réponse}} : la file peut être une valeur
+    // spéciale (*EXT, *JOBLOG, *BLANK...)
+    const line = this.peek().line;
     const params: ExpressionNode[] = [];
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
         if (params.length > 0 && this.check(TokenType.SPECIAL_VALUE)) {
@@ -1162,13 +1163,20 @@ export class Parser {
     }
     this.expect(TokenType.SEMICOLON);
 
+    if (params.length > 3) {
+        throw new Error(`DSPLY accepte au plus 3 opérandes (ligne ${line})`);
+    }
+    if (params[2] && params[2].valueType !== 'identifier') {
+        throw new Error(`La réponse de DSPLY doit être une variable (ligne ${line})`);
+    }
+
     // 3. Assigner selon la position
     return {
         type: 'Dsply',
         hasErrorExtender,
         message: params[0],
-        responseVar: params[1]?.valueType === 'identifier' ? params[1].value : undefined,
-        queue: params[2]
+        queue: params[1],
+        responseVar: params[2]?.value
     } as any;
   }
 

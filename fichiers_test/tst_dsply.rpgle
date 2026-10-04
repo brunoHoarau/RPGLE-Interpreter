@@ -10,7 +10,7 @@ dsply 'Début du programme';
 // 2. DSPLY avec extendeur d'erreur (E) et variable de réponse
 // En vrai, ça afficherait : "Continuer ? (Y/N)" et attendrait une touche.
 // Notre interpréteur va simuler la saisie de 'Y'.
-dsply(e) 'Continuer ? (Y/N) ' reponse *ext;
+dsply(e) 'Continuer ? (Y/N) ' *ext reponse;
 
 if reponse = 'Y';
     dsply 'Bonjour ' + %trim(nom) + ', traitement en cours...';
@@ -18,7 +18,7 @@ else;
     dsply 'Traitement annulé.';
 endif;
 
-// 3. DSPLY avec file d'attente explicite (simulé)
-dsply 'Fin du programme' *blank *joblog;
+// 3. DSPLY avec file de messages explicite (simulé)
+dsply 'Fin du programme' *joblog;
 
 return;
