@@ -198,3 +198,8 @@ test('unités et abréviations', () => {
   assert.equal(dt.unitAllowed('time', 'mseconds'), false);
   assert.equal(dt.unitAllowed('timestamp', 'mseconds'), true);
 });
+
+test('diffDateTime : résultat de plus de 15 chiffres refusé', () => {
+  assert.equal(dt.diffDateTime(Z('2026-10-04-00.00.00.000000'), Z('1990-01-01-00.00.00.000000'), 'mseconds'), 'precision');
+  assert.equal(dt.diffDateTime(Z('2026-10-05-00.00.00.000000'), Z('2026-10-04-00.00.00.000000'), 'mseconds'), 86400000000);
+});

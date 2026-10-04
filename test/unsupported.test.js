@@ -225,3 +225,14 @@ test('%DIFF et %SUBDT incertains : refusés', () => {
   }
   assert.throws(() => parse(`dcl-s n int(10); n = %subdt(D'2026-10-04' : *years : 4);`), NOT_SUPPORTED);
 });
+
+test('durée dont l\'argument peut avoir des décimales : refusée', () => {
+  for (const src of [
+    `dcl-s p packed(5:2) inz(2); dcl-s d date; d = d + %days(p);`,
+    `dcl-s d date; d = d + %days(10 / 5);`,
+    `dcl-s d date; d = d + %days(1.0);`,
+    `dcl-c DEUX 2; dcl-s d date; d = d + %days(DEUX);`,
+  ]) {
+    assert.throws(() => run(src), NOT_SUPPORTED, src);
+  }
+});

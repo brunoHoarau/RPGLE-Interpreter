@@ -92,6 +92,8 @@ function fromMock(value: any, type: DataTypeNode | undefined, what: string): any
 }
 
 // Fonctions intégrées qui acceptent une date, une heure ou un timestamp
+const DURATION_BUILTINS = new Set(['%years', '%months', '%days', '%hours', '%minutes', '%seconds', '%mseconds']);
+const WHOLE_NUMBER_BUILTINS = new Set(['%int', '%diff', '%subdt', '%len', '%scan', '%check', '%rem', '%div']);
 const DATE_AWARE_BUILTINS = new Set(['%date', '%time', '%timestamp', '%len', '%diff', '%subdt']);
 // Acceptées sur IBM i (ou doute) mais pas encore implémentées pour les dates
 const NOT_YET_DATE_BUILTINS = new Set(['%dec', '%int', '%max', '%min']);
@@ -656,6 +658,10 @@ export class Interpreter {
       const isChar = builtin === '%char';
       // Le 2e argument (*ISO) est un format, inutile à évaluer
       const args = (isChar ? expr.value.args.slice(0, 1) : expr.value.args).map((arg: ExpressionNode) => this.evaluate(arg));
+      // L'argument d'une durée doit être un entier garanti, quelle que soit sa valeur
+      if (DURATION_BUILTINS.has(builtin) && typeof args[0] === 'number' && !this.isWholeNumberExpression(expr.value.args[0])) {
+        throw new Error(`${expr.value.name.toUpperCase()} d'une valeur qui peut avoir des décimales : pas encore supporté par l'interpréteur`);
+      }
       // Aucune fonction intégrée ne prend une durée en argument
       const duration = args.find(isDuration);
       if (duration) throw incompatibleTypes(`${expr.value.name.toUpperCase()}(${describeValue(duration)})`);
@@ -676,6 +682,22 @@ export class Interpreter {
     }
 
     throw new Error(`Expression non supportée`);
+  }
+
+  // Vrai si l'expression est numérique sans décimales par construction (pas selon sa valeur)
+  private isWholeNumberExpression(expr: ExpressionNode | undefined): boolean {
+    if (!expr) return false;
+    if (expr.operator) {
+      if (expr.operator === 'neg') return this.isWholeNumberExpression(expr.left);
+      if (['+', '-', '*'].includes(expr.operator)) return this.isWholeNumberExpression(expr.left) && this.isWholeNumberExpression(expr.right);
+      return false;
+    }
+    if (expr.valueType === 'number') return !expr.hasDecimalPoint;
+    if (expr.valueType === 'builtin') return WHOLE_NUMBER_BUILTINS.has(expr.value.name.toLowerCase());
+    const type = this.declaredType(expr);
+    if (!type) return false;
+    if (type.typeName === 'int' || type.typeName === 'uns') return true;
+    return (type.typeName === 'packed' || type.typeName === 'zoned') && !type.decimals;
   }
 
   // Les autres fonctions intégrées ne savent pas traiter une date, une heure ou un timestamp

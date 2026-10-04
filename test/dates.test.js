@@ -497,3 +497,54 @@ test('%DIFF et %SUBDT : unité inconnue ou nombre d\'arguments, erreur d\'analys
   assert.throws(() => parse(`dcl-s n int(10); n = %subdt(D'2026-10-04');`), /%SUBDT attend 2 arguments/);
   assert.throws(() => parse(`dcl-s d date; d = d + %days();`), /%DAYS attend 1 argument/);
 });
+
+test('durées : argument entier garanti accepté', () => {
+  const out = run(`
+    dcl-s n int(10) inz(3);
+    dcl-s p packed(5:0) inz(2);
+    dcl-s d date inz(D'2026-10-04');
+    dcl-s fin date inz(D'2026-10-10');
+    dcl-s debut date inz(D'2026-10-04');
+    dsply %char(d + %days(n));
+    dsply %char(d + %days(p));
+    dsply %char(d + %days(n * 2 + 1));
+    dsply %char(d + %days(%diff(fin : debut : *days)));
+    dsply %char(d + %months(-3));
+  `);
+  assert.deepEqual(out, ['2026-10-07', '2026-10-06', '2026-10-11', '2026-10-10', '2026-07-04']);
+});
+
+test('%SUBDT d\'une heure en *DAYS, %DIFF *MS d\'un jour, grand décalage de timestamp', () => {
+  assert.throws(() => run(`dcl-s n int(10); n = %subdt(T'13.45.07' : *days);`), INCOMPATIBLE);
+  const out = run(`
+    dcl-s n int(20);
+    dcl-s z timestamp inz(Z'2026-10-04-12.00.00.000001');
+    n = %diff(Z'2026-10-05-00.00.00.000000' : Z'2026-10-04-00.00.00.000000' : *ms);
+    dsply %char(n);
+    dsply %char(z - %hours(24 * 146097));
+  `);
+  assert.deepEqual(out, ['86400000000', '1626-10-04-12.00.00.000001']);
+});
+
+test('durée en argument de procédure ou en RETURN : types incompatibles', () => {
+  assert.throws(() => run(`
+    dcl-s r int(10);
+    r = p(%days(1));
+    dcl-proc p;
+      dcl-pi *n int(10); x int(10) value; end-pi;
+      return x;
+    end-proc;
+  `), INCOMPATIBLE);
+  assert.throws(() => run(`
+    dcl-s d date;
+    d = q();
+    dcl-proc q;
+      dcl-pi *n date; end-pi;
+      return %days(1);
+    end-proc;
+  `), INCOMPATIBLE);
+});
+
+test('%DIFF avec une unité seule : message d\'arité', () => {
+  assert.throws(() => parse(`dcl-s n int(10); n = %diff(D'2026-10-04' : *days);`), /%DIFF attend 3 arguments/);
+});

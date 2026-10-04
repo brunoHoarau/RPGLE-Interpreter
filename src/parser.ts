@@ -874,8 +874,12 @@ export class Parser {
     return this.parsePrimary();
   }
 
-  // 2e argument de %CHAR / %DATE / %TIME / %TIMESTAMP : seul %CHAR(x : *ISO) est supporté
   // Unité de %DIFF / %SUBDT : *YEARS, *Y, *MONTHS, *M... ; inconnue : erreur, comme à la compilation
+  private isUnitToken(): boolean {
+    const token = this.peek();
+    return token.type === TokenType.SPECIAL_VALUE && !!unitFromName(token.value);
+  }
+
   private parseUnitArgument(builtin: string): ExpressionNode {
     const token = this.peek();
     if (token.type !== TokenType.SPECIAL_VALUE || !unitFromName(token.value)) {
@@ -885,6 +889,7 @@ export class Parser {
     return { type: 'Expression', value: token.value.toLowerCase(), valueType: 'special' };
   }
 
+  // 2e argument de %CHAR / %DATE / %TIME / %TIMESTAMP : seul %CHAR(x : *ISO) est supporté
   private parseFormatArgument(builtin: string): ExpressionNode {
     const token = this.peek();
     if (builtin.toLowerCase() === '%char' && token.type === TokenType.SPECIAL_VALUE && token.value.toLowerCase() === '*iso') {
@@ -896,8 +901,10 @@ export class Parser {
 
   private parsePrimary(): ExpressionNode {
     if (this.check(TokenType.NUMBER)) {
-      const value = parseFloat(this.advance().value);
-      return { type: 'Expression', value, valueType: 'number' };
+      const text = this.advance().value;
+      const node: ExpressionNode = { type: 'Expression', value: parseFloat(text), valueType: 'number' };
+      if (text.includes('.')) node.hasDecimalPoint = true;
+      return node;
     }
 
     if (this.check(TokenType.STRING)) {
@@ -948,7 +955,7 @@ export class Parser {
         }
         if (args.length === 1 && FORMAT_BUILTINS.has(lower)) {
           args.push(this.parseFormatArgument(name));
-        } else if (UNIT_ARGUMENT.get(lower) === args.length) {
+        } else if (UNIT_ARGUMENT.has(lower) && (UNIT_ARGUMENT.get(lower) === args.length || this.isUnitToken())) {
           args.push(this.parseUnitArgument(name));
         } else {
           args.push(this.parseExpression());

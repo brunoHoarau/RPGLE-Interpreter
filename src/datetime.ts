@@ -266,7 +266,7 @@ function wholeMonths(a: DateTimeValue, b: DateTimeValue): number {
 }
 
 // Échec de %DIFF : types différents, unité non admise, valeur 24.00.00,
-// timestamps en *SECONDS (fractions possibles sur IBM i), résultat au-delà de 2^53
+// timestamps en *SECONDS (fractions possibles sur IBM i), résultat de plus de 15 chiffres (limite incertaine)
 export type DiffFailure = 'kind' | 'unit' | '24h' | 'seconds' | 'precision';
 
 // %DIFF(a : b : unité) : nombre entier d'unités de a - b, tronqué vers zéro
@@ -283,7 +283,7 @@ export function diffDateTime(a: DateTimeValue, b: DateTimeValue, unit: DurationU
   const pb = position(b);
   const micros = BigInt(pa.day - pb.day) * MICROS_PER_DAY + BigInt(pa.micros - pb.micros);
   const result = micros / MICROS_PER_UNIT[unit]; // division BigInt : tronquée vers zéro
-  const limit = BigInt(Number.MAX_SAFE_INTEGER);
+  const limit = 999999999999999n;
   return result > limit || result < -limit ? 'precision' : Number(result);
 }
 

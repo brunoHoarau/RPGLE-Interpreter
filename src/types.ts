@@ -297,6 +297,7 @@ export interface ExpressionNode {
   left?: ExpressionNode;
   right?: ExpressionNode;
   value?: any;
+  hasDecimalPoint?: boolean; // littéral numérique écrit avec un point décimal
   valueType?: 'number' | 'string' | 'boolean' | 'identifier' | 'builtin' | 'special' | 'call' | 'datetime';
 }
 
