@@ -1,4 +1,5 @@
 import { ExecutionContext, TableDefinition } from './context';
+import { NotSupportedError } from './errors';
 
 export interface SQLResult {
   rows: any[];
@@ -35,6 +36,9 @@ type Condition =
   | { kind: 'compare'; op: string; left: Operand; right: Operand }
   | { kind: 'isNull'; operand: Operand; negated: boolean };
 
+// Mots qui ouvrent une construction SQL hors périmètre (jamais pris pour une colonne inconnue)
+const RESERVED_SQL_WORDS = new Set(['CURRENT', 'CASE', 'CAST', 'SELECT', 'DEFAULT', 'DATE', 'TIME', 'TIMESTAMP', 'USER', 'SESSION_USER', 'SYSTEM_USER']);
+
 export class SQLEngine {
   private tables: { [name: string]: TableDefinition };
 
@@ -62,6 +66,8 @@ export class SQLEngine {
       }
       throw new Error(`Type de requête SQL non supporté: ${normalized.split(' ')[0]}`);
     } catch (error: any) {
+      // Un refus « pas encore supporté » arrête le programme, il n'est pas une erreur SQL
+      if (error instanceof NotSupportedError) throw error;
       return {
         rows: [],
         rowCount: 0,
@@ -124,12 +130,15 @@ export class SQLEngine {
 
   // === INSERT ===
   private executeInsert(sql: string, hostVars: HostVariables): SQLResult {
-    const match = sql.match(/INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
+    const match = sql.match(/^INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(/i);
     if (!match) throw new Error('Syntaxe INSERT invalide');
 
     const table = this.getTable(match[1]);
     const columns = match[2].split(',').map(c => c.trim().toUpperCase());
-    const values = match[3].split(',').map(v => this.resolveValue(v.trim(), hostVars));
+    const close = this.findClosingParen(sql, match[0].length);
+    if (close < 0 || sql.slice(close + 1).trim() !== '') throw new Error('Syntaxe INSERT invalide');
+    const values = this.splitTopLevel(sql.slice(match[0].length, close), ',')
+      .map(v => this.compileValue(v, null)({}, hostVars));
 
     const newRow: any = {};
     columns.forEach((col, idx) => newRow[col] = values[idx]);
@@ -147,8 +156,16 @@ export class SQLEngine {
     const table = this.getTable(setMatch[1]);
     const matches = this.compileWhere(setMatch[3], table, hostVars);
     const targets = table.data.filter(matches);
+    const assignments = this.splitTopLevel(setMatch[2], ',').map(assign => {
+      const eq = this.splitTopLevel(assign, '=');
+      if (eq.length !== 2 || !/^\s*\w+\s*$/.test(eq[0])) throw new Error(`Clause SET invalide : ${assign.trim()}`);
+      return { col: eq[0].trim().toUpperCase(), value: this.compileValue(eq[1], this.columnNames(table)) };
+    });
     for (const row of targets) {
-      this.applySet(setMatch[2], row, hostVars);
+      // Toutes les expressions lisent la ligne avant mise à jour
+      const before = { ...row };
+      const computed = assignments.map(a => a.value(before, hostVars));
+      assignments.forEach((a, i) => { row[a.col] = computed[i]; });
     }
 
     return this.resultFor([], targets.length);
@@ -202,26 +219,206 @@ export class SQLEngine {
     return typeof value === 'string' ? value.trimEnd() : value;
   }
 
-  private resolveValue(token: string, hostVars: HostVariables): any {
-    if (token.startsWith(':')) {
-      return this.getHostVariable(token.substring(1), hostVars);
+  // === Expressions de valeur (SET, VALUES) ===
+
+  private columnNames(table: TableDefinition): Set<string> {
+    const names = new Set<string>(table.columns.map(c => c.name.toUpperCase()));
+    for (const row of table.data) {
+      for (const key of Object.keys(row)) names.add(key.toUpperCase());
     }
-    if (token.startsWith("'") && token.endsWith("'")) {
-      return token.slice(1, -1);
-    }
-    if (!isNaN(Number(token))) {
-      return Number(token);
-    }
-    if (token.toUpperCase() === 'NULL') return null;
-    return token;
+    return names;
   }
 
-  private applySet(setClause: string, row: any, hostVars: HostVariables): void {
-    const assignments = setClause.split(',');
-    for (const assign of assignments) {
-      const [col, val] = assign.split('=').map(s => s.trim());
-      row[col.toUpperCase()] = this.resolveValue(val, hostVars);
+  // Découpe sur un séparateur hors littéraux chaîne et hors parenthèses
+  private splitTopLevel(text: string, separator: string): string[] {
+    const parts: string[] = [];
+    let depth = 0;
+    let inString = false;
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (ch === "'") {
+          if (text[i + 1] === "'") i++;
+          else inString = false;
+        }
+      } else if (ch === "'") {
+        inString = true;
+      } else if (ch === '(') {
+        depth++;
+      } else if (ch === ')') {
+        depth--;
+      } else if (ch === separator && depth === 0) {
+        parts.push(text.slice(start, i));
+        start = i + 1;
+      }
     }
+    parts.push(text.slice(start));
+    return parts;
+  }
+
+  // Position de la parenthèse fermante qui correspond à une parenthèse ouverte juste avant `from`
+  private findClosingParen(text: string, from: number): number {
+    let depth = 1;
+    let inString = false;
+    for (let i = from; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (ch === "'") {
+          if (text[i + 1] === "'") i++;
+          else inString = false;
+        }
+      } else if (ch === "'") {
+        inString = true;
+      } else if (ch === '(') {
+        depth++;
+      } else if (ch === ')' && --depth === 0) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  // Analyse une expression de valeur et renvoie une fonction (ligne, variables hôtes) => valeur.
+  // `columns` : colonnes utilisables (SET) ; null pour VALUES, où aucune colonne n'est visible.
+  // Les constructions hors périmètre (fonctions, ||, CASE, sous-requêtes...) arrêtent le programme.
+  private compileValue(text: string, columns: Set<string> | null): (row: any, hostVars: HostVariables) => any {
+    type Evaluator = (row: any, hostVars: HostVariables) => any;
+    const unsupported = (): never => {
+      throw new NotSupportedError(`Expression SQL '${text.trim()}'`);
+    };
+
+    // Jetons : chaîne, nombre, variable hôte, mot, opérateur, parenthèse
+    const tokens: { kind: 'string' | 'number' | 'host' | 'word' | 'op' | 'lparen' | 'rparen'; value: string }[] = [];
+    let i = 0;
+    while (i < text.length) {
+      const ch = text[i];
+      let m: RegExpMatchArray | null;
+      const rest = text.slice(i);
+      if (/\s/.test(ch)) {
+        i++;
+      } else if (ch === "'") {
+        let value = '';
+        i++;
+        while (true) {
+          if (i >= text.length) throw new Error(`Chaîne non terminée : ${text.trim()}`);
+          if (text[i] === "'") {
+            if (text[i + 1] === "'") { value += "'"; i += 2; continue; }
+            i++;
+            break;
+          }
+          value += text[i++];
+        }
+        tokens.push({ kind: 'string', value });
+      } else if ((m = rest.match(/^\d+(?:\.\d+)?/))) {
+        tokens.push({ kind: 'number', value: m[0] });
+        i += m[0].length;
+      } else if ((m = rest.match(/^:([A-Za-z_$#@][\w$#@]*(?:\.[\w$#@]+)?)/))) {
+        tokens.push({ kind: 'host', value: m[1] });
+        i += m[0].length;
+      } else if ((m = rest.match(/^[A-Za-z_][\w$#@]*/))) {
+        tokens.push({ kind: 'word', value: m[0] });
+        i += m[0].length;
+      } else if ('+-*/'.includes(ch)) {
+        tokens.push({ kind: 'op', value: ch });
+        i++;
+      } else if (ch === '(') {
+        tokens.push({ kind: 'lparen', value: ch });
+        i++;
+      } else if (ch === ')') {
+        tokens.push({ kind: 'rparen', value: ch });
+        i++;
+      } else {
+        return unsupported();   // ||, comparaisons, etc.
+      }
+    }
+
+    let pos = 0;
+    const isOp = (v: string) => tokens[pos]?.kind === 'op' && tokens[pos].value === v;
+
+    const numeric = (v: any): number | null => {
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'number') return v;
+      return unsupported();   // une chaîne dans un calcul
+    };
+
+    const parseAtom = (): Evaluator => {
+      const t = tokens[pos];
+      if (!t) return unsupported();
+      pos++;
+      switch (t.kind) {
+        case 'string': return () => t.value;
+        case 'number': return () => Number(t.value);
+        case 'host': return (_row, hostVars) => this.getHostVariable(t.value, hostVars);
+        case 'word': {
+          const upper = t.value.toUpperCase();
+          if (upper === 'NULL') return () => null;
+          // Fonction, CURRENT DATE, CASE... : pas une simple colonne
+          if (tokens[pos]?.kind === 'lparen' || RESERVED_SQL_WORDS.has(upper) || !columns) return unsupported();
+          if (!columns.has(upper)) throw new Error(`Colonne inconnue: ${upper}`);
+          return (row) => {
+            const key = Object.keys(row).find(k => k.toUpperCase() === upper);
+            return key === undefined ? null : row[key];
+          };
+        }
+        default: return unsupported();
+      }
+    };
+
+    const parseFactor = (): Evaluator => {
+      if (isOp('-')) {
+        pos++;
+        const inner = parseFactor();
+        return (row, hv) => {
+          const v = numeric(inner(row, hv));
+          return v === null ? null : -v;
+        };
+      }
+      if (tokens[pos]?.kind === 'lparen') {
+        pos++;
+        const inner = parseExpr();
+        if (tokens[pos]?.kind !== 'rparen') return unsupported();
+        pos++;
+        return inner;
+      }
+      return parseAtom();
+    };
+
+    const binary = (op: string, left: Evaluator, right: Evaluator): Evaluator => (row, hv) => {
+      const a = numeric(left(row, hv));
+      const b = numeric(right(row, hv));
+      if (a === null || b === null) return null;
+      switch (op) {
+        case '+': return a + b;
+        case '-': return a - b;
+        case '*': return a * b;
+        default:
+          if (b === 0) throw new Error('Division par zéro');
+          return a / b;
+      }
+    };
+
+    const parseTerm = (): Evaluator => {
+      let left = parseFactor();
+      while (isOp('*') || isOp('/')) {
+        const op = tokens[pos++].value;
+        left = binary(op, left, parseFactor());
+      }
+      return left;
+    };
+
+    const parseExpr = (): Evaluator => {
+      let left = parseTerm();
+      while (isOp('+') || isOp('-')) {
+        const op = tokens[pos++].value;
+        left = binary(op, left, parseTerm());
+      }
+      return left;
+    };
+
+    const evaluator = parseExpr();
+    if (pos < tokens.length) return unsupported();
+    return evaluator;
   }
 
   // === Clause WHERE ===

@@ -16,6 +16,14 @@ export const STATUS_CALL_NOT_FOUND = 211;   // Programme ou procédure appelé i
 export const STATUS_INVALID_DATE = 112;     // RNX0112 : date, heure ou timestamp invalide
 export const STATUS_DATE_OVERFLOW = 113;    // RNX0113 : date hors limites après calcul
 
+// Construction valide sur IBM i mais que l'interpréteur ne sait pas exécuter : le programme s'arrête
+// (ce n'est pas une RpgError, MONITOR ne l'intercepte pas, et le moteur SQL ne la convertit pas en SQLCOD)
+export class NotSupportedError extends Error {
+  constructor(what: string) {
+    super(`${what} : pas encore supporté par l'interpréteur`);
+  }
+}
+
 // Instruction que le compilateur IBM i refuserait : ce n'est pas une erreur d'exécution RPG,
 // MONITOR ne l'intercepte donc pas
 export function incompatibleTypes(what: string): Error {
