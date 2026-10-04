@@ -8,11 +8,10 @@ export interface ColumnDefinition {
 export interface TableDefinition {
   columns: ColumnDefinition[];
   data: any[];
-}
-
-export interface FileDefinition {
-  records: any[];
-  keyFields?: string[];
+  keys?: string[];   // Clés du fichier logique/physique, en majuscules
+  format?: string;   // Nom du format d'enregistrement, en majuscules
+  deletedRows?: boolean; // Positionné par un DELETE SQL : les numéros d'enregistrement ne sont plus fiables
+  revision?: number;     // Incrémenté par chaque INSERT, UPDATE ou DELETE SQL (cache des fichiers natifs)
 }
 
 // Bouchon d'un programme ou d'une procédure externe (context/programs.json).
@@ -30,7 +29,6 @@ export interface ProgramMock {
 
 export interface ExecutionContext {
   tables: { [tableName: string]: TableDefinition };
-  files: { [fileName: string]: FileDefinition };
   programs: { [programName: string]: ProgramMock };
 }
 
@@ -83,9 +81,28 @@ function normalizeTables(raw: any, sourcePath: string): { [name: string]: TableD
     if (table && table.schema && Array.isArray(table.data)) {
       const columns: ColumnDefinition[] = [];
       for (const colName in table.schema) {
+        // Le type reste un texte : il n'est validé qu'à la déclaration DCL-F
         columns.push({ name: colName.toUpperCase(), type: table.schema[colName] });
       }
-      result[tableName.toUpperCase()] = { columns, data: table.data };
+      const definition: TableDefinition = { columns, data: table.data };
+      if (table.keys !== undefined) {
+        if (!Array.isArray(table.keys) || !table.keys.every((k: any) => typeof k === 'string')) {
+          throw new Error(`Table '${tableName}' de ${sourcePath} : "keys" doit être une liste de noms de colonnes`);
+        }
+        definition.keys = table.keys.map((key: any) => String(key).toUpperCase());
+        for (const key of definition.keys!) {
+          if (!columns.some(c => c.name === key)) {
+            throw new Error(`Table '${tableName}' de ${sourcePath} : clé '${key}' absente du schéma`);
+          }
+        }
+      }
+      if (table.format !== undefined) {
+        if (typeof table.format !== 'string' || table.format.trim() === '') {
+          throw new Error(`Table '${tableName}' de ${sourcePath} : "format" doit être un nom`);
+        }
+        definition.format = table.format.toUpperCase();
+      }
+      result[tableName.toUpperCase()] = definition;
     } else if (Array.isArray(table)) {
       const columns: ColumnDefinition[] = table.length > 0
         ? Object.keys(table[0]).map(key => ({ name: key.toUpperCase(), type: 'AUTO' }))
@@ -101,5 +118,5 @@ function normalizeTables(raw: any, sourcePath: string): { [name: string]: TableD
 
 // Contexte vide par défaut
 export function emptyContext(): ExecutionContext {
-  return { tables: {}, files: {}, programs: {} };
+  return { tables: {}, programs: {} };
 }

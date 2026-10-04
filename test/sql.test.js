@@ -99,6 +99,26 @@ test('INSERT résout les variables hôtes', () => {
   assert.deepEqual(ctx.tables.CUSTOMERS.data[3], { ID: 9, NAME: 'Zed' });
 });
 
+test('INSERT : colonnes omises à leur valeur par défaut IBM i si le type est connu', () => {
+  const ctx = {
+    programs: {},
+    tables: {
+      T: {
+        columns: [
+          { name: 'ID', type: 'INTEGER' }, { name: 'NOM', type: 'char(5)' }, { name: 'V', type: 'varchar(5)' },
+          { name: 'M', type: 'DECIMAL(9,2)' }, { name: 'I', type: 'ind' }, { name: 'D', type: 'date' },
+          { name: 'H', type: 'time' }, { name: 'TS', type: 'timestamp' }, { name: 'X', type: 'AUTO' }, { name: 'B', type: 'blob' },
+        ],
+        data: [],
+      },
+    },
+  };
+  run(`exec sql insert into t (id) values (1);`, ctx);
+  assert.deepEqual(ctx.tables.T.data[0], {
+    ID: 1, NOM: '', V: '', M: 0, I: '0', D: '0001-01-01', H: '00.00.00', TS: '0001-01-01-00.00.00.000000',
+  });
+});
+
 test('UPDATE SET résout les variables hôtes', () => {
   const ctx = customersContext();
   run(`

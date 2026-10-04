@@ -30,13 +30,9 @@ export interface FieldDeclaration {
 export class Runtime {
   private globals: Scope = newScope();
   private frames: Scope[] = [];
-  private files: Map<string, any[]> = new Map();
   private output: string[] = [];
   public status = 0; // Code de la dernière erreur interceptée par MONITOR (%STATUS)
   private callStack: string[] = [];
-
-  private filePointers: Map<string, number> = new Map();
-  private fileStatus: Map<string, { found: boolean; eof: boolean }> = new Map();
 
   // 🆕 NOUVEAUX ÉLÉMENTS (avec 'private')
   private context: ExecutionContext;
@@ -121,6 +117,12 @@ export class Runtime {
     const key = name.toLowerCase();
     const scope = resolved?.scope ?? this.currentScope;
     scope.variables.set(key, coerce(value, scope.types.get(key), name));
+  }
+
+  // Affecte une variable globale, même depuis une procédure (zones des fichiers)
+  setGlobal(name: string, value: any): void {
+    const key = name.toLowerCase();
+    this.globals.variables.set(key, coerce(value, this.globals.types.get(key), name));
   }
 
   getField(dsName: string, field: string): any {
@@ -224,64 +226,6 @@ export class Runtime {
     };
   }
 
-  declareFile(name: string, data: any[] = []): void {
-    this.files.set(name.toLowerCase(), data);
-    this.filePointers.set(name.toLowerCase(), 0);
-    this.fileStatus.set(name.toLowerCase(), { found: false, eof: false });
-  }
-
-  setll(fileName: string, key?: any): boolean {
-    const file = this.files.get(fileName.toLowerCase());
-    if (!file) throw new Error(`Fichier non déclaré: ${fileName}`);
-
-    this.filePointers.set(fileName.toLowerCase(), 0);
-    const status = this.fileStatus.get(fileName.toLowerCase())!;
-    status.found = false;
-    status.eof = false;
-    return true;
-  }
-
-  read(fileName: string): any {
-    const file = this.files.get(fileName.toLowerCase());
-    if (!file) throw new Error(`Fichier non déclaré: ${fileName}`);
-
-    const pointer = this.filePointers.get(fileName.toLowerCase())!;
-    const status = this.fileStatus.get(fileName.toLowerCase())!;
-
-    if (pointer >= file.length) {
-      status.eof = true;
-      status.found = false;
-      return null;
-    }
-
-    const record = file[pointer];
-    this.filePointers.set(fileName.toLowerCase(), pointer + 1);
-    status.found = true;
-    status.eof = false;
-    return record;
-  }
-
-  chain(fileName: string, key: any): any {
-    const file = this.files.get(fileName.toLowerCase());
-    if (!file) throw new Error(`Fichier non déclaré: ${fileName}`);
-
-    const status = this.fileStatus.get(fileName.toLowerCase())!;
-    const record = file.find(r => r.id === key || r.key === key);
-
-    if (record) {
-      status.found = true;
-      status.eof = false;
-      return record;
-    } else {
-      status.found = false;
-      return null;
-    }
-  }
-
-  getFileStatus(fileName: string): { found: boolean; eof: boolean } {
-    return this.fileStatus.get(fileName.toLowerCase()) || { found: false, eof: true };
-  }
-
   // 🆕 Exécution SQL
   executeSQL(sql: string): SQLResult {
     this.lastSQLResult = this.sqlEngine.execute(sql, this.hostVariables());
@@ -322,9 +266,6 @@ export class Runtime {
     this.globals = newScope();
     this.frames = [];
     this.status = 0;
-    this.files.clear();
-    this.filePointers.clear();
-    this.fileStatus.clear();
     this.output = [];
     this.callStack = [];
     // Note: on ne réinitialise pas this.context car il est en lecture seule pour la session

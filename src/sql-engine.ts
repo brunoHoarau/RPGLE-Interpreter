@@ -1,6 +1,13 @@
 import { ExecutionContext, TableDefinition } from './context';
 import { isDataStructure } from './datatypes';
 import { NotSupportedError } from './errors';
+import { parseFieldType } from './files';
+
+// Valeur par défaut IBM i d'une colonne omise dans INSERT (numériques : 0)
+const SQL_DEFAULTS: { [typeName: string]: any } = {
+  char: '', varchar: '', ind: '0',
+  date: '0001-01-01', time: '00.00.00', timestamp: '0001-01-01-00.00.00.000000',
+};
 
 export interface SQLResult {
   rows: any[];
@@ -181,9 +188,17 @@ export class SQLEngine {
     }
 
     const newRow: any = {};
+    // Colonne omise d'un type connu : valeur par défaut IBM i (blanc, zéro, '0', date/heure minimales)
+    for (const column of table.columns) {
+      const name = column.name.toUpperCase();
+      if (columns.includes(name)) continue;
+      const type = parseFieldType(column.type);
+      if (type) newRow[name] = SQL_DEFAULTS[type.typeName] ?? 0;
+    }
     columns.forEach((col, idx) => newRow[col] = values[idx]);
 
     table.data.push(newRow);
+    table.revision = (table.revision ?? 0) + 1;
 
     return { rows: [], rowCount: 1, sqlCode: 0, sqlState: '00000' };
   }
@@ -217,6 +232,7 @@ export class SQLEngine {
       const computed = assignments.map(a => a.value(before, hostVars));
       assignments.forEach((a, i) => { row[a.col] = computed[i]; });
     }
+    table.revision = (table.revision ?? 0) + 1;
 
     return this.resultFor([], targets.length);
   }
@@ -234,6 +250,8 @@ export class SQLEngine {
     } else {
       table.data = [];
     }
+    if (table.data.length < before) table.deletedRows = true;
+    table.revision = (table.revision ?? 0) + 1;
 
     return this.resultFor([], before - table.data.length);
   }

@@ -54,7 +54,6 @@ function customersContext() {
         ],
       },
     },
-    files: {},
     programs: {},
   };
 }

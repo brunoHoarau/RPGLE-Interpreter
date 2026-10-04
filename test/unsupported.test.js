@@ -8,19 +8,60 @@ const NOT_SUPPORTED = /pas encore support/i;
 
 // --- Opérations ---
 
-test('CHAIN au niveau principal est refusé, pas ignoré', () => {
-  assert.throws(() => parse(`dcl-s cle int(5); chain cle clients;`), err =>
-    NOT_SUPPORTED.test(err.message) && /CHAIN/.test(err.message) && /ligne 1/.test(err.message));
-});
-
-test('READ, SETLL, WRITE, UPDATE, DELETE sont refusés', () => {
-  for (const op of ['read clients;', 'setll *start clients;', 'write fmt;', 'update fmt;', 'delete fmt;']) {
+test('WRITE, UPDATE, DELETE sont refusés', () => {
+  for (const op of ['write fmt;', 'update fmt;', 'delete fmt;']) {
     assert.throws(() => parse(op), NOT_SUPPORTED, op);
   }
 });
 
-test('DCL-F est refusé', () => {
-  assert.throws(() => parse(`dcl-f clients keyed;`), err => NOT_SUPPORTED.test(err.message) && /DCL-F/.test(err.message));
+test('DCL-F : périphériques et mots-clés non supportés refusés', () => {
+  for (const src of [
+    'dcl-f ecran workstn;', 'dcl-f etat printer;', 'dcl-f f special;',
+    'dcl-f client usage(*update);', 'dcl-f client usage(*input:*output);',
+    'dcl-f client prefix(c_);', 'dcl-f client rename(clientf:r);', "dcl-f client extfile('LIB/CLIENT');",
+    'dcl-f client infds(ds);', 'dcl-f client qualified;', 'dcl-f client alias;', 'dcl-f client block(*no);',
+    'dcl-proc p; dcl-f client; end-proc;',
+  ]) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
+  }
+});
+
+test('opérations de fichier non supportées refusées', () => {
+  for (const src of [
+    'dcl-f client keyed; reade client;', 'dcl-f client keyed; readpe client;',
+    'dcl-f client keyed; chain %kds(k) client;', 'dcl-f client keyed; read(e) client;',
+    'dcl-f client keyed; write clientf;', 'dcl-f client keyed; update clientf;', 'dcl-f client keyed; delete clientf;',
+    'dcl-f client keyed; readc client;', 'dcl-f client keyed; read client ds;',
+  ]) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
+  }
+});
+
+test('opération sur un fichier non déclaré : erreur d\'analyse', () => {
+  assert.throws(() => parse('read client;'), /CLIENT.*non déclaré/i);
+  assert.throws(() => parse('dcl-f client; if %eof(autre); endif;'), /AUTRE.*non déclaré/i);
+});
+
+test('opérations de lecture acceptées à l\'analyse', () => {
+  assert.doesNotThrow(() => parse(`
+    dcl-f client keyed usropn;
+    dcl-f cde disk usage(*input) keyed;
+    dcl-s n packed(7:0);
+    open client;
+    read client;
+    read clientf;
+    readp client;
+    chain n client;
+    chain (n : 5) cde;
+    setll *start client;
+    setll *hival client;
+    setgt (n) cde;
+    reade (n) cde;
+    readpe n cde;
+    if %eof(client) or %found or %equal(cde) or %open(client) or %eof;
+    endif;
+    close client;
+  `));
 });
 
 test('EXSR est refusé, y compris dans un bloc', () => {
@@ -235,4 +276,17 @@ test('durée dont l\'argument peut avoir des décimales : refusée', () => {
   ]) {
     assert.throws(() => run(src), NOT_SUPPORTED, src);
   }
+});
+
+test("extenseur d'opération de fichier : refusé, y compris collé à CHAIN", () => {
+  for (const src of ['chain(e) k f;', 'reade(n) k f;', 'setll(e) k f;', 'chain(n) client;']) {
+    assert.throws(() => parse('dcl-f f keyed; dcl-f client keyed; dcl-s k int(5); ' + src),
+      err => NOT_SUPPORTED.test(err.message) && /extenseur/i.test(err.message), src);
+  }
+  assert.doesNotThrow(() => parse('dcl-f client keyed; dcl-f cde keyed; dcl-s n int(5); chain (n) client; chain (n : 5) cde;'));
+});
+
+test('%EOF() sans argument accepté, %OPEN() refusé clairement', () => {
+  assert.doesNotThrow(() => parse('dcl-f client; if %eof(); endif;'));
+  assert.throws(() => parse('dcl-f client; if %open(); endif;'), /%OPEN attend un nom de fichier \(ligne 1\)/);
 });

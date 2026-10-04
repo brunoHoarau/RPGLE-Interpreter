@@ -109,8 +109,8 @@ test('%STATUS sans parenthèses', () => {
   assert.deepEqual(out, ['statut 102']);
 });
 
-test('%EOF, %FOUND et %ERROR restent refusés', () => {
-  for (const src of ['if %eof; endif;', 'if %found(f); endif;', 'if %error; endif;']) {
+test('%ERROR reste refusé', () => {
+  for (const src of ['if %error; endif;']) {
     assert.throws(() => parse(src), NOT_SUPPORTED, src);
   }
 });
