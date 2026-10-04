@@ -57,8 +57,11 @@ opérations natives (un `INSERT` SQL est vu par le `READ` suivant).
 
 **`DCL-F`** — `dcl-f CLIENT [disk] [usage(*input)] [keyed] [usropn];`
 - Chaque zone du fichier devient une variable globale typée, initialisée à blanc / zéro.
-- Une variable déjà déclarée avec le même nom et un autre type → erreur (comme à la compilation).
+- Une variable (`dcl-s`, sous-champ de DS, paramètre du programme) de même nom et d'un autre
+  type → « types incompatibles » (comme à la compilation) ; de même type → « pas encore supporté »
+  (valide sur IBM i, non simulé). Une `dcl-c` ou une DS de même nom → « déjà déclaré ».
   Deux fichiers ayant une zone de même nom et de même type la partagent.
+- `DISK` et `DISK(*EXT)` acceptés ; tout autre argument de `DISK` refusé.
 - Fichier absent de `tables.json`, ou sans `schema` → erreur claire au démarrage.
   `keyed` sur une table sans `keys` → erreur.
 - Refusés (« pas encore supporté ») : `WORKSTN`, `PRINTER`, `SPECIAL` ; mots-clés `PREFIX`,
@@ -69,18 +72,32 @@ opérations natives (un `INSERT` SQL est vu par le `READ` suivant).
 **Lecture**
 - `READ f` : enregistrement suivant (ordre des clés si `keyed`, sinon ordre d'arrivée). Fin :
   `%EOF` = `*ON`, zones inchangées. `READ` accepte le nom du fichier ou de son format.
+- Après une lecture réussie (`READ`, `READP`, `READE`, `READPE`, `CHAIN` trouvé), le fichier est
+  positionné **sur** l'enregistrement lu : `READ` lit celui de clé strictement supérieure, `READP`
+  celui de clé strictement inférieure (`read; read; readp` relit le premier). Si l'enregistrement
+  lu est supprimé entre-temps, la position reste définie par sa clé.
 - `READP f` : enregistrement précédent ; début de fichier → `%EOF` = `*ON`.
 - `CHAIN clé f` : lecture directe ; `%FOUND` mis à jour ; non trouvé → zones inchangées.
-  Fichier sans `keyed` : `CHAIN n f` lit l'enregistrement de rang `n` (1 = premier).
+  Fichier sans `keyed` : `CHAIN n f` lit l'enregistrement de rang `n` (1 = premier) ; rang
+  caractère ou liste → « types incompatibles » ; rang non entier, ou toute ligne déjà vue puis
+  supprimée (ou un `DELETE` SQL sur la table pendant l'exécution) → « pas encore supporté ».
+  `SETLL`/`SETGT`/`READE`/`READPE` par valeur sur un fichier sans clé → « pas encore supporté ».
 - `SETLL clé f` : se place avant la première clé ≥ ; `%EQUAL` = clé exacte trouvée ; `%FOUND` =
-  une clé ≥ existe. Ne lit rien et ne modifie pas `%EOF`.
-- `SETGT clé f` : se place après la dernière clé ≤ ; `%FOUND` = une clé > existe.
+  une clé ≥ existe. Ne lit rien ; remet `%EOF(f)` à `*OFF` (`%EOF` sans argument inchangé).
+- `SETGT clé f` : se place après la dernière clé ≤ ; `%FOUND` = une clé > existe ; remet
+  `%EOF(f)` à `*OFF`. `CHAIN` trouvé remet aussi `%EOF(f)` à `*OFF` ; après un `CHAIN` non
+  trouvé, `%EOF(f)` est inconnu : le lire avant une nouvelle lecture → « pas encore supporté ».
 - `SETLL` / `SETGT` acceptent aussi `*START`, `*END`, `*LOVAL`, `*HIVAL`.
 - `READE clé f` / `READPE clé f` : suivant / précédent seulement si sa clé est égale ; sinon
   `%EOF` = `*ON`.
 - Clé : une valeur, ou une liste `(k1 : k2 …)` pour une clé composée ; clé partielle (premières
   zones) acceptée. Comparaison selon le type de la zone : numérique comme nombre, caractère avec
-  blancs de fin ignorés. Valeur de clé d'un type incompatible avec la zone → « types incompatibles ».
+  blancs de fin ignorés. Valeur de clé d'un type incompatible avec la zone → « types incompatibles » ;
+  valeur qui ne tient pas dans la zone clé (décimales ou chiffres en trop, texte trop long) →
+  « pas encore supporté » (conversion IBM i non vérifiée).
+- Donnée de `tables.json` qui ne tient pas dans sa zone → erreur « Donnée invalide … (ne tient pas
+  dans packed(9:2)) » ; un `INSERT` SQL qui omet des colonnes de type connu leur donne la valeur par
+  défaut IBM i (blanc, zéro, `'0'`, date/heure minimales).
 - Refusés : `READE`/`READPE` sans clé, `%KDS`, une lecture séquentielle (`READ`, `READP`,
   `READE`, `READPE`) juste après un `CHAIN` non trouvé sans repositionnement (position IBM i non
   vérifiée), l'extenseur `(E)`, `READC`, et toute opération d'écriture (incrément 2).
@@ -91,7 +108,10 @@ opérations natives (un `INSERT` SQL est vu par le `READ` suivant).
 - `OPEN f` / `CLOSE f` ; `%OPEN(f)`. Fichier sans `USROPN` : ouvert dès le démarrage.
 - Opération sur un fichier fermé : **statut 01211** (`RpgError`, `RNX1211`), interceptable.
   `OPEN` d'un fichier déjà ouvert : **statut 01215** (`RNX1215`).
-- `CLOSE` puis `OPEN` : repositionnement au début.
+- `CLOSE` puis `OPEN` : repositionnement au début. `CLOSE` d'un fichier déjà fermé → « pas encore
+  supporté » (comportement IBM i non vérifié).
+- Performance : clés par ligne et ordre trié mis en cache, invalidés par la version des données
+  (`revision`, incrémentée par chaque `INSERT`/`UPDATE`/`DELETE` SQL).
 
 **Programmes appelés** : un programme appelé (source) voit les mêmes données ; ses positions de
 lecture sont les siennes.
