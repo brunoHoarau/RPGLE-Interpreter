@@ -103,6 +103,12 @@ export enum TokenType {
   EXEC_SQL = 'EXEC_SQL',
   SETLL = 'SETLL',
   READ = 'READ',
+  READE = 'READE',
+  READP = 'READP',
+  READPE = 'READPE',
+  SETGT = 'SETGT',
+  OPEN = 'OPEN',
+  CLOSE = 'CLOSE',
   CHAIN = 'CHAIN',
   UPDATE = 'UPDATE',
   DELETE = 'DELETE',
@@ -141,6 +147,7 @@ export type ASTNode =
   | ReturnNode
   | MonitorNode
   | SQLNode
+  | FileDeclarationNode
   | FileOperationNode
   | LeaveNode
   | IterNode
@@ -150,6 +157,7 @@ export interface ProgramNode {
   type: 'Program';
   body: ASTNode[];
   parameters?: ParameterNode[];  // dcl-pi du programme principal : paramètres d'entrée
+  files?: FileDeclarationNode[]; // DCL-F du programme principal
 }
 
 export interface ControlOptionsNode {
@@ -269,11 +277,21 @@ export interface SQLNode {
   sql: string;
 }
 
+export interface FileDeclarationNode {
+  type: 'FileDeclaration';
+  name: string;      // nom tel qu'écrit
+  keyed: boolean;
+  usropn: boolean;
+  line: number;
+}
+
 export interface FileOperationNode {
   type: 'FileOperation';
-  operation: 'setll' | 'read' | 'chain' | 'update' | 'delete' | 'write';
-  file: string;
-  key?: ExpressionNode;
+  operation: 'read' | 'readp' | 'reade' | 'readpe' | 'chain' | 'setll' | 'setgt' | 'open' | 'close';
+  file: string;                // nom de fichier ou de format, tel qu'écrit
+  key?: ExpressionNode[];      // liste de valeurs de clé
+  special?: 'start' | 'end';   // *START / *LOVAL, *END / *HIVAL
+  line: number;
 }
 
 export interface LeaveNode {
@@ -303,7 +321,7 @@ export interface ExpressionNode {
   right?: ExpressionNode;
   value?: any;
   hasDecimalPoint?: boolean; // littéral numérique écrit avec un point décimal
-  valueType?: 'number' | 'string' | 'boolean' | 'identifier' | 'builtin' | 'special' | 'call' | 'datetime';
+  valueType?: 'number' | 'string' | 'boolean' | 'identifier' | 'builtin' | 'special' | 'call' | 'datetime' | 'file';
 }
 
 

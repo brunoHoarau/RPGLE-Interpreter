@@ -91,8 +91,17 @@ function subdtBuiltin(value: any, unitName: string): number {
   return result;
 }
 
+function fileBuiltin(name: string): Builtin {
+  return () => { throw new Error(`${name} doit être évalué par l'interpréteur`); };
+}
+
 export const BUILTINS: { [name: string]: Builtin } = {
   '%status': ctx => ctx.status,
+  // %EOF, %FOUND, %EQUAL et %OPEN dépendent de l'état des fichiers : l'interpréteur les traite lui-même
+  '%eof': fileBuiltin('%EOF'),
+  '%found': fileBuiltin('%FOUND'),
+  '%equal': fileBuiltin('%EQUAL'),
+  '%open': fileBuiltin('%OPEN'),
   '%date': (ctx, value?: any) => toDateTime('date', ctx, value),
   '%time': (ctx, value?: any) => toDateTime('time', ctx, value),
   '%timestamp': (ctx, value?: any) => toDateTime('timestamp', ctx, value),

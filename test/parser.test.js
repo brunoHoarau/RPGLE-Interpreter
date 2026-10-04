@@ -35,3 +35,29 @@ test('le parser termine sur chaque préfixe des fichiers d\'exemple', () => {
   }
   assert.ok(parseTerminates(prefixes, 60000));
 });
+
+test('DCL-F et opérations de fichier : nœuds produits', () => {
+  const ast = parse(`
+    dcl-f Client keyed usropn;
+    dcl-s n packed(7:0);
+    setll *start client;
+    chain (n : 5) client;
+    reade n client;
+    if %eof(client) and %found;
+    endif;
+  `);
+  assert.deepEqual(ast.files, [{ type: 'FileDeclaration', name: 'Client', keyed: true, usropn: true, line: 2 }]);
+  const ops = ast.body.filter(n => n.type === 'FileOperation');
+  assert.equal(ops.length, 3);
+  assert.equal(ops[0].operation, 'setll');
+  assert.equal(ops[0].special, 'start');
+  assert.equal(ops[1].key.length, 2);
+  assert.equal(ops[2].key.length, 1);
+  const cond = ast.body.find(n => n.type === 'IfStatement').condition;
+  assert.deepEqual(cond.left.value.args, [{ type: 'Expression', value: 'client', valueType: 'file' }]);
+});
+
+test('open, close, read... restent utilisables comme noms de variable', () => {
+  const ast = parse(`dcl-s open int(5); dcl-s read int(5); open = 1; read += 2; close = open + read;`);
+  assert.equal(ast.body.filter(n => n.type === 'Assignment').length, 3);
+});

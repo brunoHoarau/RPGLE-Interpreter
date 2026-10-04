@@ -1,4 +1,4 @@
-import { Token, TokenType, ASTNode, ProgramNode, ExpressionNode, DataTypeNode, ParameterNode } from './types';
+import { Token, TokenType, ASTNode, ProgramNode, FileDeclarationNode, FileOperationNode, ExpressionNode, DataTypeNode, ParameterNode } from './types';
 import { isSupportedBuiltin } from './builtins';
 import { byteLength } from './datatypes';
 import { DateTimeKind, isDateTimeType, parseIso, unitFromName } from './datetime';
@@ -17,16 +17,23 @@ const DATETIME_LITERALS = new Map<TokenType, DateTimeKind>([
 
 // Opérations sur fichiers natifs : tokens dédiés
 const FILE_OPERATION_TOKENS = [
-  TokenType.SETLL, TokenType.READ, TokenType.CHAIN, TokenType.UPDATE, TokenType.DELETE, TokenType.WRITE,
+  TokenType.SETLL, TokenType.SETGT, TokenType.READ, TokenType.READE, TokenType.READP, TokenType.READPE,
+  TokenType.CHAIN, TokenType.OPEN, TokenType.CLOSE, TokenType.UPDATE, TokenType.DELETE, TokenType.WRITE,
 ];
+const WRITE_OPERATION_TOKENS = [TokenType.UPDATE, TokenType.DELETE, TokenType.WRITE];
+// Opérations dont le premier opérande est une clé
+const KEYED_OPERATIONS = new Set(['reade', 'readpe', 'chain', 'setll', 'setgt']);
+
+// Fonctions de fichier : l'argument facultatif est un nom de fichier, évalué par l'interpréteur
+const FILE_BUILTINS = new Set(['%eof', '%found', '%equal', '%open']);
 
 // Codes opération RPG free form non supportés (reconnus quand ils ne sont pas
 // suivis de '=', '.' ou '(' : sinon ce sont des noms de variable ou de procédure)
 const UNSUPPORTED_OPCODES = new Set([
-  'acq', 'begsr', 'clear', 'close', 'commit', 'data-gen', 'data-into', 'dealloc', 'dump', 'endsr',
+  'acq', 'begsr', 'clear', 'commit', 'data-gen', 'data-into', 'dealloc', 'dump', 'endsr',
   'eval-corr', 'evalr', 'except', 'exfmt', 'exsr', 'feod', 'force', 'in', 'leavesr', 'next',
-  'on-excp', 'on-exit', 'open', 'out', 'post', 'readc', 'reade', 'readp', 'readpe', 'rel', 'reset',
-  'rolbk', 'setgt', 'snd-msg', 'sorta', 'test', 'unlock', 'xml-into', 'xml-sax',
+  'on-excp', 'on-exit', 'out', 'post', 'readc', 'rel', 'reset',
+  'rolbk', 'snd-msg', 'sorta', 'test', 'unlock', 'xml-into', 'xml-sax',
 ]);
 
 const INDICATOR = /^\*in(lr|\d\d)$/;
@@ -57,6 +64,8 @@ export class Parser {
   private dateTimeNames = new Set<string>();
   // Constantes DCL-C et paramètres CONST visibles (nom en minuscules -> genre) : toute affectation est refusée
   private readOnlyNames = new Map<string, string>();
+  // Fichiers déclarés par DCL-F (noms en majuscules)
+  private fileNames = new Set<string>();
 
   constructor(tokens: Token[]) {
     this.tokens = tokens;
@@ -64,6 +73,7 @@ export class Parser {
 
   parse(): ProgramNode {
     const body: ASTNode[] = [];
+    const files: FileDeclarationNode[] = [];
     let parameters: ParameterNode[] | undefined;
 
     while (!this.isAtEnd()) {
@@ -82,13 +92,127 @@ export class Parser {
       } else if (this.check(TokenType.DCL_PI)) {
         parameters = this.parseProcedureInterface().parameters;
       } else if (this.check(TokenType.DCL_F)) {
-        throw unsupported('DCL-F (fichiers natifs)', this.peek());
+        files.push(this.parseFileDeclaration());
       } else {
         body.push(this.parseStatement());
       }
     }
 
-    return { type: 'Program', body, parameters };
+    return files.length > 0 ? { type: 'Program', body, parameters, files } : { type: 'Program', body, parameters };
+  }
+
+  // dcl-f nom [DISK] [USAGE(*INPUT)] [KEYED] [USROPN];
+  private parseFileDeclaration(): FileDeclarationNode {
+    const start = this.expect(TokenType.DCL_F);
+    const nameToken = this.expectName();
+    const key = nameToken.value.toUpperCase();
+    if (this.fileNames.has(key)) throw new Error(`Fichier ${key} déjà déclaré (ligne ${nameToken.line})`);
+    let keyed = false;
+    let usropn = false;
+    while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
+      const word = this.advance();
+      const lower = word.value.toLowerCase();
+      if (lower === 'disk') {
+        // périphérique par défaut
+      } else if (lower === 'keyed') {
+        keyed = true;
+      } else if (lower === 'usropn') {
+        usropn = true;
+      } else if (lower === 'usage') {
+        const ok = this.check(TokenType.LPAREN) && this.peekNext()?.value.toLowerCase() === '*input' &&
+                   this.tokens[this.pos + 2]?.type === TokenType.RPAREN;
+        if (!ok) throw unsupported('USAGE de DCL-F autre que USAGE(*INPUT)', word);
+        this.advance(); this.advance(); this.advance();
+      } else if (lower === 'workstn' || lower === 'printer' || lower === 'special') {
+        throw unsupported(`DCL-F ${lower.toUpperCase()}`, word);
+      } else {
+        throw unsupported(`Le mot-clé ${word.value.toUpperCase()} de DCL-F`, word);
+      }
+    }
+    this.expect(TokenType.SEMICOLON);
+    this.fileNames.add(key);
+    return { type: 'FileDeclaration', name: nameToken.value, keyed, usropn, line: start.line };
+  }
+
+  // Un fichier doit avoir été déclaré. Pour une opération, le nom peut être un format
+  // (connu à l'exécution) : l'erreur n'est levée qu'en l'absence de tout DCL-F.
+  private requireFile(name: string, line: number, strict: boolean): void {
+    if (strict ? !this.fileNames.has(name.toUpperCase()) : this.fileNames.size === 0) {
+      throw new Error(`Fichier ${name.toUpperCase()} non déclaré (ligne ${line})`);
+    }
+  }
+
+  // Après un mot d'opération de fichier : est-ce un nom de variable ou de procédure (x = 1, p(a), p;) ?
+  private isFileKeywordNameUse(): boolean {
+    const next = this.peekNext();
+    if (!next) return false;
+    if (next.type === TokenType.EQUALS || next.type === TokenType.DOT || next.type === TokenType.SEMICOLON ||
+        Parser.COMPOUND_OPERATORS.has(next.type)) return true;
+    if (next.type !== TokenType.LPAREN) return false;
+    // (...) suivi d'un opérande : opération avec extenseur ou clé ; sinon appel
+    let depth = 0;
+    let i = this.pos + 1;
+    for (; i < this.tokens.length; i++) {
+      const t = this.tokens[i].type;
+      if (t === TokenType.LPAREN) depth++;
+      else if (t === TokenType.RPAREN && --depth === 0) break;
+      else if (t === TokenType.EOF || t === TokenType.SEMICOLON) return true;
+    }
+    const after = this.tokens[i + 1];
+    return !after || after.type === TokenType.SEMICOLON || after.type === TokenType.EQUALS ||
+           after.type === TokenType.DOT || Parser.COMPOUND_OPERATORS.has(after.type);
+  }
+
+  // READ f ; READE clé f ; CHAIN clé f ; SETLL clé f ; OPEN f ; CLOSE f ...
+  private parseFileOperation(): FileOperationNode {
+    const opToken = this.advance();
+    const operation = opToken.value.toLowerCase() as FileOperationNode['operation'];
+    const opName = operation.toUpperCase();
+    const keyed = KEYED_OPERATIONS.has(operation);
+
+    // Extenseur (E), (N)... : collé au code opération. Avec un blanc, c'est la liste de clé.
+    const paren = this.peek();
+    if (paren.type === TokenType.LPAREN &&
+        (!keyed || (paren.line === opToken.line && paren.column === opToken.column + opToken.value.length))) {
+      let text = '';
+      for (let i = this.pos + 1; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
+        text += this.tokens[i].value;
+      }
+      throw unsupported(`${opName}(${text.toUpperCase()}) (extenseur d'opération)`, opToken);
+    }
+
+    let key: ExpressionNode[] | undefined;
+    let special: 'start' | 'end' | undefined;
+    if (keyed) {
+      if (this.check(TokenType.SEMICOLON)) throw unsupported(`${opName} sans clé`, opToken);
+      if (this.check(TokenType.BUILTIN) && this.peek().value.toLowerCase() === '%kds') {
+        throw unsupported('%KDS', this.peek());
+      }
+      const specials = ['*start', '*end', '*loval', '*hival'];
+      if (this.check(TokenType.SPECIAL_VALUE) && specials.includes(this.peek().value.toLowerCase())) {
+        const token = this.advance();
+        if (operation !== 'setll' && operation !== 'setgt') throw unsupported(`${token.value.toUpperCase()} avec ${opName}`, token);
+        special = ['*start', '*loval'].includes(token.value.toLowerCase()) ? 'start' : 'end';
+      } else if (this.check(TokenType.LPAREN)) {
+        key = this.parseCallArguments();
+        if (key.length === 0) throw new Error(`Clé de ${opName} vide (ligne ${opToken.line})`);
+      } else {
+        key = [this.parseExpression()];
+      }
+      if (this.check(TokenType.SEMICOLON)) throw unsupported(`${opName} sans clé`, opToken);
+    }
+
+    const fileToken = this.expectName();
+    if (!this.check(TokenType.SEMICOLON)) {
+      throw unsupported(`${opName} avec un opérande de plus (structure de données résultat)`, this.peek());
+    }
+    this.advance();
+    this.requireFile(fileToken.value, fileToken.line, false);
+
+    const node: FileOperationNode = { type: 'FileOperation', operation, file: fileToken.value, line: opToken.line };
+    if (key) node.key = key;
+    if (special) node.special = special;
+    return node;
   }
 
   // Options sans effet ici, sauf DATFMT et TIMFMT : un autre format que *ISO changerait les dates
@@ -308,6 +432,8 @@ export class Parser {
         body.push(this.parseDataStructure());
       } else if (this.check(TokenType.DCL_PR)) {
         body.push(this.parsePrototype());
+      } else if (this.check(TokenType.DCL_F)) {
+        throw unsupported('DCL-F dans une procédure', this.peek());
       } else {
         body.push(this.parseStatement());
       }
@@ -871,10 +997,14 @@ export class Parser {
 
     const token = this.peek();
     if (FILE_OPERATION_TOKENS.includes(token.type)) {
-      throw unsupported(`L'opération ${token.value.toUpperCase()} (fichiers natifs)`, token);
+      if (this.isFileKeywordNameUse()) return this.parseAssignmentOrCall();
+      if (WRITE_OPERATION_TOKENS.includes(token.type)) {
+        throw unsupported(`L'opération ${token.value.toUpperCase()} (incrément écriture)`, token);
+      }
+      return this.parseFileOperation();
     }
     if (token.type === TokenType.DCL_F) {
-      throw unsupported('DCL-F (fichiers natifs)', token);
+      throw unsupported('DCL-F en dehors du niveau principal', token);
     }
     if (token.type === TokenType.SPECIAL_VALUE && INDICATOR.test(token.value)) {
       // *INLR = *ON; *IN50 = ...;
@@ -1064,6 +1194,20 @@ export class Parser {
       if (!isSupportedBuiltin(name)) {
         throw unsupported(`La fonction ${name.toUpperCase()}`, token);
       }
+      // %EOF, %FOUND, %EQUAL, %OPEN : l'argument est un nom de fichier, non évalué
+      if (FILE_BUILTINS.has(name.toLowerCase())) {
+        const args: ExpressionNode[] = [];
+        if (this.check(TokenType.LPAREN)) {
+          this.advance();
+          const fileToken = this.expectName();
+          this.requireFile(fileToken.value, fileToken.line, true);
+          args.push({ type: 'Expression', value: fileToken.value, valueType: 'file' });
+          this.expect(TokenType.RPAREN);
+        } else if (name.toLowerCase() === '%open') {
+          throw new Error(`%OPEN exige un nom de fichier (ligne ${token.line})`);
+        }
+        return { type: 'Expression', value: { name, args }, valueType: 'builtin' };
+      }
       // %DATE, %TIME et %TIMESTAMP sont valides sans parenthèses
       if (NO_ARGUMENT_BUILTINS.has(name.toLowerCase()) && !this.check(TokenType.LPAREN)) {
         return { type: 'Expression', value: { name, args: [] }, valueType: 'builtin' };
@@ -1154,7 +1298,7 @@ export class Parser {
 
   // Un nom : IDENTIFIER, ou un mot de type (char, zoned, date...) qui est aussi un nom valide en RPG
   private isName(): boolean {
-    return this.check(TokenType.IDENTIFIER) || this.isTypeToken();
+    return this.check(TokenType.IDENTIFIER) || this.isTypeToken() || FILE_OPERATION_TOKENS.some(type => this.check(type));
   }
 
   private expectName(): Token {
