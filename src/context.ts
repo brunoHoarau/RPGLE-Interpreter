@@ -1,5 +1,7 @@
 // Définit la structure du contexte fourni par l'utilisateur
 
+import { parseFieldType } from './files';
+
 export interface ColumnDefinition {
   name: string;
   type: string; // 'INT', 'CHAR(50)', 'DECIMAL(9,2)', etc.
@@ -8,11 +10,8 @@ export interface ColumnDefinition {
 export interface TableDefinition {
   columns: ColumnDefinition[];
   data: any[];
-}
-
-export interface FileDefinition {
-  records: any[];
-  keyFields?: string[];
+  keys?: string[];   // Clés du fichier logique/physique, en majuscules
+  format?: string;   // Nom du format d'enregistrement, en majuscules
 }
 
 // Bouchon d'un programme ou d'une procédure externe (context/programs.json).
@@ -30,7 +29,6 @@ export interface ProgramMock {
 
 export interface ExecutionContext {
   tables: { [tableName: string]: TableDefinition };
-  files: { [fileName: string]: FileDefinition };
   programs: { [programName: string]: ProgramMock };
 }
 
@@ -83,9 +81,23 @@ function normalizeTables(raw: any, sourcePath: string): { [name: string]: TableD
     if (table && table.schema && Array.isArray(table.data)) {
       const columns: ColumnDefinition[] = [];
       for (const colName in table.schema) {
-        columns.push({ name: colName.toUpperCase(), type: table.schema[colName] });
+        const type = table.schema[colName];
+        if (typeof type !== 'string' || parseFieldType(type) === undefined) {
+          throw new Error(`Table '${tableName}' de ${sourcePath} : type '${type}' de la colonne ${colName} inconnu`);
+        }
+        columns.push({ name: colName.toUpperCase(), type });
       }
-      result[tableName.toUpperCase()] = { columns, data: table.data };
+      const definition: TableDefinition = { columns, data: table.data };
+      if (Array.isArray(table.keys)) {
+        definition.keys = table.keys.map((key: any) => String(key).toUpperCase());
+        for (const key of definition.keys!) {
+          if (!columns.some(c => c.name === key)) {
+            throw new Error(`Table '${tableName}' de ${sourcePath} : clé '${key}' absente du schéma`);
+          }
+        }
+      }
+      if (typeof table.format === 'string') definition.format = table.format.toUpperCase();
+      result[tableName.toUpperCase()] = definition;
     } else if (Array.isArray(table)) {
       const columns: ColumnDefinition[] = table.length > 0
         ? Object.keys(table[0]).map(key => ({ name: key.toUpperCase(), type: 'AUTO' }))
@@ -101,5 +113,5 @@ function normalizeTables(raw: any, sourcePath: string): { [name: string]: TableD
 
 // Contexte vide par défaut
 export function emptyContext(): ExecutionContext {
-  return { tables: {}, files: {}, programs: {} };
+  return { tables: {}, programs: {} };
 }
