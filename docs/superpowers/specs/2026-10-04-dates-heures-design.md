@@ -77,6 +77,8 @@ l'incrément 3, où les séparateurs alternatifs seront traités).
 - `%DATE`/`%TIME`/`%TIMESTAMP` avec un argument numérique ou un 2ᵉ argument de
   format : « pas encore supporté » (incréments 3 et 4).
 - `%CHAR(x)` : `2026-10-04`, `13.45.00`, `2026-10-04-13.45.00.000000`.
+- `%CHAR(x : *ISO)` : même résultat (usage courant). Tout autre format en 2ᵉ
+  argument de `%CHAR` : « pas encore supporté » (incrément 3).
 - `DSPLY x` avec une variable date/heure/timestamp : affiche le même texte.
 
 **Refus explicites maintenus** (« pas encore supporté »)
