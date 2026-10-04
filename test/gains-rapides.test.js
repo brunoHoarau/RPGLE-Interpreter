@@ -184,3 +184,29 @@ test('POS : champs contigus sans chevauchement acceptés', () => {
   assert.doesNotThrow(() => parse(`dcl-ds d; a char(4) pos(1); b char(2) pos(5); c int(10); end-ds;`));
   assert.doesNotThrow(() => parse(`dcl-ds d; a varchar(3); b date pos(6); end-ds;`));
 });
+
+test('POS : varchar avec préfixe de 4 octets', () => {
+  assert.throws(() => parse(`dcl-ds d; a varchar(10:4); b char(1) pos(13); end-ds;`), /chevauch/i);
+  assert.doesNotThrow(() => parse(`dcl-ds d; a varchar(10:4); b char(1) pos(15); end-ds;`));
+  assert.doesNotThrow(() => parse(`dcl-ds d; a varchar(10:2); b char(1) pos(13); end-ds;`));
+  assert.throws(() => parse(`dcl-ds d; a varchar(10:3); b char(1) pos(20); end-ds;`),
+    err => NOT_SUPPORTED.test(err.message) && /VARCHAR/.test(err.message));
+});
+
+test('POS : champ sans longueur refusé dans une DS avec POS', () => {
+  assert.throws(() => parse(`dcl-ds d; a char; b char(1) pos(1); end-ds;`), /longueur manquante.*\bA\b/i);
+  assert.doesNotThrow(() => parse(`dcl-ds d; a char; b char(1); end-ds;`));
+});
+
+test('POS : cas de chevauchement et de syntaxe complémentaires', () => {
+  assert.throws(() => parse(`dcl-ds d; a char(10) pos(1); b char(1) pos(20); c char(2) pos(5); end-ds;`), /chevauch/i);
+  assert.throws(() => parse(`dcl-ds d; a char(2) pos(10); b char(2); c char(1) pos(12); end-ds;`), /chevauch/i);
+  assert.doesNotThrow(() => parse(`dcl-ds d; a char(2) pos(10); b char(2); c char(1) pos(14); end-ds;`));
+  assert.deepEqual(run(`
+    dcl-ds d qualified; a char(2) inz('xy') pos(5); end-ds;
+    dsply d.a;
+  `), ['xy']);
+  assert.throws(() => parse(`dcl-ds d; a ind pos(x); end-ds;`), /POS\(x\) invalide/);
+  assert.throws(() => parse(`dcl-ds d; a ind pos(); end-ds;`), /POS\(\) invalide/);
+  assert.throws(() => parse(`dcl-ds d; a ind pos; end-ds;`));
+});

@@ -80,7 +80,7 @@ export function byteLength(type: DataTypeNode): number {
   const n = type.length ?? 0;
   switch (type.typeName) {
     case 'char': return n;
-    case 'varchar': return n + 2;
+    case 'varchar': return n + (type.decimals === 4 || n > 65535 ? 4 : 2);
     case 'ind': return 1;
     case 'int':
     case 'uns': {

@@ -135,7 +135,7 @@ export class Parser {
         this.expect(TokenType.LPAREN);
         const arg = this.advance();
         if (arg.type !== TokenType.NUMBER || !/^[0-9]+$/.test(arg.value) || parseInt(arg.value) < 1 || !this.check(TokenType.RPAREN)) {
-          throw new Error(`POS(${arg.value}) invalide à la ligne ${arg.line} : un entier supérieur ou égal à 1 est attendu`);
+          throw new Error(`POS(${arg.type === TokenType.RPAREN ? '' : arg.value}) invalide à la ligne ${arg.line} : un entier supérieur ou égal à 1 est attendu`);
         }
         this.advance();
         fieldPos.pos = parseInt(arg.value);
@@ -216,8 +216,7 @@ export class Parser {
     const name = this.expectName().value;
     let isQualified = false;
     const fields: any[] = [];
-    const placed: { name: string; start: number; end: number; line: number }[] = [];
-    let nextByte = 1;
+    const layout: { name: string; type: DataTypeNode; pos?: number; token: Token }[] = [];
 
     // 1. Options de la DS jusqu'au ';' : QUALIFIED et INZ sont supportés
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
@@ -244,20 +243,37 @@ export class Parser {
       const position: { pos?: number } = {};
       const initialValue = this.parseDeclarationKeywords('champ de DS', fieldType, position);
       this.expect(TokenType.SEMICOLON);
-      // Les champs sont des valeurs indépendantes : un recouvrement d'octets ne serait pas fidèle
-      const start = position.pos ?? nextByte;
-      const end = start + byteLength(fieldType) - 1;
-      const clash = placed.find(p => start <= p.end && p.start <= end);
-      if (clash) throw unsupported(`Champs de DS qui se chevauchent (${clash.name.toUpperCase()} et ${fieldName.toUpperCase()})`, fieldToken);
-      placed.push({ name: fieldName, start, end, line: fieldToken.line });
-      nextByte = end + 1;
+      layout.push({ name: fieldName, type: fieldType, pos: position.pos, token: fieldToken });
       fields.push({ name: fieldName, dataType: fieldType, initialValue });
     }
 
     this.expect(TokenType.END_DS);
     this.skipToSemicolon(); // end-ds peut répéter le nom
+    this.checkFieldLayout(layout);
 
     return { type: 'DataStructure', name, isQualified, fields };
+  }
+
+  // Les champs sont des valeurs indépendantes : un recouvrement d'octets (via POS) ne serait pas fidèle
+  private checkFieldLayout(layout: { name: string; type: DataTypeNode; pos?: number; token: Token }[]): void {
+    if (!layout.some(f => f.pos !== undefined)) return;
+    const placed: { name: string; start: number; end: number }[] = [];
+    let nextByte = 1;
+    for (const field of layout) {
+      const type = field.type;
+      if (type.length === undefined && ['char', 'varchar', 'zoned', 'packed'].includes(type.typeName)) {
+        throw new Error(`Longueur manquante pour le champ ${field.name.toUpperCase()} (POS) à la ligne ${field.token.line}`);
+      }
+      if (type.typeName === 'varchar' && type.decimals !== undefined && type.decimals !== 2 && type.decimals !== 4) {
+        throw unsupported(`VARCHAR(${type.length}:${type.decimals})`, field.token);
+      }
+      const start = field.pos ?? nextByte;
+      const end = start + byteLength(type) - 1;
+      const clash = placed.find(p => start <= p.end && p.start <= end);
+      if (clash) throw unsupported(`Champs de DS qui se chevauchent (${clash.name.toUpperCase()} et ${field.name.toUpperCase()})`, field.token);
+      placed.push({ name: field.name, start, end });
+      nextByte = end + 1;
+    }
   }
 
   private parseProcedure(): ASTNode {
