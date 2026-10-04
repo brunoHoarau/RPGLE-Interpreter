@@ -2,11 +2,11 @@ import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, Par
 import { Runtime } from './runtime';
 import { ExecutionContext, MockCase, emptyContext } from './context';
 import { coerce, defaultValue, describeValue, formatChar } from './datatypes';
-import { FigurativeValue, compareDateTime, fromClock, isDateTime, isDateTimeType, kindOf, parseIso, resolveFigurative } from './datetime';
+import { DateTimeValue, FigurativeValue, RpgDuration, addDuration, compareDateTime, fromClock, isDateTime, isDateTimeType, isDuration, kindOf, parseIso, resolveFigurative } from './datetime';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { ProgramResolver } from './sources';
-import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DIVIDE_BY_ZERO, incompatibleTypes, matchesStatus } from './errors';
+import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DATE_OVERFLOW, STATUS_DIVIDE_BY_ZERO, incompatibleTypes, matchesStatus } from './errors';
 
 // Signaux de contrôle : levés comme exceptions pour traverser les blocs imbriqués
 // jusqu'à la boucle (LEAVE/ITER) ou la procédure / le programme (RETURN) concerné.
@@ -45,11 +45,17 @@ const COMPARISONS: { [op: string]: (c: number) => boolean } = {
   '=': c => c === 0, '<>': c => c !== 0, '<': c => c < 0, '<=': c => c <= 0, '>': c => c > 0, '>=': c => c >= 0,
 };
 
-const involvesDateTime = (value: any) => isDateTime(value) || value instanceof FigurativeValue;
+const involvesDateTime = (value: any) => isDateTime(value) || isDuration(value) || value instanceof FigurativeValue;
 
-// Avec une date, une heure ou un timestamp, seule la comparaison au même type est permise.
+// Avec une date, une heure ou un timestamp : comparaison au même type, ou + / - d'une durée à droite.
 // *LOVAL / *HIVAL prennent le type de l'autre opérande.
-function dateTimeOperation(op: string, left: any, right: any): boolean {
+function dateTimeOperation(op: string, left: any, right: any): any {
+  if ((op === '+' || op === '-') && isDateTime(left) && isDuration(right)) {
+    return applyDuration(left, right, op === '+' ? 1 : -1);
+  }
+  if (op === '+' && isDuration(left) && isDateTime(right)) {
+    throw new Error(`Durée à gauche d'une date (${left} + ${describeValue(right)}) : pas encore supporté par l'interpréteur`);
+  }
   const test = COMPARISONS[op];
   if (left instanceof FigurativeValue && kindOf(right)) left = resolveFigurative(left, kindOf(right)!);
   if (right instanceof FigurativeValue && kindOf(left)) right = resolveFigurative(right, kindOf(left)!);
@@ -58,6 +64,19 @@ function dateTimeOperation(op: string, left: any, right: any): boolean {
   }
   const operands = right === undefined ? describeValue(left) : `${describeValue(left)} et ${describeValue(right)}`;
   throw incompatibleTypes(`Opération ${op.toUpperCase()} avec ${operands}`);
+}
+
+// Traduit un échec du calcul en erreur RPG
+function applyDuration(value: DateTimeValue, duration: RpgDuration, sign: 1 | -1): DateTimeValue {
+  const result = addDuration(value, duration, sign);
+  if (typeof result !== 'string') return result;
+  const what = `${describeValue(value)} ${sign > 0 ? '+' : '-'} ${duration}`;
+  switch (result) {
+    case 'unit': throw incompatibleTypes(what);
+    case 'overflow': throw new RpgError(STATUS_DATE_OVERFLOW, `Résultat hors limites pour ${what} (RNX0113)`);
+    case 'wrap': throw new Error(`${what} passe minuit : pas encore supporté par l'interpréteur`);
+    case '24h': throw new Error(`Calcul sur la valeur 24.00.00 (${what}) : pas encore supporté par l'interpréteur`);
+  }
 }
 
 // Un bouchon JSON donne les dates, heures et timestamps en texte *ISO
@@ -441,7 +460,7 @@ export class Interpreter {
   // Évalue une condition (IF, WHEN, DOW, DOU) : une date, une heure ou un timestamp n'est pas un indicateur
   private condition(expr: ExpressionNode): any {
     const value = this.evaluate(expr);
-    if (isDateTime(value) || value instanceof FigurativeValue) {
+    if (isDateTime(value) || isDuration(value) || value instanceof FigurativeValue) {
       throw incompatibleTypes(`Condition ${describeValue(value)}`);
     }
     return value;
@@ -512,7 +531,9 @@ export class Interpreter {
     let msg = '';
     if (node.message) {
       // Les blancs de fin d'un char sont invisibles à l'écran
-      msg = String(this.evaluate(node.message)).trimEnd();
+      const value = this.evaluate(node.message);
+      if (isDuration(value)) throw incompatibleTypes(`DSPLY ${describeValue(value)}`);
+      msg = String(value).trimEnd();
     }
 
     const queueInfo = node.queue ? ` (File: ${this.evaluate(node.queue)})` : '';
@@ -625,6 +646,9 @@ export class Interpreter {
       const isChar = builtin === '%char';
       // Le 2e argument (*ISO) est un format, inutile à évaluer
       const args = (isChar ? expr.value.args.slice(0, 1) : expr.value.args).map((arg: ExpressionNode) => this.evaluate(arg));
+      // Aucune fonction intégrée ne prend une durée en argument
+      const duration = args.find(isDuration);
+      if (duration) throw incompatibleTypes(`${expr.value.name.toUpperCase()}(${describeValue(duration)})`);
       if (!isChar && !DATE_AWARE_BUILTINS.has(builtin)) this.refuseDateArguments(expr.value.name, args);
       if (isChar) {
         // %CHAR(x : *ISO) n'existe que pour une date, une heure ou un timestamp

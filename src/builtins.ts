@@ -1,7 +1,7 @@
 // Fonctions intégrées supportées. Cette table est la seule source de vérité :
 // le runtime les exécute, le parser refuse dès l'analyse celles qui n'y sont pas.
 
-import { DateTimeKind, RpgDate, RpgTime, RpgTimestamp, fromClock, kindOf, parseIso } from './datetime';
+import { DateTimeKind, DurationUnit, RpgDate, RpgDuration, RpgTime, RpgTimestamp, fromClock, kindOf, parseIso } from './datetime';
 import { describeValue } from './datatypes';
 import { RpgError, STATUS_INVALID_DATE, incompatibleTypes } from './errors';
 
@@ -32,11 +32,28 @@ function toDateTime(kind: DateTimeKind, ctx: BuiltinContext, value: any): any {
   throw incompatibleTypes(`${name}(${describeValue(value)})`);
 }
 
+// %YEARS(n) ... %MSECONDS(n) : durée entière, seulement utilisable à droite d'un + ou - avec une date
+function duration(unit: DurationUnit, amount: any): RpgDuration {
+  const name = `%${unit.toUpperCase()}`;
+  if (typeof amount !== 'number') throw incompatibleTypes(`${name}(${describeValue(amount)})`);
+  if (!Number.isInteger(amount)) {
+    throw new Error(`${name} d'une valeur non entière (${amount}) : pas encore supporté par l'interpréteur`);
+  }
+  return new RpgDuration(unit, amount);
+}
+
 export const BUILTINS: { [name: string]: Builtin } = {
   '%status': ctx => ctx.status,
   '%date': (ctx, value?: any) => toDateTime('date', ctx, value),
   '%time': (ctx, value?: any) => toDateTime('time', ctx, value),
   '%timestamp': (ctx, value?: any) => toDateTime('timestamp', ctx, value),
+  '%years': (_, n: any) => duration('years', n),
+  '%months': (_, n: any) => duration('months', n),
+  '%days': (_, n: any) => duration('days', n),
+  '%hours': (_, n: any) => duration('hours', n),
+  '%minutes': (_, n: any) => duration('minutes', n),
+  '%seconds': (_, n: any) => duration('seconds', n),
+  '%mseconds': (_, n: any) => duration('mseconds', n),
   '%len': (_, str: any) => String(str).length,
   '%trim': (_, str: any) => String(str).trim(),
   '%trimr': (_, str: any) => String(str).trimEnd(),

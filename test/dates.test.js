@@ -378,3 +378,80 @@ test('%DATE, %TIME et %TIMESTAMP sans parenthèses', () => {
   const out = run(`dsply %char(%date); dsply %char(%time); dsply %char(%timestamp);`, undefined, CLOCK);
   assert.deepEqual(out, ['2026-10-04', '13.45.07', '2026-10-04-13.45.07.089000']);
 });
+
+// --- Incrément 2 : arithmétique ---
+
+test('date + %DAYS + %MONTHS + %YEARS, évalués de gauche à droite', () => {
+  const out = run(`
+    dcl-s d date inz(D'2026-01-31');
+    dcl-s r date;
+    r = d + %days(1) + %months(1) + %years(1);
+    dsply r;
+    r = d + %months(1);
+    dsply r;
+    r = d - %days(31);
+    dsply r;
+  `);
+  assert.deepEqual(out, ['2027-03-01', '2026-02-28', '2025-12-31']);
+});
+
+test('%date() - %years(2) avec l\'horloge figée', () => {
+  assert.deepEqual(run(`dcl-s limite date; limite = %date() - %years(2); dsply limite;`, undefined, CLOCK), ['2024-10-04']);
+});
+
+test('heures et timestamps', () => {
+  const out = run(`
+    dcl-s t time inz(T'08.30.00');
+    dcl-s z timestamp inz(Z'2026-10-04-23.59.59.999999');
+    dsply %char(t + %minutes(45) - %seconds(30));
+    dsply %char(z + %mseconds(1));
+    dsply %char(z + %hours(1) + %days(1));
+    dsply %char(z + %hours(24 * 146097));
+  `);
+  assert.deepEqual(out, ['09.14.30', '2026-10-05-00.00.00.000000', '2026-10-06-00.59.59.999999',
+                         '2426-10-04-23.59.59.999999']);
+});
+
+test('date calculée dans une comparaison', () => {
+  const out = run(`
+    dcl-s echeance date inz(D'2026-10-10');
+    if echeance < %date() + %days(7);
+      dsply 'bientot';
+    endif;
+  `, undefined, CLOCK);
+  assert.deepEqual(out, ['bientot']);
+});
+
+test('date hors limites : statut 00113 interceptable', () => {
+  const out = run(`
+    dcl-s d date inz(D'9999-12-31');
+    monitor;
+      d = d + %days(1);
+    on-error 00113;
+      dsply 'statut ' + %char(%status());
+    endmon;
+    dsply d;
+  `);
+  assert.deepEqual(out, ['statut 113', '9999-12-31']);
+  assert.throws(() => run(`dcl-s d date inz(D'0001-01-01'); d = d - %years(1);`), /RNX0113/);
+});
+
+test('durée mal placée ou d\'un mauvais type : types incompatibles', () => {
+  for (const src of [
+    `dcl-s d date; d = d + %hours(1);`,
+    `dcl-s t time; t = t + %days(1);`,
+    `dcl-s d date; dcl-s e date; dcl-s n int(10); n = d - e;`,
+    `dcl-s n int(10); n = %days(1);`,
+    `dcl-s d date; d = %days(1);`,
+    `dsply %days(1);`,
+    `if %days(1) = %days(1); endif;`,
+    `if %days(2); endif;`,
+    `dcl-s d date; d = d + (%days(1) + %days(2));`,
+    `dcl-s c char(20); c = %char(%days(1));`,
+    `dcl-s n int(10); n = %len(%days(1));`,
+    `dcl-s d date; d = d + %days('x');`,
+    `dcl-s d date; d = d + %days(d);`,
+  ]) {
+    assert.throws(() => run(src), INCOMPATIBLE, src);
+  }
+});
