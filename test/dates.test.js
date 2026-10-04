@@ -102,3 +102,38 @@ test('une erreur de type n\'est pas interceptée par MONITOR', () => {
     endmon;
   `), INCOMPATIBLE);
 });
+
+test('comparaisons entre dates, heures et timestamps', () => {
+  const out = run(`
+    dcl-s debut date inz(D'2026-01-31');
+    dcl-s fin date inz(D'2026-02-01');
+    dcl-s t1 time inz(T'08.00.00');
+    dcl-s z1 timestamp inz(Z'2026-10-04-13.45.00.000001');
+    if debut < fin;
+      dsply 'avant';
+    endif;
+    if fin >= D'2026-02-01' and fin <> debut;
+      dsply 'egal ou apres';
+    endif;
+    if t1 > T'07.59.59';
+      dsply 'plus tard';
+    endif;
+    if z1 > Z'2026-10-04-13.45.00.000000';
+      dsply 'une microseconde';
+    endif;
+  `);
+  assert.deepEqual(out, ['avant', 'egal ou apres', 'plus tard', 'une microseconde']);
+});
+
+test('comparer une date à un autre type est refusé', () => {
+  assert.throws(() => run(`dcl-s d date; if d = '0001-01-01'; endif;`), INCOMPATIBLE);
+  assert.throws(() => run(`dcl-s d date; if d > 20261004; endif;`), INCOMPATIBLE);
+  assert.throws(() => run(`dcl-s d date; dcl-s z timestamp; if d = z; endif;`), INCOMPATIBLE);
+});
+
+test('calculer ou concaténer avec une date est refusé', () => {
+  assert.throws(() => run(`dcl-s d date; dsply 'Le ' + d;`), INCOMPATIBLE);
+  assert.throws(() => run(`dcl-s d date; d = d + 1;`), INCOMPATIBLE);
+  assert.throws(() => run(`dcl-s t time; dcl-s n int(5); n = t * 2;`), INCOMPATIBLE);
+  assert.throws(() => run(`dcl-s d date; if not d; endif;`), INCOMPATIBLE);
+});

@@ -1,6 +1,6 @@
 // Sémantique des types RPG : valeurs par défaut, conversion à l'affectation, %CHAR
 import { DataTypeNode } from './types';
-import { DateTimeKind, isDateTime, isDateTimeType, kindOf, lowValue } from './datetime';
+import { DateTimeKind, FigurativeValue, isDateTime, isDateTimeType, kindOf, lowValue } from './datetime';
 import { RpgError, STATUS_INVALID_NUMERIC, STATUS_OVERFLOW, incompatibleTypes } from './errors';
 
 const INT_BITS: { [digits: number]: number } = { 3: 8, 5: 16, 10: 32, 20: 64 };
@@ -116,6 +116,7 @@ function incompatibleAssignment(value: any, type: DataTypeNode, target: string):
 
 // Nature d'une valeur pour les messages d'erreur
 export function describeValue(value: any): string {
+  if (value instanceof FigurativeValue) return value.name.toUpperCase();
   const kind = kindOf(value);
   if (kind) return `${kind.toUpperCase()} ${value}`;
   if (typeof value === 'number') return `numérique ${value}`;

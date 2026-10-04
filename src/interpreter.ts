@@ -1,11 +1,12 @@
 import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, ParameterNode, DataTypeNode } from './types';
 import { Runtime } from './runtime';
 import { ExecutionContext, MockCase, emptyContext } from './context';
-import { coerce, defaultValue, formatChar } from './datatypes';
+import { coerce, defaultValue, describeValue, formatChar } from './datatypes';
+import { FigurativeValue, compareDateTime, isDateTime, kindOf, resolveFigurative } from './datetime';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { ProgramResolver } from './sources';
-import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DIVIDE_BY_ZERO, matchesStatus } from './errors';
+import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DIVIDE_BY_ZERO, incompatibleTypes, matchesStatus } from './errors';
 
 // Signaux de contrôle : levés comme exceptions pour traverser les blocs imbriqués
 // jusqu'à la boucle (LEAVE/ITER) ou la procédure / le programme (RETURN) concerné.
@@ -37,6 +38,26 @@ function compare(left: any, right: any): number {
   if (left === right) return 0;
   return left < right ? -1 : left > right ? 1 : NaN;
 }
+
+const COMPARISONS: { [op: string]: (c: number) => boolean } = {
+  '=': c => c === 0, '<>': c => c !== 0, '<': c => c < 0, '<=': c => c <= 0, '>': c => c > 0, '>=': c => c >= 0,
+};
+
+const involvesDateTime = (value: any) => isDateTime(value) || value instanceof FigurativeValue;
+
+// Avec une date, une heure ou un timestamp, seule la comparaison au même type est permise.
+// *LOVAL / *HIVAL prennent le type de l'autre opérande.
+function dateTimeOperation(op: string, left: any, right: any): boolean {
+  const test = COMPARISONS[op];
+  if (left instanceof FigurativeValue && kindOf(right)) left = resolveFigurative(left, kindOf(right)!);
+  if (right instanceof FigurativeValue && kindOf(left)) right = resolveFigurative(right, kindOf(left)!);
+  if (test && kindOf(left) !== undefined && kindOf(left) === kindOf(right)) {
+    return test(compareDateTime(left, right));
+  }
+  const operands = right === undefined ? describeValue(left) : `${describeValue(left)} et ${describeValue(right)}`;
+  throw incompatibleTypes(`Opération ${op.toUpperCase()} avec ${operands}`);
+}
+
 const DEFAULT_MAX_CALL_DEPTH = 256;
 
 export class Interpreter {
@@ -565,6 +586,9 @@ export class Interpreter {
   private executeOperator(expr: ExpressionNode): any {
     const left = expr.left ? this.evaluate(expr.left) : undefined;
     const right = expr.right ? this.evaluate(expr.right) : undefined;
+    if (involvesDateTime(left) || involvesDateTime(right)) {
+      return dateTimeOperation(expr.operator!, left, right);
+    }
 
     switch (expr.operator) {
       case '+': 
