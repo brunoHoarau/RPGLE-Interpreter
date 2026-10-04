@@ -579,8 +579,14 @@ export class Interpreter {
     }
 
     if (expr.valueType === 'builtin') {
-      const args = expr.value.args.map((arg: ExpressionNode) => this.evaluate(arg));
-      if (expr.value.name.toLowerCase() === '%char') {
+      const isChar = expr.value.name.toLowerCase() === '%char';
+      // Le format *ISO de %CHAR n'est pas une valeur : on n'évalue que le 1er argument
+      const args = (isChar ? expr.value.args.slice(0, 1) : expr.value.args).map((arg: ExpressionNode) => this.evaluate(arg));
+      if (isChar) {
+        // %CHAR(x : *ISO) n'existe que pour une date, une heure ou un timestamp
+        if (expr.value.args.length > 1 && !isDateTime(args[0])) {
+          throw incompatibleTypes(`%CHAR(${describeValue(args[0])} : *ISO)`);
+        }
         // Le format dépend du type déclaré : variable, ou valeur de retour d'une procédure
         return formatChar(args[0], this.declaredType(expr.value.args[0]));
       }

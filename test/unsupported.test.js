@@ -187,3 +187,20 @@ test('EVAL(H) est refusé tant que l\'arrondi n\'est pas supporté', () => {
 test('DSPLY accepte encore *BLANK et une file d\'attente en paramètres', () => {
   assert.deepEqual(run(`dsply 'Fin' *blank *joblog;`), ['Fin (File: *joblog)']);
 });
+
+test('les fonctions et formats de dates des incréments suivants sont refusés', () => {
+  for (const src of [
+    `dcl-s d date; d = d + %days(1);`,
+    `dcl-s n int(10); n = %diff(D'2026-10-04' : D'2026-01-01' : *days);`,
+    `dcl-s n int(5); n = %subdt(D'2026-10-04' : *years);`,
+    `dcl-s d date; d = %date('04/10/2026' : *eur);`,
+    `dcl-s c char(10); c = %char(D'2026-10-04' : *eur);`,
+    `dcl-s z timestamp; z = %timestamp('x' : 3);`,
+  ]) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
+  }
+});
+
+test('%DATE d\'un nombre est refusé tant que les conversions numériques manquent', () => {
+  assert.throws(() => run(`dcl-s d date; d = %date(20261004);`), NOT_SUPPORTED);
+});

@@ -1,6 +1,10 @@
 // Fonctions intégrées supportées. Cette table est la seule source de vérité :
 // le runtime les exécute, le parser refuse dès l'analyse celles qui n'y sont pas.
 
+import { DateTimeKind, RpgDate, RpgTime, RpgTimestamp, fromClock, kindOf, parseIso } from './datetime';
+import { describeValue } from './datatypes';
+import { RpgError, STATUS_INVALID_DATE, incompatibleTypes } from './errors';
+
 export interface BuiltinContext {
   status: number; // Pour %STATUS
   now(): Date;    // Pour %DATE(), %TIME(), %TIMESTAMP()
@@ -8,8 +12,31 @@ export interface BuiltinContext {
 
 type Builtin = (ctx: BuiltinContext, ...args: any[]) => any;
 
+// %DATE / %TIME / %TIMESTAMP : instant présent, conversion entre types, ou lecture d'un texte *ISO
+// (les blancs de fin d'un char sont ignorés ; texte invalide : statut 00112)
+function toDateTime(kind: DateTimeKind, ctx: BuiltinContext, value: any): any {
+  const name = `%${kind.toUpperCase()}`;
+  if (value === undefined) return fromClock(kind, ctx.now());
+  if (typeof value === 'string') {
+    const parsed = parseIso(kind, value.trimEnd());
+    if (!parsed) throw new RpgError(STATUS_INVALID_DATE, `Valeur '${value.trimEnd()}' invalide pour ${name} (RNX0112)`);
+    return parsed;
+  }
+  if (typeof value === 'number') {
+    throw new Error(`${name} d'une valeur numérique : pas encore supporté par l'interpréteur`);
+  }
+  if (kindOf(value) === kind) return value;
+  if (kind === 'date' && value instanceof RpgTimestamp) return value.date;
+  if (kind === 'time' && value instanceof RpgTimestamp) return value.time;
+  if (kind === 'timestamp' && value instanceof RpgDate) return new RpgTimestamp(value, new RpgTime(0, 0, 0), 0);
+  throw incompatibleTypes(`${name}(${describeValue(value)})`);
+}
+
 export const BUILTINS: { [name: string]: Builtin } = {
   '%status': ctx => ctx.status,
+  '%date': (ctx, value?: any) => toDateTime('date', ctx, value),
+  '%time': (ctx, value?: any) => toDateTime('time', ctx, value),
+  '%timestamp': (ctx, value?: any) => toDateTime('timestamp', ctx, value),
   '%len': (_, str: any) => String(str).length,
   '%trim': (_, str: any) => String(str).trim(),
   '%trimr': (_, str: any) => String(str).trimEnd(),

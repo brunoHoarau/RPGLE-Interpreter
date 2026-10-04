@@ -31,6 +31,9 @@ const UNSUPPORTED_OPCODES = new Set([
 const INDICATOR = /^\*in(lr|\d\d)$/;
 const SUPPORTED_SPECIAL_VALUES = new Set(['*on', '*off', '*zero', '*zeros', '*blank', '*blanks']);
 
+// Fonctions dont le 2e argument est un format de date (*ISO, *EUR...)
+const FORMAT_BUILTINS = new Set(['%char', '%date', '%time', '%timestamp']);
+
 function unsupported(what: string, token: Token): Error {
   return new Error(`${what} : pas encore supporté par l'interpréteur (ligne ${token.line})`);
 }
@@ -842,6 +845,16 @@ export class Parser {
     return this.parsePrimary();
   }
 
+  // 2e argument de %CHAR / %DATE / %TIME / %TIMESTAMP : seul %CHAR(x : *ISO) est supporté
+  private parseFormatArgument(builtin: string): ExpressionNode {
+    const token = this.peek();
+    if (builtin.toLowerCase() === '%char' && token.type === TokenType.SPECIAL_VALUE && token.value.toLowerCase() === '*iso') {
+      this.advance();
+      return { type: 'Expression', value: '*iso', valueType: 'special' };
+    }
+    throw unsupported(`${builtin.toUpperCase()} avec le 2e argument ${token.value.toUpperCase()}`, token);
+  }
+
   private parsePrimary(): ExpressionNode {
     if (this.check(TokenType.NUMBER)) {
       const value = parseFloat(this.advance().value);
@@ -883,7 +896,11 @@ export class Parser {
       const args: ExpressionNode[] = [];
 
       while (!this.check(TokenType.RPAREN)) {
-        args.push(this.parseExpression());
+        if (args.length === 1 && FORMAT_BUILTINS.has(name.toLowerCase())) {
+          args.push(this.parseFormatArgument(name));
+        } else {
+          args.push(this.parseExpression());
+        }
         if (this.check(TokenType.COLON) || this.check(TokenType.COMMA)) {
           this.advance();
         }

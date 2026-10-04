@@ -196,3 +196,70 @@ test('*HIVAL sur un champ de DS non qualifiée et sur un paramètre', () => {
   `);
   assert.deepEqual(out, ['9999-12-31', 'sans echeance']);
 });
+
+test('%DATE, %TIME et %TIMESTAMP sans argument lisent l\'horloge', () => {
+  const out = run(`
+    dsply %char(%date());
+    dsply %char(%time());
+    dsply %char(%timestamp());
+  `, undefined, CLOCK);
+  assert.deepEqual(out, ['2026-10-04', '13.45.07', '2026-10-04-13.45.07.089000']);
+});
+
+test('conversions entre date, heure et timestamp', () => {
+  const out = run(`
+    dcl-s z timestamp inz(Z'2026-10-04-13.45.07.000089');
+    dcl-s d date inz(D'2026-12-24');
+    dsply %char(%date(z));
+    dsply %char(%time(z));
+    dsply %char(%timestamp(d));
+    dsply %char(%date(d));
+  `);
+  assert.deepEqual(out, ['2026-10-04', '13.45.07', '2026-12-24-00.00.00.000000', '2026-12-24']);
+});
+
+test('%DATE, %TIME et %TIMESTAMP lisent un texte *ISO', () => {
+  const out = run(`
+    dcl-s texte char(12) inz('2026-10-04');
+    dcl-s d date;
+    d = %date(texte);
+    dsply d;
+    dsply %char(%time('08.30.00'));
+    dsply %char(%timestamp('2026-10-04-08.30.00.000000'));
+  `);
+  assert.deepEqual(out, ['2026-10-04', '08.30.00', '2026-10-04-08.30.00.000000']);
+});
+
+test('un texte invalide ou vide lève le statut 112, interceptable', () => {
+  const out = run(`
+    dcl-s d date;
+    dcl-s vide char(10);
+    monitor;
+      d = %date('2026-02-30');
+    on-error 112;
+      dsply 'statut ' + %char(%status());
+    endmon;
+    monitor;
+      d = %date(vide);
+    on-error 00112;
+      dsply 'vide';
+    endmon;
+  `);
+  assert.deepEqual(out, ['statut 112', 'vide']);
+  assert.throws(() => run(`dcl-s d date; d = %date('04/10/2026');`), /RNX0112/);
+});
+
+test('%DATE d\'une heure ou %TIME d\'une date est refusé', () => {
+  assert.throws(() => run(`dcl-s t time; dcl-s d date; d = %date(t);`), INCOMPATIBLE);
+  assert.throws(() => run(`dcl-s t time; dcl-s d date; t = %time(d);`), INCOMPATIBLE);
+});
+
+test('%CHAR(x : *ISO) donne le texte ISO', () => {
+  const out = run(`
+    dcl-s d date inz(D'2026-10-04');
+    dcl-s t time inz(T'13.45.00');
+    dsply 'Le ' + %char(d : *iso) + ' a ' + %char(t:*ISO);
+  `);
+  assert.deepEqual(out, ['Le 2026-10-04 a 13.45.00']);
+  assert.throws(() => run(`dcl-s n int(5); dsply %char(n : *iso);`), INCOMPATIBLE);
+});
