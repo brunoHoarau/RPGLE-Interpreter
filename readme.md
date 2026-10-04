@@ -100,10 +100,10 @@ Tout ce qui n'est pas listé ici est **refusé dès l'analyse**, avec la ligne e
 - **Types** : `char(n)` à longueur fixe, `varchar(n)`, `int`/`uns(3|5|10|20)`, `packed`/`zoned(p:d)`, `ind`, `date`, `time`, `timestamp` (voir ci-dessous). Troncature à l'affectation et dépassement de capacité (RNX0103) comme en RPG
 - **Expressions** : priorités RPG (`OR` < `AND` < `NOT` < comparaisons < `+ -` < `* /` < `**` < signe), comparaison des chaînes sans tenir compte des blancs de fin
 - **Affectation** : `x = …`, `EVAL x = …` (sans extenseur), indicateurs `*INLR` et `*IN01` à `*IN99`, valeurs `*ON`, `*OFF`, `*BLANK(S)`, `*ZERO(S)`
-- **Contrôle** : `IF`/`ELSEIF`/`ELSE`, `SELECT`/`WHEN`/`OTHER`, `DOW`, `DOU`, `FOR … TO|DOWNTO … BY`, `LEAVE`, `ITER`, `RETURN`, `MONITOR`/`ON-ERROR` avec codes de statut (`on-error 00102 : 00103;`, `*PROGRAM`, `*FILE`, `*ALL`). Seules les erreurs d'exécution RPG (division par zéro 00102, dépassement 00103, conversion 00105, date/heure invalide 00112) sont interceptées
+- **Contrôle** : `IF`/`ELSEIF`/`ELSE`, `SELECT`/`WHEN`/`OTHER`, `DOW`, `DOU`, `FOR … TO|DOWNTO … BY`, `LEAVE`, `ITER`, `RETURN`, `MONITOR`/`ON-ERROR` avec codes de statut (`on-error 00102 : 00103;`, `*PROGRAM`, `*FILE`, `*ALL`). Seules les erreurs d'exécution RPG (division par zéro 00102, dépassement 00103, conversion 00105, date/heure invalide 00112, date hors limites 00113) sont interceptées
 - **Procédures** : `dcl-proc`/`dcl-pi`, paramètres par référence, `VALUE`, `CONST`, `OPTIONS(*NOPASS)`, variables locales, récursion, appel dans une expression, `CALLP`, prototypes `dcl-pr` (`EXTPGM`, `EXTPROC`, voir les bouchons ci-dessus)
 - **SQL embarqué** : `SELECT … INTO`, `INSERT`, `UPDATE`, `DELETE` ; clause `WHERE` avec `AND`/`OR`/`NOT`, parenthèses, `IS [NOT] NULL` ; variables hôtes ; `SQLCOD` et `SQLSTT`. Une clause non reconnue renvoie une erreur (`SQLCOD` négatif) et ne modifie aucune ligne
-- **Fonctions intégrées** : `%len`, `%trim`, `%triml`, `%trimr`, `%subst`, `%scan`, `%replace`, `%check`, `%upper`, `%lower`, `%char`, `%int`, `%dec`, `%abs`, `%max`, `%min`, `%rem`, `%div`, `%status`, `%date`, `%time`, `%timestamp`
+- **Fonctions intégrées** : `%len`, `%trim`, `%triml`, `%trimr`, `%subst`, `%scan`, `%replace`, `%check`, `%upper`, `%lower`, `%char`, `%int`, `%dec`, `%abs`, `%max`, `%min`, `%rem`, `%div`, `%status`, `%date`, `%time`, `%timestamp`, `%years`, `%months`, `%days`, `%hours`, `%minutes`, `%seconds`, `%mseconds`, `%diff`, `%subdt`
 - **`DSPLY`** : message, variable de réponse (la réponse `Y` est simulée), file d'attente
 
 Pour se protéger d'une boucle ou d'une récursion infinie, l'exécution s'arrête au-delà de 1 000 000 d'itérations ou de 256 appels imbriqués.
@@ -116,7 +116,10 @@ Format *ISO uniquement : date `2026-10-04`, heure `13.45.00`, timestamp `2026-10
 - Littéraux `D'2026-10-04'`, `T'13.45.00'`, `Z'2026-10-04-13.45.00.000000'` ; un littéral invalide est refusé à l'analyse
 - `INZ(*SYS)` : instant présent ; `INZ(*JOB)` : date du jour (il n'y a pas de travail IBM i à simuler)
 - `*LOVAL` / `*HIVAL` en `INZ`, en affectation et en comparaison (ils doivent être à droite de la comparaison : `d = *loval`)
-- Comparaisons entre valeurs du même type ; mélanger les types (`date = 'texte'`, `'Le ' + date`, `date + 1`) est refusé comme à la compilation
+- Comparaisons entre valeurs du même type ; mélanger les types (`date = 'texte'`, `'Le ' + date`, `date + 1`, `date - date`) est refusé comme à la compilation
+- Durées `%YEARS`, `%MONTHS`, `%DAYS` (date), `%HOURS`, `%MINUTES`, `%SECONDS` (heure), toutes plus `%MSECONDS` (microsecondes) pour un timestamp, à droite d'un `+` ou d'un `-` : `fin = debut + %days(30) + %months(1);`. Mois ou année vers un jour inexistant : dernier jour du mois (`D'2026-01-31' + %months(1)` = `2026-02-28`). Résultat hors de `0001-01-01` … `9999-12-31` : statut **00113** (RNX0113)
+- `%DIFF(a : b : *DAYS)` : nombre entier d'unités, tronqué vers zéro (mois entiers pour `*MONTHS`) ; `%SUBDT(d : *MONTHS)` : composante. Unités `*YEARS`/`*Y`, `*MONTHS`/`*M`, `*DAYS`/`*D`, `*HOURS`/`*H`, `*MINUTES`/`*MN`, `*SECONDS`/`*S`, `*MSECONDS`/`*MS`
+- Refusés tant qu'ils ne sont pas vérifiés sur IBM i : heure qui passe minuit (`T'23.00.00' + %hours(2)`), durée à gauche (`%days(1) + d`), durée non entière, `%DIFF` entre types différents ou de deux timestamps en `*SECONDS`, calcul sur `24.00.00`, `%SUBDT` à 3 ou 4 arguments
 - `%DATE()`, `%TIME()`, `%TIMESTAMP()` : instant présent ; avec un argument : conversion entre types ou lecture d'un texte *ISO. Texte invalide : statut **00112** (RNX0112), interceptable par `MONITOR`
 - `%CHAR(x)` et `%CHAR(x : *ISO)`, `DSPLY` d'une variable date
 - Bouchons : les dates s'écrivent en texte *ISO dans `programs.json` (`"fin": "2026-11-04"`)
@@ -131,7 +134,7 @@ Format *ISO uniquement : date `2026-10-04`, heure `13.45.00`, timestamp `2026-10
 - SQL : pas de curseurs, de jointures, de `ORDER BY` ni de `LIKE`
 - `%char` ne connaît les décimales que d'une variable passée directement : `%char(total + 1)` affiche `16`, pas `16.00`
 - Calculs en virgule flottante JavaScript (environ 15 chiffres significatifs)
-- Dates : pas encore d'arithmétique (`%DAYS`, `%DIFF`, `%SUBDT`…), de formats autres que *ISO, de conversion numérique ↔ date, ni de dates en SQL
+- Dates : pas encore de formats autres que *ISO, de conversion numérique ↔ date, ni de dates en SQL
 
 ## Développement
 

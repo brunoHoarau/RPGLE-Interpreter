@@ -1,6 +1,6 @@
 import { Token, TokenType, ASTNode, ProgramNode, ExpressionNode, DataTypeNode, ParameterNode } from './types';
 import { isSupportedBuiltin } from './builtins';
-import { DateTimeKind, isDateTimeType, parseIso } from './datetime';
+import { DateTimeKind, isDateTimeType, parseIso, unitFromName } from './datetime';
 
 const TYPE_TOKENS = [
   TokenType.CHAR, TokenType.VARCHAR, TokenType.PACKED, TokenType.ZONED, TokenType.INT, TokenType.UNS,
@@ -34,6 +34,15 @@ const SUPPORTED_SPECIAL_VALUES = new Set(['*on', '*off', '*zero', '*zeros', '*bl
 // Fonctions dont le 2e argument est un format de date (*ISO, *EUR...)
 const NO_ARGUMENT_BUILTINS = new Set(['%date', '%time', '%timestamp']);
 const FORMAT_BUILTINS = new Set(['%char', '%date', '%time', '%timestamp']);
+
+// Position (0 = 1er argument) de l'unité de date (*DAYS, *M...) dans %DIFF et %SUBDT
+const UNIT_ARGUMENT = new Map([['%diff', 2], ['%subdt', 1]]);
+
+// Nombre exact d'arguments des fonctions de dates
+const BUILTIN_ARITY: { [name: string]: number } = {
+  '%diff': 3, '%subdt': 2, '%years': 1, '%months': 1, '%days': 1,
+  '%hours': 1, '%minutes': 1, '%seconds': 1, '%mseconds': 1,
+};
 
 function unsupported(what: string, token: Token): Error {
   return new Error(`${what} : pas encore supporté par l'interpréteur (ligne ${token.line})`);
@@ -866,6 +875,16 @@ export class Parser {
   }
 
   // 2e argument de %CHAR / %DATE / %TIME / %TIMESTAMP : seul %CHAR(x : *ISO) est supporté
+  // Unité de %DIFF / %SUBDT : *YEARS, *Y, *MONTHS, *M... ; inconnue : erreur, comme à la compilation
+  private parseUnitArgument(builtin: string): ExpressionNode {
+    const token = this.peek();
+    if (token.type !== TokenType.SPECIAL_VALUE || !unitFromName(token.value)) {
+      throw new Error(`${builtin.toUpperCase()} : unité ${token.value.toUpperCase()} inconnue (ligne ${token.line})`);
+    }
+    this.advance();
+    return { type: 'Expression', value: token.value.toLowerCase(), valueType: 'special' };
+  }
+
   private parseFormatArgument(builtin: string): ExpressionNode {
     const token = this.peek();
     if (builtin.toLowerCase() === '%char' && token.type === TokenType.SPECIAL_VALUE && token.value.toLowerCase() === '*iso') {
@@ -919,12 +938,18 @@ export class Parser {
       this.expect(TokenType.LPAREN);
       const args: ExpressionNode[] = [];
 
+      const lower = name.toLowerCase();
       while (!this.check(TokenType.RPAREN)) {
-        if (args.length === 2 && name.toLowerCase() === '%char') {
+        if (args.length === 2 && lower === '%char') {
           throw new Error(`%CHAR accepte au plus 2 arguments (ligne ${token.line})`);
         }
-        if (args.length === 1 && FORMAT_BUILTINS.has(name.toLowerCase())) {
+        if (args.length === 2 && lower === '%subdt') {
+          throw unsupported('%SUBDT avec plus de 2 arguments', this.peek());
+        }
+        if (args.length === 1 && FORMAT_BUILTINS.has(lower)) {
           args.push(this.parseFormatArgument(name));
+        } else if (UNIT_ARGUMENT.get(lower) === args.length) {
+          args.push(this.parseUnitArgument(name));
         } else {
           args.push(this.parseExpression());
         }
@@ -934,6 +959,10 @@ export class Parser {
       }
 
       this.expect(TokenType.RPAREN);
+      const arity = BUILTIN_ARITY[lower];
+      if (arity !== undefined && args.length !== arity) {
+        throw new Error(`${name.toUpperCase()} attend ${arity} argument${arity > 1 ? 's' : ''} (ligne ${token.line})`);
+      }
       return { type: 'Expression', value: { name, args }, valueType: 'builtin' };
     }
 

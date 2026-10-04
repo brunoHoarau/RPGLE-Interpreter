@@ -190,8 +190,6 @@ test('DSPLY accepte encore *BLANK et une file d\'attente en paramètres', () => 
 
 test('les fonctions et formats de dates des incréments suivants sont refusés', () => {
   for (const src of [
-    `dcl-s n int(10); n = %diff(D'2026-10-04' : D'2026-01-01' : *days);`,
-    `dcl-s n int(5); n = %subdt(D'2026-10-04' : *years);`,
     `dcl-s d date; d = %date('04/10/2026' : *eur);`,
     `dcl-s c char(10); c = %char(D'2026-10-04' : *eur);`,
     `dcl-s z timestamp; z = %timestamp('x' : 3);`,
@@ -214,4 +212,16 @@ test('arithmétique de dates incertaine : refusée', () => {
   ]) {
     assert.throws(() => run(src), NOT_SUPPORTED, src);
   }
+});
+
+test('%DIFF et %SUBDT incertains : refusés', () => {
+  for (const src of [
+    `dcl-s n int(10); n = %diff(D'2026-10-04' : Z'2026-10-04-00.00.00.000000' : *days);`,
+    `dcl-s n int(10); n = %diff(Z'2026-10-04-00.00.00.000000' : Z'2026-10-01-00.00.00.000000' : *seconds);`,
+    `dcl-s n int(20); n = %diff(Z'9999-12-31-00.00.00.000000' : Z'0001-01-01-00.00.00.000000' : *ms);`,
+    `dcl-s n int(10); n = %diff(T'24.00.00' : T'10.00.00' : *hours);`,
+  ]) {
+    assert.throws(() => run(src), NOT_SUPPORTED, src);
+  }
+  assert.throws(() => parse(`dcl-s n int(10); n = %subdt(D'2026-10-04' : *years : 4);`), NOT_SUPPORTED);
 });

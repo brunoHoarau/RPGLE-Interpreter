@@ -92,7 +92,7 @@ function fromMock(value: any, type: DataTypeNode | undefined, what: string): any
 }
 
 // Fonctions intégrées qui acceptent une date, une heure ou un timestamp
-const DATE_AWARE_BUILTINS = new Set(['%date', '%time', '%timestamp', '%len']);
+const DATE_AWARE_BUILTINS = new Set(['%date', '%time', '%timestamp', '%len', '%diff', '%subdt']);
 // Acceptées sur IBM i (ou doute) mais pas encore implémentées pour les dates
 const NOT_YET_DATE_BUILTINS = new Set(['%dec', '%int', '%max', '%min']);
 

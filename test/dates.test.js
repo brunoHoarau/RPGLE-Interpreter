@@ -460,3 +460,40 @@ test('durée mal placée ou d\'un mauvais type : types incompatibles', () => {
     assert.throws(() => run(src), INCOMPATIBLE, src);
   }
 });
+
+test('%DIFF et %SUBDT', () => {
+  const out = run(`
+    dcl-s debut date inz(D'2026-01-31');
+    dcl-s fin date inz(D'2026-10-04');
+    dcl-s n int(10);
+    n = %diff(fin : debut : *days);
+    dsply %char(n);
+    dsply %char(%diff(fin : debut : *MONTHS));
+    dsply %char(%diff(debut : fin : *m));
+    dsply %char(%diff(T'12.00.00' : T'10.30.00' : *mn));
+    dsply %char(%subdt(fin : *years) * 100 + %subdt(fin : *months));
+    dsply %char(%subdt(Z'2026-10-04-13.45.07.000089' : *ms));
+  `);
+  assert.deepEqual(out, ['246', '8', '-8', '90', '202610', '89']);
+});
+
+test('%DIFF et %SUBDT : unité non admise ou valeur non date', () => {
+  for (const src of [
+    `dcl-s n int(10); n = %diff(D'2026-10-04' : D'2026-01-01' : *hours);`,
+    `dcl-s n int(10); n = %diff(T'10.00.00' : T'09.00.00' : *days);`,
+    `dcl-s n int(10); n = %diff(20261004 : 20260101 : *days);`,
+    `dcl-s n int(10); n = %subdt(D'2026-10-04' : *ms);`,
+    `dcl-s n int(10); n = %subdt('2026-10-04' : *years);`,
+  ]) {
+    assert.throws(() => run(src), INCOMPATIBLE, src);
+  }
+});
+
+test('%DIFF et %SUBDT : unité inconnue ou nombre d\'arguments, erreur d\'analyse', () => {
+  assert.throws(() => parse(`dcl-s n int(10); n = %diff(D'2026-10-04' : D'2026-01-01' : *weeks);`),
+    /unité \*WEEKS inconnue.*ligne 1/i);
+  assert.throws(() => parse(`dcl-s n int(10); n = %subdt(D'2026-10-04' : 'x');`), /unité.*inconnue/i);
+  assert.throws(() => parse(`dcl-s n int(10); n = %diff(D'2026-10-04' : D'2026-01-01');`), /%DIFF attend 3 arguments/);
+  assert.throws(() => parse(`dcl-s n int(10); n = %subdt(D'2026-10-04');`), /%SUBDT attend 2 arguments/);
+  assert.throws(() => parse(`dcl-s d date; d = d + %days();`), /%DAYS attend 1 argument/);
+});
