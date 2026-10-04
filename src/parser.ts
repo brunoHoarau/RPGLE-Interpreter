@@ -171,14 +171,16 @@ export class Parser {
     const keyed = KEYED_OPERATIONS.has(operation);
 
     // Extenseur (E), (N)... : collé au code opération. Avec un blanc, c'est la liste de clé.
+    // Convention du lexer : la colonne d'un mot est celle de sa fin, celle d'une parenthèse celle de son début ;
+    // une parenthèse collée au mot a donc la même colonne que lui.
     const paren = this.peek();
     if (paren.type === TokenType.LPAREN &&
-        (!keyed || (paren.line === opToken.line && paren.column === opToken.column + opToken.value.length))) {
+        (!keyed || (paren.line === opToken.line && paren.column === opToken.column))) {
       let text = '';
       for (let i = this.pos + 1; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
         text += this.tokens[i].value;
       }
-      throw unsupported(`${opName}(${text.toUpperCase()}) (extenseur d'opération)`, opToken);
+      throw unsupported(`L'extenseur (${text.toUpperCase()}) de ${opName}`, opToken);
     }
 
     let key: ExpressionNode[] | undefined;
@@ -1197,14 +1199,17 @@ export class Parser {
       // %EOF, %FOUND, %EQUAL, %OPEN : l'argument est un nom de fichier, non évalué
       if (FILE_BUILTINS.has(name.toLowerCase())) {
         const args: ExpressionNode[] = [];
-        if (this.check(TokenType.LPAREN)) {
+        if (this.check(TokenType.LPAREN) && this.peekNext()?.type === TokenType.RPAREN) {
+          this.advance(); this.advance(); // %EOF() équivaut à %EOF
+          if (name.toLowerCase() === '%open') throw new Error(`%OPEN attend un nom de fichier (ligne ${token.line})`);
+        } else if (this.check(TokenType.LPAREN)) {
           this.advance();
           const fileToken = this.expectName();
           this.requireFile(fileToken.value, fileToken.line, true);
           args.push({ type: 'Expression', value: fileToken.value, valueType: 'file' });
           this.expect(TokenType.RPAREN);
         } else if (name.toLowerCase() === '%open') {
-          throw new Error(`%OPEN exige un nom de fichier (ligne ${token.line})`);
+          throw new Error(`%OPEN attend un nom de fichier (ligne ${token.line})`);
         }
         return { type: 'Expression', value: { name, args }, valueType: 'builtin' };
       }

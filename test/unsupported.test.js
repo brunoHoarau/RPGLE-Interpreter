@@ -277,3 +277,16 @@ test('durée dont l\'argument peut avoir des décimales : refusée', () => {
     assert.throws(() => run(src), NOT_SUPPORTED, src);
   }
 });
+
+test("extenseur d'opération de fichier : refusé, y compris collé à CHAIN", () => {
+  for (const src of ['chain(e) k f;', 'reade(n) k f;', 'setll(e) k f;', 'chain(n) client;']) {
+    assert.throws(() => parse('dcl-f f keyed; dcl-f client keyed; dcl-s k int(5); ' + src),
+      err => NOT_SUPPORTED.test(err.message) && /extenseur/i.test(err.message), src);
+  }
+  assert.doesNotThrow(() => parse('dcl-f client keyed; dcl-f cde keyed; dcl-s n int(5); chain (n) client; chain (n : 5) cde;'));
+});
+
+test('%EOF() sans argument accepté, %OPEN() refusé clairement', () => {
+  assert.doesNotThrow(() => parse('dcl-f client; if %eof(); endif;'));
+  assert.throws(() => parse('dcl-f client; if %open(); endif;'), /%OPEN attend un nom de fichier \(ligne 1\)/);
+});
