@@ -309,3 +309,72 @@ test('un bouchon qui renvoie une date invalide est une erreur claire', () => {
     echeance(fin);
   `, ctx), /ECHEANCE.*'04\/11\/2026'.*DATE \*ISO/);
 });
+
+// --- Corrections de la relecture finale ---
+
+const DT = `dcl-s d date inz(D'2026-10-04'); dcl-s e date inz(D'2026-10-05');`;
+
+test('%DEC, %INT, %MAX d\'une date : pas encore supporté', () => {
+  assert.throws(() => run(`${DT} dsply %char(%dec(d : 8 : 0));`), NOT_SUPPORTED);
+  assert.throws(() => run(`${DT} dsply %char(%int(d));`), NOT_SUPPORTED);
+  assert.throws(() => run(`${DT} dsply %char(%max(d : e));`), NOT_SUPPORTED);
+});
+
+test('les autres fonctions intégrées refusent une date', () => {
+  assert.throws(() => run(`${DT} dsply %trim(d);`), INCOMPATIBLE);
+  assert.throws(() => run(`${DT} dsply %subst(d : 1 : 4);`), INCOMPATIBLE);
+  assert.throws(() => run(`${DT} dsply %char(%scan('-' : d));`), INCOMPATIBLE);
+});
+
+test('%LEN d\'une date, d\'une heure et d\'un timestamp', () => {
+  const out = run(`dcl-s d date; dcl-s t time; dcl-s z timestamp;
+    dsply %char(%len(d)); dsply %char(%len(t)); dsply %char(%len(z));`);
+  assert.deepEqual(out, ['10', '8', '26']);
+});
+
+test('une date utilisée comme condition est refusée', () => {
+  assert.throws(() => run(`${DT} if d; dsply 'x'; endif;`), INCOMPATIBLE);
+  assert.throws(() => run(`${DT} if 1 = 2; dsply 'a'; elseif d; dsply 'x'; endif;`), INCOMPATIBLE);
+  assert.throws(() => run(`${DT} select; when d; dsply 'x'; endsl;`), INCOMPATIBLE);
+  assert.throws(() => run(`${DT} dow d; dsply 'x'; enddo;`), INCOMPATIBLE);
+  assert.throws(() => run(`${DT} dou d; dsply 'x'; enddo;`), INCOMPATIBLE);
+});
+
+test('une variable hôte date dans EXEC SQL est refusée dès l\'analyse', () => {
+  assert.throws(() => parse(`dcl-s d date; if 1 = 2; exec sql update customers set city = 'X' where date_maj < :d; endif;`), NOT_SUPPORTED);
+});
+
+test('%CHAR accepte au plus 2 arguments', () => {
+  assert.throws(() => parse(`dcl-s d date; dsply %char(d : *iso : 1);`), /%CHAR accepte au plus 2 arguments/);
+});
+
+test('un bouchon qui donne un nombre pour une date est une erreur claire', () => {
+  const ctx = { tables: {}, files: {}, programs: { ECHEANCE: { calls: [{ set: { fin: 20261004 } }] } } };
+  assert.throws(() => run(`
+    dcl-pr echeance extpgm('ECHEANCE');
+      fin date;
+    end-pr;
+    dcl-s fin date;
+    echeance(fin);
+  `, ctx), /ECHEANCE.*DATE doit être un texte \*ISO, reçu 20261004/);
+});
+
+test('un paramètre date d\'un programme appelé reçoit un texte : pas encore supporté', () => {
+  const callee = `
+    dcl-pi *n;
+      p date;
+    end-pi;
+    dsply %char(p);
+  `;
+  assert.throws(() => run(`
+    dcl-pr suivant extpgm('SUIVANT');
+      p char(10);
+    end-pr;
+    suivant('2026-10-04');
+  `, undefined, { resolveProgram: name => (name === 'SUIVANT' ? { source: callee } : undefined) }), /Paramètre P.*DATE.*pas encore support/i);
+});
+
+test('%DATE, %TIME et %TIMESTAMP sans parenthèses', () => {
+  const out = run(`dsply %char(%date); dsply %char(%time); dsply %char(%timestamp);`, undefined, CLOCK);
+  assert.deepEqual(out, ['2026-10-04', '13.45.07', '2026-10-04-13.45.07.089000']);
+});

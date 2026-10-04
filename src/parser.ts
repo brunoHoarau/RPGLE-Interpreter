@@ -32,6 +32,7 @@ const INDICATOR = /^\*in(lr|\d\d)$/;
 const SUPPORTED_SPECIAL_VALUES = new Set(['*on', '*off', '*zero', '*zeros', '*blank', '*blanks']);
 
 // Fonctions dont le 2e argument est un format de date (*ISO, *EUR...)
+const NO_ARGUMENT_BUILTINS = new Set(['%date', '%time', '%timestamp']);
 const FORMAT_BUILTINS = new Set(['%char', '%date', '%time', '%timestamp']);
 
 function unsupported(what: string, token: Token): Error {
@@ -603,6 +604,21 @@ export class Parser {
     return { type: 'Return', value };
   }
 
+  // Variable hôte :nom ou :ds.champ déclarée DATE / TIME / TIMESTAMP
+  private refuseDateHostVariable(colon: Token): void {
+    let i = this.pos;
+    let name = '';
+    while (this.tokens[i]?.type === TokenType.IDENTIFIER) {
+      name += this.tokens[i].value;
+      if (this.tokens[i + 1]?.type !== TokenType.DOT) break;
+      name += '.';
+      i += 2;
+    }
+    if (name && this.dateTimeNames.has(name.toLowerCase())) {
+      throw unsupported(`Variable hôte :${name} de type date/heure dans EXEC SQL`, colon);
+    }
+  }
+
  private parseSQL(): ASTNode {
     this.expect(TokenType.EXEC_SQL);
 
@@ -619,6 +635,7 @@ export class Parser {
         if (DATETIME_LITERALS.has(token.type)) {
           throw unsupported('Un littéral date ou heure dans EXEC SQL', token);
         }
+        if (token.type === TokenType.COLON) this.refuseDateHostVariable(token);
 
         // 🔥 CORRECTION DE LA LOGIQUE :
         // - noSpaceBefore : le token ACTUEL doit-il être collé au précédent ?
@@ -895,10 +912,17 @@ export class Parser {
       if (!isSupportedBuiltin(name)) {
         throw unsupported(`La fonction ${name.toUpperCase()}`, token);
       }
+      // %DATE, %TIME et %TIMESTAMP sont valides sans parenthèses
+      if (NO_ARGUMENT_BUILTINS.has(name.toLowerCase()) && !this.check(TokenType.LPAREN)) {
+        return { type: 'Expression', value: { name, args: [] }, valueType: 'builtin' };
+      }
       this.expect(TokenType.LPAREN);
       const args: ExpressionNode[] = [];
 
       while (!this.check(TokenType.RPAREN)) {
+        if (args.length === 2 && name.toLowerCase() === '%char') {
+          throw new Error(`%CHAR accepte au plus 2 arguments (ligne ${token.line})`);
+        }
         if (args.length === 1 && FORMAT_BUILTINS.has(name.toLowerCase())) {
           args.push(this.parseFormatArgument(name));
         } else {

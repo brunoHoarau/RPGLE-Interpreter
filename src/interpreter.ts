@@ -62,11 +62,19 @@ function dateTimeOperation(op: string, left: any, right: any): boolean {
 
 // Un bouchon JSON donne les dates, heures et timestamps en texte *ISO
 function fromMock(value: any, type: DataTypeNode | undefined, what: string): any {
-  if (!type || !isDateTimeType(type.typeName) || typeof value !== 'string') return value;
+  if (!type || !isDateTimeType(type.typeName) || value === undefined || value === null || isDateTime(value)) return value;
+  if (typeof value !== 'string') {
+    throw new Error(`${what} : la valeur ${type.typeName.toUpperCase()} doit être un texte *ISO, reçu ${value}`);
+  }
   const parsed = parseIso(type.typeName, value);
   if (!parsed) throw new Error(`${what} : '${value}' n'est pas une valeur ${type.typeName.toUpperCase()} *ISO valide`);
   return parsed;
 }
+
+// Fonctions intégrées qui acceptent une date, une heure ou un timestamp
+const DATE_AWARE_BUILTINS = new Set(['%date', '%time', '%timestamp', '%len']);
+// Acceptées sur IBM i (ou doute) mais pas encore implémentées pour les dates
+const NOT_YET_DATE_BUILTINS = new Set(['%dec', '%int', '%max', '%min']);
 
 const DEFAULT_MAX_CALL_DEPTH = 256;
 
@@ -120,7 +128,15 @@ export class Interpreter {
 
     // Paramètres d'entrée du programme (dcl-pi principal), passés par l'appelant
     const parameters = ast.parameters ?? [];
-    parameters.forEach((p, i) => this.runtime.declareVariable(p.name, args[i], p.dataType));
+    parameters.forEach((p, i) => {
+      const type = p.dataType.typeName;
+      // Sur IBM i les octets d'un autre type seraient réinterprétés comme une date
+      if (isDateTimeType(type) && args[i] !== undefined && kindOf(args[i]) !== type) {
+        throw new Error(`Paramètre ${p.name} : passage d'une valeur ${describeValue(args[i])} à un paramètre ${type.toUpperCase()} : `
+          + `pas encore supporté par l'interpréteur`);
+      }
+      this.runtime.declareVariable(p.name, args[i], p.dataType);
+    });
 
     // Première passe : déclarer variables, constantes, procédures
     for (const node of ast.body) {
@@ -422,13 +438,22 @@ export class Interpreter {
     }
 }
 
+  // Évalue une condition (IF, WHEN, DOW, DOU) : une date, une heure ou un timestamp n'est pas un indicateur
+  private condition(expr: ExpressionNode): any {
+    const value = this.evaluate(expr);
+    if (isDateTime(value) || value instanceof FigurativeValue) {
+      throw incompatibleTypes(`Condition ${describeValue(value)}`);
+    }
+    return value;
+  }
+
   private executeIf(node: any): void {
-    if (this.evaluate(node.condition)) {
+    if (this.condition(node.condition)) {
       this.executeBlock(node.thenBlock);
       return;
     }
     for (const elseIf of node.elseIfBlocks ?? []) {
-      if (this.evaluate(elseIf.condition)) {
+      if (this.condition(elseIf.condition)) {
         this.executeBlock(elseIf.block);
         return;
       }
@@ -440,7 +465,7 @@ export class Interpreter {
 
   private executeSelect(node: any): void {
     for (const when of node.whenBlocks) {
-      if (this.evaluate(when.condition)) {
+      if (this.condition(when.condition)) {
         this.executeBlock(when.block);
         return;
       }
@@ -469,13 +494,13 @@ export class Interpreter {
         this.runtime.setVariable(varName, this.runtime.getVariable(varName) + delta);
       }
     } else if (node.loopType === 'dow') {
-      while (this.evaluate(node.condition)) {
+      while (this.condition(node.condition)) {
         if (!this.runIteration(node.body)) return;
       }
     } else if (node.loopType === 'dou') {
       do {
         if (!this.runIteration(node.body)) return;
-      } while (!this.evaluate(node.condition));
+      } while (!this.condition(node.condition));
     }
   }
 
@@ -596,9 +621,11 @@ export class Interpreter {
     }
 
     if (expr.valueType === 'builtin') {
-      const isChar = expr.value.name.toLowerCase() === '%char';
-      // Le format *ISO de %CHAR n'est pas une valeur : on n'évalue que le 1er argument
+      const builtin = expr.value.name.toLowerCase();
+      const isChar = builtin === '%char';
+      // Le 2e argument (*ISO) est un format, inutile à évaluer
       const args = (isChar ? expr.value.args.slice(0, 1) : expr.value.args).map((arg: ExpressionNode) => this.evaluate(arg));
+      if (!isChar && !DATE_AWARE_BUILTINS.has(builtin)) this.refuseDateArguments(expr.value.name, args);
       if (isChar) {
         // %CHAR(x : *ISO) n'existe que pour une date, une heure ou un timestamp
         if (expr.value.args.length > 1 && !isDateTime(args[0])) {
@@ -615,6 +642,16 @@ export class Interpreter {
     }
 
     throw new Error(`Expression non supportée`);
+  }
+
+  // Les autres fonctions intégrées ne savent pas traiter une date, une heure ou un timestamp
+  private refuseDateArguments(name: string, args: any[]): void {
+    const date = args.find(isDateTime);
+    if (!date) return;
+    if (NOT_YET_DATE_BUILTINS.has(name.toLowerCase())) {
+      throw new Error(`${name.toUpperCase()} d'une valeur ${date.kind.toUpperCase()} : pas encore supporté par l'interpréteur`);
+    }
+    throw incompatibleTypes(`${name.toUpperCase()}(${describeValue(date)})`);
   }
 
   private executeOperator(expr: ExpressionNode): any {
