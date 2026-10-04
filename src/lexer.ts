@@ -38,14 +38,26 @@ export class Lexer {
       } else if (char === ',') {
         this.addToken(TokenType.COMMA, ',');
         this.advance();
+      } else if (char === '+' && this.peek(1) === '=') {
+        this.addToken(TokenType.PLUS_EQUALS, '+=');
+        this.advance(2);
       } else if (char === '+') {
         this.addToken(TokenType.PLUS, '+');
         this.advance();
+      } else if (char === '-' && this.peek(1) === '=') {
+        this.addToken(TokenType.MINUS_EQUALS, '-=');
+        this.advance(2);
       } else if (char === '-') {
         this.addToken(TokenType.MINUS, '-');
         this.advance();
       } else if (char === '*') {
-    if (this.peek(1) === '*') {
+    if (this.peek(1) === '*' && this.peek(2) === '=') {
+        this.addToken(TokenType.POWER_EQUALS, '**=');
+        this.advance(3);
+    } else if (this.peek(1) === '=') {
+        this.addToken(TokenType.MULTIPLY_EQUALS, '*=');
+        this.advance(2);
+    } else if (this.peek(1) === '*') {
         // Puissance : **
         this.addToken(TokenType.POWER, '**');
         this.advance(2);
@@ -57,6 +69,9 @@ export class Lexer {
           this.addToken(TokenType.MULTIPLY, '*');
           this.advance();
       }
+    } else if (char === '/' && this.peek(1) === '=') {
+        this.addToken(TokenType.DIVIDE_EQUALS, '/=');
+        this.advance(2);
     } else if (char === '/') {
         this.addToken(TokenType.DIVIDE, '/');
         this.advance();
