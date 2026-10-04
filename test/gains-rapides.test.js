@@ -151,3 +151,36 @@ test('un mot de type reste un type en position de type', () => {
 test('affectation composée sur un élément de tableau : refusée explicitement', () => {
   assert.throws(() => parse(`dcl-s x int(5); x(1) += 2;`), NOT_SUPPORTED);
 });
+
+test('DS d\'indicateurs avec POS', () => {
+  const out = run(`
+    dcl-ds indicateurs;
+      Sortie  ind pos(3);
+      Annuler ind pos(12);
+    end-ds;
+    dcl-ds zones qualified;
+      code char(2) pos(5) inz('xy');
+      montant packed(7:2);
+    end-ds;
+    Sortie = *on;
+    if Sortie and not Annuler;
+      dsply 'sortie';
+    endif;
+    zones.montant = 12.5;
+    dsply zones.code + %char(zones.montant);
+  `);
+  assert.deepEqual(out, ['sortie', 'xy12.50']);
+});
+
+test('POS : chevauchement refusé, valeur invalide, POS hors DS', () => {
+  assert.throws(() => parse(`dcl-ds d; a char(4) pos(1); b char(2) pos(3); end-ds;`),
+    err => NOT_SUPPORTED.test(err.message) && /chevauch/i.test(err.message));
+  assert.throws(() => parse(`dcl-ds d; a packed(7:2); b ind pos(4); end-ds;`), /chevauch/i);
+  assert.throws(() => parse(`dcl-ds d; a ind pos(0); end-ds;`), /POS/);
+  assert.throws(() => parse(`dcl-s x ind pos(3);`), NOT_SUPPORTED);
+});
+
+test('POS : champs contigus sans chevauchement acceptés', () => {
+  assert.doesNotThrow(() => parse(`dcl-ds d; a char(4) pos(1); b char(2) pos(5); c int(10); end-ds;`));
+  assert.doesNotThrow(() => parse(`dcl-ds d; a varchar(3); b date pos(6); end-ds;`));
+});

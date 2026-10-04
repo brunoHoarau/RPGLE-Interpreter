@@ -1,5 +1,6 @@
 import { Token, TokenType, ASTNode, ProgramNode, ExpressionNode, DataTypeNode, ParameterNode } from './types';
 import { isSupportedBuiltin } from './builtins';
+import { byteLength } from './datatypes';
 import { DateTimeKind, isDateTimeType, parseIso, unitFromName } from './datetime';
 
 const TYPE_TOKENS = [
@@ -116,9 +117,9 @@ export class Parser {
     return { type: 'VariableDeclaration', name, dataType, initialValue };
   }
 
-  // Mots-clés d'une déclaration jusqu'au ';' : seul INZ est supporté.
+  // Mots-clés d'une déclaration jusqu'au ';' : INZ, et POS pour un champ de DS (rangé dans fieldPos).
   // Renvoie la valeur de INZ(...), undefined pour INZ seul (valeur par défaut du type).
-  private parseDeclarationKeywords(context: string, dataType: DataTypeNode): ExpressionNode | undefined {
+  private parseDeclarationKeywords(context: string, dataType: DataTypeNode, fieldPos?: { pos?: number }): ExpressionNode | undefined {
     let initialValue: ExpressionNode | undefined;
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
       const token = this.peek();
@@ -129,6 +130,15 @@ export class Parser {
           initialValue = this.parseDateTimeSpecial(this.inzSpecials(dataType), TokenType.RPAREN) ?? this.parseExpression();
           this.expect(TokenType.RPAREN);
         }
+      } else if (fieldPos && token.type === TokenType.IDENTIFIER && token.value.toLowerCase() === 'pos') {
+        this.advance();
+        this.expect(TokenType.LPAREN);
+        const arg = this.advance();
+        if (arg.type !== TokenType.NUMBER || !/^[0-9]+$/.test(arg.value) || parseInt(arg.value) < 1 || !this.check(TokenType.RPAREN)) {
+          throw new Error(`POS(${arg.value}) invalide à la ligne ${arg.line} : un entier supérieur ou égal à 1 est attendu`);
+        }
+        this.advance();
+        fieldPos.pos = parseInt(arg.value);
       } else {
         throw unsupported(`Le mot-clé ${token.value.toUpperCase()} de ${context}`, token);
       }
@@ -206,6 +216,8 @@ export class Parser {
     const name = this.expectName().value;
     let isQualified = false;
     const fields: any[] = [];
+    const placed: { name: string; start: number; end: number; line: number }[] = [];
+    let nextByte = 1;
 
     // 1. Options de la DS jusqu'au ';' : QUALIFIED et INZ sont supportés
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
@@ -224,12 +236,21 @@ export class Parser {
 
     // 2. Champs jusqu'à 'end-ds'
     while (!this.check(TokenType.END_DS) && !this.isAtEnd()) {
+      const fieldToken = this.peek();
       const fieldName = this.expectName().value;
       const fieldType = this.parseDataType();
       this.rememberDateTime(`${name}.${fieldName}`, fieldType);
       if (!isQualified) this.rememberDateTime(fieldName, fieldType);
-      const initialValue = this.parseDeclarationKeywords('champ de DS', fieldType);
+      const position: { pos?: number } = {};
+      const initialValue = this.parseDeclarationKeywords('champ de DS', fieldType, position);
       this.expect(TokenType.SEMICOLON);
+      // Les champs sont des valeurs indépendantes : un recouvrement d'octets ne serait pas fidèle
+      const start = position.pos ?? nextByte;
+      const end = start + byteLength(fieldType) - 1;
+      const clash = placed.find(p => start <= p.end && p.start <= end);
+      if (clash) throw unsupported(`Champs de DS qui se chevauchent (${clash.name.toUpperCase()} et ${fieldName.toUpperCase()})`, fieldToken);
+      placed.push({ name: fieldName, start, end, line: fieldToken.line });
+      nextByte = end + 1;
       fields.push({ name: fieldName, dataType: fieldType, initialValue });
     }
 

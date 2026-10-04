@@ -75,6 +75,27 @@ export function formatChar(value: any, type: DataTypeNode | undefined): string {
   return value < 0 ? `-${text}` : text;
 }
 
+// Longueur en octets d'un champ de DS (sert à détecter les chevauchements de POS)
+export function byteLength(type: DataTypeNode): number {
+  const n = type.length ?? 0;
+  switch (type.typeName) {
+    case 'char': return n;
+    case 'varchar': return n + 2;
+    case 'ind': return 1;
+    case 'int':
+    case 'uns': {
+      const digits = type.length ?? 10;
+      return digits <= 3 ? 1 : digits <= 5 ? 2 : digits <= 10 ? 4 : 8;
+    }
+    case 'packed': return Math.floor(n / 2) + 1;
+    case 'zoned': return n;
+    case 'date': return 10;
+    case 'time': return 8;
+    case 'timestamp': return 26;
+    default: return n;
+  }
+}
+
 export function describeType(type: DataTypeNode): string {
   if (type.length === undefined) return type.typeName;
   return type.decimals === undefined
