@@ -132,3 +132,89 @@ nouveau statut `STATUS_INVALID_DATE = 112`.
 - `test/unsupported.test.js` : retrait du refus de `date/time/timestamp` ; ajout
   des refus `date(*EUR)`, `ctl-opt datfmt(*eur)`, `timestamp(3)`, `%days`,
   `%diff`, variable hôte date en SQL, `*LOVAL` vers un `char`.
+
+## Incrément 2 — Arithmétique
+
+Validé le 2026-10-04. Sans AS400 pour vérifier, tout point de sémantique incertain est
+**refusé explicitement** (« pas encore supporté ») plutôt que deviné.
+
+### Comportement attendu (vu du programme RPG)
+
+**Durées** — `%YEARS(n)`, `%MONTHS(n)`, `%DAYS(n)`, `%HOURS(n)`, `%MINUTES(n)`,
+`%SECONDS(n)`, `%MSECONDS(n)` (microsecondes, comme sur IBM i), `n` entier, éventuellement
+négatif.
+- `n` non entier : « pas encore supporté » ; `n` non numérique : « types incompatibles ».
+- Une durée n'est utilisable qu'à **droite** d'un `+` ou d'un `-` dont la gauche est une
+  date, une heure ou un timestamp. Partout ailleurs (affectation, `DSPLY`, comparaison,
+  condition, argument d'une autre fonction, durée + durée) : « types incompatibles ».
+- Durée à gauche (`%days(1) + d`) : « pas encore supporté ».
+
+**Addition et soustraction** — évaluées de gauche à droite (`d + %days(1) + %months(1)`).
+
+| Valeur | Durées admises |
+|--------|----------------|
+| date | `%YEARS`, `%MONTHS`, `%DAYS` |
+| time | `%HOURS`, `%MINUTES`, `%SECONDS` |
+| timestamp | toutes, y compris `%MSECONDS` |
+
+- Durée non admise pour le type (`date + %hours(1)`, `time + %days(1)`) : « types incompatibles ».
+- `date - date` (et tout `+`/`-` entre deux dates/heures) : « types incompatibles » (`%DIFF` existe pour cela).
+- Mois et années : si le jour n'existe pas dans le mois d'arrivée, il est ramené au dernier
+  jour du mois (`D'2026-01-31' + %months(1)` = `2026-02-28` ; `D'2024-02-29' + %years(1)` = `2025-02-28`).
+- Date ou timestamp hors de `0001-01-01` … `9999-12-31` : **statut 00113** (`RpgError`,
+  message contenant `RNX0113`), interceptable par `MONITOR`.
+- Heure dont le résultat sort de `00.00.00` … `23.59.59` (passage de minuit) : « pas encore supporté ».
+- Calcul sur une heure ou un timestamp valant `24.00.00` : « pas encore supporté ».
+
+**`%DIFF(a : b : unité)`** — nombre entier d'unités de `a - b`, tronqué vers zéro
+(59 minutes = 0 heure ; négatif si `a < b`).
+- `a` et `b` du même type ; mélange (date/timestamp…) : « pas encore supporté ».
+- Unités : date → `*YEARS`/`*Y`, `*MONTHS`/`*M`, `*DAYS`/`*D` ; time → `*HOURS`/`*H`,
+  `*MINUTES`/`*MN`, `*SECONDS`/`*S` ; timestamp → toutes celles-ci et `*MSECONDS`/`*MS`.
+  Unité non admise pour le type : « types incompatibles ». Unité inconnue : erreur d'analyse.
+- `*MONTHS` / `*YEARS` : mois entiers écoulés (du 31 janvier au 28 février = 0 mois) ;
+  `*YEARS` = mois entiers ÷ 12, tronqué.
+- Timestamps en `*SECONDS` (fractions de seconde possibles sur IBM i) : « pas encore supporté ».
+- Résultat au-delà de 2^53 (cas `*MSECONDS` sur plus de ~285 ans) : « pas encore supporté ».
+- `%DIFF` sur une valeur `24.00.00` : « pas encore supporté ».
+
+**`%SUBDT(valeur : unité)`** — composante numérique : année, mois, jour, heure, minute,
+seconde, microsecondes (`*MSECONDS`, timestamp seulement). Mêmes unités et abréviations
+que `%DIFF`, unité non admise pour le type : « types incompatibles ». 3ᵉ et 4ᵉ arguments
+(chiffres, décimales) : « pas encore supporté ».
+
+### Architecture
+
+**`src/datetime.ts`** (toujours autonome)
+- `class RpgDuration(unit: DurationUnit, amount: number)` ; `DurationUnit` =
+  `'years' | 'months' | 'days' | 'hours' | 'minutes' | 'seconds' | 'mseconds'`.
+- Table des unités : `*years`/`*y` → years, `*months`/`*m` → months, `*days`/`*d` → days,
+  `*hours`/`*h` → hours, `*minutes`/`*mn` → minutes, `*seconds`/`*s` → seconds,
+  `*mseconds`/`*ms` → mseconds ; unités admises par type.
+- Numéro de jour continu (conversion date ↔ entier, algorithme civil grégorien) : pas
+  d'objet `Date` JavaScript, pas de fuseau horaire.
+- `addDuration(value, duration, sign)` → valeur, ou un motif d'échec (`'overflow'`,
+  `'wrap'`, `'unit'`, `'24h'`) que l'appelant traduit en erreur.
+  Timestamp : couple (numéro de jour, microsecondes du jour) en entiers, avec retenue.
+- `diffDateTime(a, b, unit)` et `subdt(value, unit)`.
+
+**Branchements**
+
+| Fichier | Changement |
+|---------|------------|
+| `errors.ts` | `STATUS_DATE_OVERFLOW = 113` |
+| `builtins.ts` | `%YEARS` … `%MSECONDS` (durées), `%DIFF`, `%SUBDT` |
+| `parser.ts` | unité en 3ᵉ argument de `%DIFF` et 2ᵉ de `%SUBDT` ; unité inconnue = erreur d'analyse ; `%SUBDT` à plus de 2 arguments refusé |
+| `interpreter.ts` | `dateTimeOperation` : `+`/`-` date/durée ; une durée hors de cette position → « types incompatibles » (conditions, autres BIF, opérateurs) |
+| `datatypes.ts` | une durée ne s'affecte à rien ; `describeValue` décrit les durées |
+| `readme.md` | section « Dates et heures » et limites connues à jour |
+
+### Tests (TDD)
+
+- `test/datetime.test.js` : numéro de jour (aller-retour, 0001-01-01, 9999-12-31, 1900/2000/2024),
+  fin de mois, 29 février + 1 an, jours négatifs, retenue des microsecondes, dépassement,
+  passage de minuit, `%DIFF` tronqué vers zéro et négatif, mois entiers.
+- `test/dates.test.js` : programmes RPG — `d + %days(1) + %months(1) + %years(1)`,
+  `%date() - %years(2)` avec horloge figée, timestamps, `%DIFF`, `%SUBDT`, statut 00113
+  intercepté par `MONITOR`, refus « types incompatibles ».
+- `test/unsupported.test.js` : chacun des refus « pas encore supporté » ci-dessus.
