@@ -10,6 +10,8 @@ export interface TableDefinition {
   data: any[];
   keys?: string[];   // Clés du fichier logique/physique, en majuscules
   format?: string;   // Nom du format d'enregistrement, en majuscules
+  deletedRows?: boolean; // Positionné par un DELETE SQL : les numéros d'enregistrement ne sont plus fiables
+  revision?: number;     // Incrémenté par chaque INSERT, UPDATE ou DELETE SQL (cache des fichiers natifs)
 }
 
 // Bouchon d'un programme ou d'une procédure externe (context/programs.json).
