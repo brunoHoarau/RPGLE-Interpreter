@@ -2,11 +2,11 @@ import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, Par
 import { Runtime } from './runtime';
 import { ExecutionContext, MockCase, emptyContext } from './context';
 import { coerce, defaultValue, describeValue, formatChar } from './datatypes';
-import { FigurativeValue, compareDateTime, fromClock, isDateTime, isDateTimeType, kindOf, parseIso, resolveFigurative } from './datetime';
+import { DateTimeValue, FigurativeValue, RpgDuration, addDuration, compareDateTime, fromClock, isDateTime, isDateTimeType, isDuration, kindOf, parseIso, resolveFigurative } from './datetime';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { ProgramResolver } from './sources';
-import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DIVIDE_BY_ZERO, incompatibleTypes, matchesStatus } from './errors';
+import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DATE_OVERFLOW, STATUS_DIVIDE_BY_ZERO, incompatibleTypes, matchesStatus } from './errors';
 
 // Signaux de contrôle : levés comme exceptions pour traverser les blocs imbriqués
 // jusqu'à la boucle (LEAVE/ITER) ou la procédure / le programme (RETURN) concerné.
@@ -45,11 +45,17 @@ const COMPARISONS: { [op: string]: (c: number) => boolean } = {
   '=': c => c === 0, '<>': c => c !== 0, '<': c => c < 0, '<=': c => c <= 0, '>': c => c > 0, '>=': c => c >= 0,
 };
 
-const involvesDateTime = (value: any) => isDateTime(value) || value instanceof FigurativeValue;
+const involvesDateTime = (value: any) => isDateTime(value) || isDuration(value) || value instanceof FigurativeValue;
 
-// Avec une date, une heure ou un timestamp, seule la comparaison au même type est permise.
+// Avec une date, une heure ou un timestamp : comparaison au même type, ou + / - d'une durée à droite.
 // *LOVAL / *HIVAL prennent le type de l'autre opérande.
-function dateTimeOperation(op: string, left: any, right: any): boolean {
+function dateTimeOperation(op: string, left: any, right: any): any {
+  if ((op === '+' || op === '-') && isDateTime(left) && isDuration(right)) {
+    return applyDuration(left, right, op === '+' ? 1 : -1);
+  }
+  if (op === '+' && isDuration(left) && isDateTime(right)) {
+    throw new Error(`Durée à gauche d'une date (${left} + ${describeValue(right)}) : pas encore supporté par l'interpréteur`);
+  }
   const test = COMPARISONS[op];
   if (left instanceof FigurativeValue && kindOf(right)) left = resolveFigurative(left, kindOf(right)!);
   if (right instanceof FigurativeValue && kindOf(left)) right = resolveFigurative(right, kindOf(left)!);
@@ -58,6 +64,20 @@ function dateTimeOperation(op: string, left: any, right: any): boolean {
   }
   const operands = right === undefined ? describeValue(left) : `${describeValue(left)} et ${describeValue(right)}`;
   throw incompatibleTypes(`Opération ${op.toUpperCase()} avec ${operands}`);
+}
+
+// Traduit un échec du calcul en erreur RPG
+function applyDuration(value: DateTimeValue, duration: RpgDuration, sign: 1 | -1): DateTimeValue {
+  const result = addDuration(value, duration, sign);
+  if (typeof result !== 'string') return result;
+  const what = `${describeValue(value)} ${sign > 0 ? '+' : '-'} ${duration}`;
+  switch (result) {
+    case 'unit': throw incompatibleTypes(what);
+    case 'overflow': throw new RpgError(STATUS_DATE_OVERFLOW, `Résultat hors limites pour ${what} (RNX0113)`);
+    case 'wrap': throw new Error(`${what} passe minuit : pas encore supporté par l'interpréteur`);
+    case '24h': throw new Error(`Calcul sur la valeur 24.00.00 (${what}) : pas encore supporté par l'interpréteur`);
+  }
+  throw new Error(`Cas imprévu : ${result}`);
 }
 
 // Un bouchon JSON donne les dates, heures et timestamps en texte *ISO
@@ -72,7 +92,9 @@ function fromMock(value: any, type: DataTypeNode | undefined, what: string): any
 }
 
 // Fonctions intégrées qui acceptent une date, une heure ou un timestamp
-const DATE_AWARE_BUILTINS = new Set(['%date', '%time', '%timestamp', '%len']);
+const DURATION_BUILTINS = new Set(['%years', '%months', '%days', '%hours', '%minutes', '%seconds', '%mseconds']);
+const WHOLE_NUMBER_BUILTINS = new Set(['%int', '%diff', '%subdt', '%len', '%scan', '%check', '%rem', '%div']);
+const DATE_AWARE_BUILTINS = new Set(['%date', '%time', '%timestamp', '%len', '%diff', '%subdt']);
 // Acceptées sur IBM i (ou doute) mais pas encore implémentées pour les dates
 const NOT_YET_DATE_BUILTINS = new Set(['%dec', '%int', '%max', '%min']);
 
@@ -441,7 +463,7 @@ export class Interpreter {
   // Évalue une condition (IF, WHEN, DOW, DOU) : une date, une heure ou un timestamp n'est pas un indicateur
   private condition(expr: ExpressionNode): any {
     const value = this.evaluate(expr);
-    if (isDateTime(value) || value instanceof FigurativeValue) {
+    if (isDateTime(value) || isDuration(value) || value instanceof FigurativeValue) {
       throw incompatibleTypes(`Condition ${describeValue(value)}`);
     }
     return value;
@@ -475,20 +497,29 @@ export class Interpreter {
     }
   }
 
+  // Borne d'une boucle FOR : ni date, ni durée, ni constante figurative
+  private numericBound(expr: ExpressionNode, what: string): any {
+    const value = this.evaluate(expr);
+    if (isDateTime(value) || isDuration(value) || value instanceof FigurativeValue) {
+      throw incompatibleTypes(`FOR, ${what} ${describeValue(value)}`);
+    }
+    return value;
+  }
+
   private executeLoop(node: any): void {
     if (node.loopType === 'for') {
       // La variable de boucle est relue à chaque tour : le corps peut la modifier,
       // et elle vaut limite + pas en sortie de boucle, comme en RPG.
       const varName = node.variable;
-      const limit = this.evaluate(node.limit);
-      const step = node.step ? this.evaluate(node.step) : 1;
+      const limit = this.numericBound(node.limit, 'limite');
+      const step = node.step ? this.numericBound(node.step, 'pas') : 1;
       const delta = node.direction === 'to' ? step : -step;
       const inRange = () => {
         const i = this.runtime.getVariable(varName);
         return node.direction === 'to' ? i <= limit : i >= limit;
       };
 
-      this.runtime.setVariable(varName, this.evaluate(node.init));
+      this.runtime.setVariable(varName, this.numericBound(node.init, 'valeur initiale'));
       while (inRange()) {
         if (!this.runIteration(node.body)) return;
         this.runtime.setVariable(varName, this.runtime.getVariable(varName) + delta);
@@ -512,7 +543,9 @@ export class Interpreter {
     let msg = '';
     if (node.message) {
       // Les blancs de fin d'un char sont invisibles à l'écran
-      msg = String(this.evaluate(node.message)).trimEnd();
+      const value = this.evaluate(node.message);
+      if (isDuration(value)) throw incompatibleTypes(`DSPLY ${describeValue(value)}`);
+      msg = String(value).trimEnd();
     }
 
     const queueInfo = node.queue ? ` (File: ${this.evaluate(node.queue)})` : '';
@@ -625,6 +658,13 @@ export class Interpreter {
       const isChar = builtin === '%char';
       // Le 2e argument (*ISO) est un format, inutile à évaluer
       const args = (isChar ? expr.value.args.slice(0, 1) : expr.value.args).map((arg: ExpressionNode) => this.evaluate(arg));
+      // L'argument d'une durée doit être un entier garanti, quelle que soit sa valeur
+      if (DURATION_BUILTINS.has(builtin) && typeof args[0] === 'number' && !this.isWholeNumberExpression(expr.value.args[0])) {
+        throw new Error(`${expr.value.name.toUpperCase()} d'une valeur qui peut avoir des décimales : pas encore supporté par l'interpréteur`);
+      }
+      // Aucune fonction intégrée ne prend une durée en argument
+      const duration = args.find(isDuration);
+      if (duration) throw incompatibleTypes(`${expr.value.name.toUpperCase()}(${describeValue(duration)})`);
       if (!isChar && !DATE_AWARE_BUILTINS.has(builtin)) this.refuseDateArguments(expr.value.name, args);
       if (isChar) {
         // %CHAR(x : *ISO) n'existe que pour une date, une heure ou un timestamp
@@ -642,6 +682,22 @@ export class Interpreter {
     }
 
     throw new Error(`Expression non supportée`);
+  }
+
+  // Vrai si l'expression est numérique sans décimales par construction (pas selon sa valeur)
+  private isWholeNumberExpression(expr: ExpressionNode | undefined): boolean {
+    if (!expr) return false;
+    if (expr.operator) {
+      if (expr.operator === 'neg') return this.isWholeNumberExpression(expr.left);
+      if (['+', '-', '*'].includes(expr.operator)) return this.isWholeNumberExpression(expr.left) && this.isWholeNumberExpression(expr.right);
+      return false;
+    }
+    if (expr.valueType === 'number') return !expr.hasDecimalPoint;
+    if (expr.valueType === 'builtin') return WHOLE_NUMBER_BUILTINS.has(expr.value.name.toLowerCase());
+    const type = this.declaredType(expr);
+    if (!type) return false;
+    if (type.typeName === 'int' || type.typeName === 'uns') return true;
+    return (type.typeName === 'packed' || type.typeName === 'zoned') && !type.decimals;
   }
 
   // Les autres fonctions intégrées ne savent pas traiter une date, une heure ou un timestamp

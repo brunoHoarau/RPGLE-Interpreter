@@ -1,6 +1,6 @@
 // Sémantique des types RPG : valeurs par défaut, conversion à l'affectation, %CHAR
 import { DataTypeNode } from './types';
-import { DateTimeKind, FigurativeValue, isDateTime, isDateTimeType, kindOf, lowValue, resolveFigurative } from './datetime';
+import { DateTimeKind, FigurativeValue, isDateTime, isDateTimeType, isDuration, kindOf, lowValue, resolveFigurative } from './datetime';
 import { RpgError, STATUS_INVALID_NUMERIC, STATUS_OVERFLOW, incompatibleTypes } from './errors';
 
 const INT_BITS: { [digits: number]: number } = { 3: 8, 5: 16, 10: 32, 20: 64 };
@@ -24,7 +24,7 @@ export function coerce(value: any, type: DataTypeNode | undefined, target: strin
   if (value instanceof FigurativeValue) {
     throw new Error(`${value.name.toUpperCase()} affecté à ${target} ${describeType(type)} : pas encore supporté par l'interpréteur`);
   }
-  if (isDateTime(value)) throw incompatibleAssignment(value, type, target);
+  if (isDateTime(value) || isDuration(value)) throw incompatibleAssignment(value, type, target);
 
   switch (type.typeName) {
     case 'char': {
@@ -121,6 +121,7 @@ function incompatibleAssignment(value: any, type: DataTypeNode, target: string):
 // Nature d'une valeur pour les messages d'erreur
 export function describeValue(value: any): string {
   if (value instanceof FigurativeValue) return value.name.toUpperCase();
+  if (isDuration(value)) return `durée ${value}`;
   const kind = kindOf(value);
   if (kind) return `${kind.toUpperCase()} ${value}`;
   if (typeof value === 'number') return `numérique ${value}`;

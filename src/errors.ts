@@ -14,6 +14,7 @@ export const STATUS_INVALID_NUMERIC = 105;  // RNX0105
 export const STATUS_CALL_FAILED = 202;      // Le programme ou la procédure appelé a échoué
 export const STATUS_CALL_NOT_FOUND = 211;   // Programme ou procédure appelé introuvable
 export const STATUS_INVALID_DATE = 112;     // RNX0112 : date, heure ou timestamp invalide
+export const STATUS_DATE_OVERFLOW = 113;    // RNX0113 : date hors limites après calcul
 
 // Instruction que le compilateur IBM i refuserait : ce n'est pas une erreur d'exécution RPG,
 // MONITOR ne l'intercepte donc pas
