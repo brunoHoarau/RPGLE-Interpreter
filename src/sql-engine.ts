@@ -1,4 +1,6 @@
 import { ExecutionContext, TableDefinition } from './context';
+import { isDataStructure } from './datatypes';
+import { NotSupportedError } from './errors';
 
 export interface SQLResult {
   rows: any[];
@@ -35,6 +37,27 @@ type Condition =
   | { kind: 'compare'; op: string; left: Operand; right: Operand }
   | { kind: 'isNull'; operand: Operand; negated: boolean };
 
+// Mots qui ouvrent une construction SQL hors périmètre (jamais pris pour une colonne inconnue)
+const RESERVED_SQL_WORDS = new Set(['CURRENT', 'CASE', 'CAST', 'SELECT', 'DEFAULT', 'DATE', 'TIME', 'TIMESTAMP', 'USER', 'SESSION_USER', 'SYSTEM_USER']);
+
+// CURRENT_DATE, CURRENT_TIMESTAMP, CURRENT_USER, CURRENT DATE... : jamais pris pour une colonne
+// Mots toujours réservés : même une colonne de ce nom ne pourrait pas être écrite sans guillemets
+const ALWAYS_RESERVED_SQL_WORDS = new Set(['CURRENT', 'CASE', 'CAST', 'SELECT', 'DEFAULT']);
+
+// Une colonne réelle de la table nommée DATE, USER, CURRENT_BALANCE... reste une colonne
+const isReservedSqlWord = (upper: string, columns?: Set<string> | null) =>
+  (RESERVED_SQL_WORDS.has(upper) || upper.startsWith('CURRENT_'))
+  && (ALWAYS_RESERVED_SQL_WORDS.has(upper) || !columns?.has(upper));
+
+// Erreur SQL ordinaire avec son SQLCOD et son SQLSTATE (le programme continue)
+class SqlError extends Error {
+  constructor(message: string, public readonly sqlCode: number, public readonly sqlState: string) {
+    super(message);
+  }
+}
+
+const HOST_NAME = /^[A-Za-z_$#@][\w$#@]*(?:\.[\w$#@]+)?$/;
+
 export class SQLEngine {
   private tables: { [name: string]: TableDefinition };
 
@@ -44,29 +67,30 @@ export class SQLEngine {
 
   // Point d'entrée principal
   execute(sql: string, hostVariables: HostVariables): SQLResult {
+    // Un commentaire SQL ne serait pas interprété : refusé plutôt que mal compris
+    if (sql.split(/('(?:[^']|'')*')/).some((part, i) => i % 2 === 0 && /--|\/\*/.test(part))) {
+      throw new NotSupportedError('Commentaire dans une instruction SQL');
+    }
     const normalized = this.normalizeWhitespace(sql);
-    const upperSql = normalized.toUpperCase();
+    const verb = (normalized.match(/^\w+/)?.[0] ?? '').toUpperCase();
 
     try {
-      if (upperSql.startsWith('SELECT')) {
-        return this.executeSelect(normalized, hostVariables);
+      switch (verb) {
+        case 'SELECT': return this.executeSelect(normalized, hostVariables);
+        case 'INSERT': return this.executeInsert(normalized, hostVariables);
+        case 'UPDATE': return this.executeUpdate(normalized, hostVariables);
+        case 'DELETE': return this.executeDelete(normalized, hostVariables);
       }
-      if (upperSql.startsWith('INSERT')) {
-        return this.executeInsert(normalized, hostVariables);
-      }
-      if (upperSql.startsWith('UPDATE')) {
-        return this.executeUpdate(normalized, hostVariables);
-      }
-      if (upperSql.startsWith('DELETE')) {
-        return this.executeDelete(normalized, hostVariables);
-      }
-      throw new Error(`Type de requête SQL non supporté: ${normalized.split(' ')[0]}`);
+      // DECLARE CURSOR, OPEN, FETCH, CLOSE, SET, VALUES, COMMIT, CALL, WITH... : le programme s'arrête
+      throw new NotSupportedError(`Instruction SQL ${verb || normalized}`);
     } catch (error: any) {
+      // Un refus « pas encore supporté » arrête le programme, il n'est pas une erreur SQL
+      if (error instanceof NotSupportedError) throw error;
       return {
         rows: [],
         rowCount: 0,
-        sqlCode: -1,
-        sqlState: 'HY000',
+        sqlCode: error instanceof SqlError ? error.sqlCode : -1,
+        sqlState: error instanceof SqlError ? error.sqlState : 'HY000',
         message: error.message,
       };
     }
@@ -74,49 +98,66 @@ export class SQLEngine {
 
   // === SELECT ===
   private executeSelect(sql: string, hostVars: HostVariables): SQLResult {
-    // 1. Trouver la table
-    const fromMatch = sql.match(/\bFROM\s+(\w+)/i);
-    if (!fromMatch) {
-      throw new Error('FROM manquant dans le SELECT');
-    }
-    const table = this.getTable(fromMatch[1]);
+    // 1. Découpe : SELECT liste [INTO variables] FROM table [WHERE ...]
+    const fromAt = this.findTopLevelWord(sql, 'FROM');
+    if (fromAt < 0) throw new NotSupportedError('SELECT sans FROM');
+    const intoAt = this.findTopLevelWord(sql, 'INTO');
+    if (intoAt > fromAt) throw new NotSupportedError('INTO après FROM');
+    const listText = sql.slice(6, intoAt < 0 ? fromAt : intoAt).trim();
+    const intoText = intoAt < 0 ? '' : sql.slice(intoAt + 4, fromAt).trim();
+    const after = sql.slice(fromAt + 4).trim().match(/^(\w+)\s*(.*)$/);
+    if (!after) throw new NotSupportedError(`Clause FROM '${sql.slice(fromAt + 4).trim()}'`);
+    const tail = after[2];
+    if (tail !== '' && !/^WHERE\s/i.test(tail)) throw new NotSupportedError(`Clause SELECT '${tail}'`);
 
-    // 2. Filtrage WHERE
+    // La liste ne contient que * ou des colonnes ; INTO que des variables hôtes sans indicateur
+    const items = this.splitTopLevel(listText, ',').map(c => c.trim().toUpperCase());
+    for (const item of items) {
+      if (item !== '*' && !/^\w+$/.test(item)) throw new NotSupportedError(`Liste de SELECT '${item}'`);
+    }
+    if (items.includes('*') && items.length > 1) throw new NotSupportedError(`Liste de SELECT '${listText}'`);
+    const targets = intoAt < 0 ? [] : this.splitTopLevel(intoText, ',').map(v => v.trim());
+    for (const target of targets) {
+      if (!target.startsWith(':') || !HOST_NAME.test(target.slice(1))) throw new NotSupportedError(`INTO '${target}'`);
+      // IBM remplit les sous-champs d'une DS entière : non simulé
+      if (isDataStructure(hostVars.get(target.slice(1).toLowerCase()))) throw new NotSupportedError(`INTO d'une structure de données entière '${target}'`);
+    }
+
+    // 2. Table et filtrage WHERE
+    const table = this.getTable(after[1]);
+    const knownColumns = this.columnNames(table);
+    // CURRENT_DATE & co ne sont pas des colonnes : registre spécial, non supporté
+    for (const item of items) {
+      if (item !== '*' && isReservedSqlWord(item, knownColumns)) throw new NotSupportedError(`Liste de SELECT '${item}'`);
+    }
     let rows = [...table.data];
-    const whereMatch = sql.match(/\bWHERE\s+(.+?)(?:\s+ORDER|\s+GROUP|\s+LIMIT|\s+FOR|\s*$)/i);
-    if (whereMatch) {
-      const matches = this.compileWhere(whereMatch[1], table, hostVars);
-      rows = rows.filter(matches);
+    if (tail !== '') {
+      rows = rows.filter(this.compileWhere(tail.slice(5), table, hostVars));
     }
 
-    // 3. Gestion INTO
-    const intoMatch = sql.match(/\bINTO\s+(.+?)\s+FROM\b/i);
-    if (intoMatch && rows.length > 0) {
+    if (intoAt >= 0 && items[0] !== '*' && targets.length !== items.length) {
+      throw new SqlError(`SELECT INTO : ${items.length} colonne(s) pour ${targets.length} variable(s) hôte(s)`, -313, '07001');
+    }
+    // 3. Gestion INTO : autant de variables que de colonnes (SQLCOD -313), une seule ligne (SQLCOD -811)
+    if (intoAt >= 0 && rows.length > 0) {
       const firstRow = rows[0];
-
-      // A. Trouver les colonnes sélectionnées
-      const selectMatch = sql.match(/SELECT\s+(.+?)\s+(?:INTO|FROM)\b/i);
-      let selectedColumns: string[];
-      if (selectMatch && selectMatch[1].trim() !== '*') {
-        selectedColumns = selectMatch[1].split(',').map(c => c.trim().toUpperCase());
-      } else {
-        selectedColumns = Object.keys(firstRow);
+      const selectedColumns = items[0] === '*' ? Object.keys(firstRow).map(k => k.toUpperCase()) : items;
+      if (targets.length !== selectedColumns.length) {
+        throw new SqlError(`SELECT INTO : ${selectedColumns.length} colonne(s) pour ${targets.length} variable(s) hôte(s)`, -313, '07001');
       }
+      if (rows.length > 1) throw new SqlError('SELECT INTO : plusieurs lignes trouvées', -811, '21000');
 
-      // B. Trouver les variables hôtes
-      const hostVarsInInto = intoMatch[1].match(/:\w+/g)?.map(v => v.substring(1).toLowerCase()) || [];
-
-      // C. Mapper colonne -> variable hôte
-      hostVarsInInto.forEach((varName, idx) => {
-        if (idx < selectedColumns.length) {
-          const targetCol = selectedColumns[idx];
-          const actualCol = Object.keys(firstRow).find(k => k.toUpperCase() === targetCol);
-          if (actualCol === undefined) {
-            throw new Error(`Colonne inconnue: ${targetCol}`);
-          }
-          hostVars.set(varName, firstRow[actualCol]);
-        }
+      // Toutes les colonnes sont validées, puis les NULL repérés (SQLCOD -305), avant d'affecter quoi que ce soit
+      const values = selectedColumns.map(targetCol => {
+        const actualCol = Object.keys(firstRow).find(k => k.toUpperCase() === targetCol);
+        if (actualCol === undefined) throw new Error(`Colonne inconnue: ${targetCol}`);
+        return firstRow[actualCol];
       });
+      const nullAt = values.findIndex(v => v === null || v === undefined);
+      if (nullAt >= 0) {
+        throw new SqlError(`Valeur NULL de ${selectedColumns[nullAt]} sans variable indicatrice`, -305, '22002');
+      }
+      targets.forEach((target, idx) => hostVars.set(target.slice(1).toLowerCase(), values[idx]));
     }
 
     return this.resultFor(rows, rows.length);
@@ -124,12 +165,20 @@ export class SQLEngine {
 
   // === INSERT ===
   private executeInsert(sql: string, hostVars: HostVariables): SQLResult {
-    const match = sql.match(/INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
-    if (!match) throw new Error('Syntaxe INSERT invalide');
+    const match = sql.match(/^INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(/i);
+    if (!match) throw new NotSupportedError(`INSERT '${sql}'`);
 
     const table = this.getTable(match[1]);
     const columns = match[2].split(',').map(c => c.trim().toUpperCase());
-    const values = match[3].split(',').map(v => this.resolveValue(v.trim(), hostVars));
+    const close = this.findClosingParen(sql, match[0].length);
+    if (close < 0 || sql.slice(close + 1).trim() !== '') throw new NotSupportedError(`INSERT '${sql}'`);
+    const values = this.splitTopLevel(sql.slice(match[0].length, close), ',')
+      .map(v => this.compileValue(v, null)({}, hostVars));
+    this.checkColumns(table, columns, match[1].toUpperCase());
+    this.checkDuplicates(columns);
+    if (values.length !== columns.length) {
+      throw new Error(`INSERT : ${columns.length} colonnes pour ${values.length} valeurs`);
+    }
 
     const newRow: any = {};
     columns.forEach((col, idx) => newRow[col] = values[idx]);
@@ -141,14 +190,32 @@ export class SQLEngine {
 
   // === UPDATE ===
   private executeUpdate(sql: string, hostVars: HostVariables): SQLResult {
-    const setMatch = sql.match(/UPDATE\s+(\w+)\s+SET\s+(.+?)\s+WHERE\s+(.+)/i);
-    if (!setMatch) throw new Error('Syntaxe UPDATE invalide');
+    const head = sql.match(/^UPDATE\s+(\w+)\s+SET\s+/i);
+    if (!head) throw new NotSupportedError(`UPDATE '${sql}'`);
 
-    const table = this.getTable(setMatch[1]);
-    const matches = this.compileWhere(setMatch[3], table, hostVars);
-    const targets = table.data.filter(matches);
+    const table = this.getTable(head[1]);
+    const rest = sql.slice(head[0].length);
+    const whereAt = this.findTopLevelWord(rest, 'WHERE');
+    const setClause = whereAt < 0 ? rest : rest.slice(0, whereAt);
+    const targets = whereAt < 0
+      ? [...table.data]
+      : table.data.filter(this.compileWhere(rest.slice(whereAt + 5), table, hostVars));
+    const known = this.columnNames(table);
+    const assignments = this.splitTopLevel(setClause, ',').map(assign => {
+      const eq = this.splitTopLevel(assign, '=');
+      // SET (a, b) = (...) : liste de colonnes
+      if (/^\s*\(/.test(eq[0])) throw new NotSupportedError(`Clause SET '${assign.trim()}'`);
+      if (eq.length !== 2 || !/^\s*\w+\s*$/.test(eq[0])) throw new Error(`Clause SET invalide : ${assign.trim()}`);
+      const col = eq[0].trim().toUpperCase();
+      this.checkColumns(table, [col], head[1].toUpperCase());
+      return { col, value: this.compileValue(eq[1], known) };
+    });
+    this.checkDuplicates(assignments.map(a => a.col));
     for (const row of targets) {
-      this.applySet(setMatch[2], row, hostVars);
+      // Toutes les expressions lisent la ligne avant mise à jour
+      const before = { ...row };
+      const computed = assignments.map(a => a.value(before, hostVars));
+      assignments.forEach((a, i) => { row[a.col] = computed[i]; });
     }
 
     return this.resultFor([], targets.length);
@@ -156,8 +223,8 @@ export class SQLEngine {
 
   // === DELETE ===
   private executeDelete(sql: string, hostVars: HostVariables): SQLResult {
-    const match = sql.match(/DELETE\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?/i);
-    if (!match) throw new Error('Syntaxe DELETE invalide');
+    const match = sql.match(/^DELETE\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?$/i);
+    if (!match) throw new NotSupportedError(`DELETE '${sql}'`);
 
     const table = this.getTable(match[1]);
     const before = table.data.length;
@@ -177,7 +244,7 @@ export class SQLEngine {
   private normalizeWhitespace(sql: string): string {
     return sql
       .split(/('(?:[^']|'')*')/)
-      .map((part, i) => (i % 2 === 1 ? part : part.replace(/\s+/g, ' ')))
+      .map((part, i) => (i % 2 === 1 ? part : part.replace(/\s+/g, ' ').replace(/\bWHERE\(/gi, 'WHERE (')))
       .join('')
       .trim();
   }
@@ -202,26 +269,259 @@ export class SQLEngine {
     return typeof value === 'string' ? value.trimEnd() : value;
   }
 
-  private resolveValue(token: string, hostVars: HostVariables): any {
-    if (token.startsWith(':')) {
-      return this.getHostVariable(token.substring(1), hostVars);
+  // === Expressions de valeur (SET, VALUES) ===
+
+  private columnNames(table: TableDefinition): Set<string> {
+    const names = new Set<string>(table.columns.map(c => c.name.toUpperCase()));
+    for (const row of table.data) {
+      for (const key of Object.keys(row)) names.add(key.toUpperCase());
     }
-    if (token.startsWith("'") && token.endsWith("'")) {
-      return token.slice(1, -1);
-    }
-    if (!isNaN(Number(token))) {
-      return Number(token);
-    }
-    if (token.toUpperCase() === 'NULL') return null;
-    return token;
+    return names;
   }
 
-  private applySet(setClause: string, row: any, hostVars: HostVariables): void {
-    const assignments = setClause.split(',');
-    for (const assign of assignments) {
-      const [col, val] = assign.split('=').map(s => s.trim());
-      row[col.toUpperCase()] = this.resolveValue(val, hostVars);
+  // Une colonne qui n'existe pas dans la table est une erreur SQL (table sans aucune colonne connue : pas de contrôle)
+  private checkDuplicates(columns: string[]): void {
+    const seen = new Set<string>();
+    for (const col of columns) {
+      if (seen.has(col)) throw new Error(`Colonne en double: ${col}`);
+      seen.add(col);
     }
+  }
+
+  private checkColumns(table: TableDefinition, columns: string[], tableName = ''): void {
+    const known = this.columnNames(table);
+    if (known.size === 0) {
+      // Aucune colonne connue : une faute de frappe créerait une colonne fantôme
+      if (table.data.length === 0) {
+        throw new NotSupportedError(`Table ${tableName} vide sans colonnes déclarées : déclarez "columns" dans context/tables.json`);
+      }
+      return;
+    }
+    for (const col of columns) {
+      if (!known.has(col)) throw new Error(`Colonne inconnue: ${col}`);
+    }
+  }
+
+  // Position d'un mot entier hors littéraux et parenthèses, -1 si absent
+  private findTopLevelWord(text: string, word: string): number {
+    let depth = 0;
+    let inString = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (ch === "'") {
+          if (text[i + 1] === "'") i++;
+          else inString = false;
+        }
+      } else if (ch === "'") {
+        inString = true;
+      } else if (ch === '(') {
+        depth++;
+      } else if (ch === ')') {
+        depth--;
+      } else if (depth === 0 && /\s/.test(text[i - 1] ?? ' ') && text.substr(i, word.length).toUpperCase() === word
+        && /\s|$/.test(text[i + word.length] ?? '')) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  // Découpe sur un séparateur hors littéraux chaîne et hors parenthèses
+  private splitTopLevel(text: string, separator: string): string[] {
+    const parts: string[] = [];
+    let depth = 0;
+    let inString = false;
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (ch === "'") {
+          if (text[i + 1] === "'") i++;
+          else inString = false;
+        }
+      } else if (ch === "'") {
+        inString = true;
+      } else if (ch === '(') {
+        depth++;
+      } else if (ch === ')') {
+        depth--;
+      } else if (ch === separator && depth === 0) {
+        parts.push(text.slice(start, i));
+        start = i + 1;
+      }
+    }
+    parts.push(text.slice(start));
+    return parts;
+  }
+
+  // Position de la parenthèse fermante qui correspond à une parenthèse ouverte juste avant `from`
+  private findClosingParen(text: string, from: number): number {
+    let depth = 1;
+    let inString = false;
+    for (let i = from; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (ch === "'") {
+          if (text[i + 1] === "'") i++;
+          else inString = false;
+        }
+      } else if (ch === "'") {
+        inString = true;
+      } else if (ch === '(') {
+        depth++;
+      } else if (ch === ')' && --depth === 0) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  // Analyse une expression de valeur et renvoie une fonction (ligne, variables hôtes) => valeur.
+  // `columns` : colonnes utilisables (SET) ; null pour VALUES, où aucune colonne n'est visible.
+  // Les constructions hors périmètre (fonctions, ||, CASE, sous-requêtes...) arrêtent le programme.
+  private compileValue(text: string, columns: Set<string> | null): (row: any, hostVars: HostVariables) => any {
+    type Evaluator = (row: any, hostVars: HostVariables) => any;
+    const unsupported = (): never => {
+      throw new NotSupportedError(`Expression SQL '${text.trim()}'`);
+    };
+
+    // Jetons : chaîne, nombre, variable hôte, mot, opérateur, parenthèse
+    const tokens: { kind: 'string' | 'number' | 'host' | 'word' | 'op' | 'lparen' | 'rparen'; value: string }[] = [];
+    let i = 0;
+    while (i < text.length) {
+      const ch = text[i];
+      let m: RegExpMatchArray | null;
+      const rest = text.slice(i);
+      if (/\s/.test(ch)) {
+        i++;
+      } else if (ch === "'") {
+        let value = '';
+        i++;
+        while (true) {
+          if (i >= text.length) throw new Error(`Chaîne non terminée : ${text.trim()}`);
+          if (text[i] === "'") {
+            if (text[i + 1] === "'") { value += "'"; i += 2; continue; }
+            i++;
+            break;
+          }
+          value += text[i++];
+        }
+        tokens.push({ kind: 'string', value });
+      } else if ((m = rest.match(/^\d+(?:\.\d+)?/))) {
+        tokens.push({ kind: 'number', value: m[0] });
+        i += m[0].length;
+      } else if ((m = rest.match(/^:([A-Za-z_$#@][\w$#@]*(?:\.[\w$#@]+)?)/))) {
+        tokens.push({ kind: 'host', value: m[1] });
+        i += m[0].length;
+      } else if ((m = rest.match(/^[A-Za-z_][\w$#@]*/))) {
+        tokens.push({ kind: 'word', value: m[0] });
+        i += m[0].length;
+      } else if ('+-*/'.includes(ch)) {
+        tokens.push({ kind: 'op', value: ch });
+        i++;
+      } else if (ch === '(') {
+        tokens.push({ kind: 'lparen', value: ch });
+        i++;
+      } else if (ch === ')') {
+        tokens.push({ kind: 'rparen', value: ch });
+        i++;
+      } else {
+        return unsupported();   // ||, comparaisons, etc.
+      }
+    }
+
+    let pos = 0;
+    const isOp = (v: string) => tokens[pos]?.kind === 'op' && tokens[pos].value === v;
+
+    const numeric = (v: any): number | null => {
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'number') return v;
+      return unsupported();   // une chaîne dans un calcul
+    };
+
+    const parseAtom = (): Evaluator => {
+      const t = tokens[pos];
+      if (!t) return unsupported();
+      pos++;
+      switch (t.kind) {
+        case 'string': return () => t.value;
+        case 'number': return () => Number(t.value);
+        case 'host': return (_row, hostVars) => this.getHostVariable(t.value, hostVars);
+        case 'word': {
+          const upper = t.value.toUpperCase();
+          if (upper === 'NULL') return () => null;
+          // Fonction, CURRENT DATE, CASE... : pas une simple colonne
+          if (tokens[pos]?.kind === 'lparen' || isReservedSqlWord(upper, columns) || !columns) return unsupported();
+          if (!columns.has(upper)) throw new Error(`Colonne inconnue: ${upper}`);
+          return (row) => {
+            const key = Object.keys(row).find(k => k.toUpperCase() === upper);
+            return key === undefined ? null : row[key];
+          };
+        }
+        default: return unsupported();
+      }
+    };
+
+    const parseFactor = (): Evaluator => {
+      if (isOp('-')) {
+        pos++;
+        const inner = parseFactor();
+        return (row, hv) => {
+          const v = numeric(inner(row, hv));
+          return v === null ? null : -v;
+        };
+      }
+      if (tokens[pos]?.kind === 'lparen') {
+        pos++;
+        const inner = parseExpr();
+        if (tokens[pos]?.kind !== 'rparen') return unsupported();
+        pos++;
+        return inner;
+      }
+      return parseAtom();
+    };
+
+    // 15 chiffres significatifs, comme les décimaux : balance + 0.1 ne laisse pas de résidu binaire
+    const exact = (n: number) => {
+      if (Math.abs(n) >= 1e15) throw new NotSupportedError('Résultat de calcul SQL de 15 chiffres ou plus');
+      return Number(n.toPrecision(15));
+    };
+
+    const binary = (op: string, left: Evaluator, right: Evaluator): Evaluator => (row, hv) => {
+      const a = numeric(left(row, hv));
+      const b = numeric(right(row, hv));
+      if (a === null || b === null) return null;
+      switch (op) {
+        case '+': return exact(a + b);
+        case '-': return exact(a - b);
+        default: return exact(a * b);
+      }
+    };
+
+    const parseTerm = (): Evaluator => {
+      let left = parseFactor();
+      while (isOp('*') || isOp('/')) {
+        // Précision et échelle du quotient DB2 non simulées
+        if (isOp('/')) throw new NotSupportedError('Division dans une expression SQL');
+        const op = tokens[pos++].value;
+        left = binary(op, left, parseFactor());
+      }
+      return left;
+    };
+
+    const parseExpr = (): Evaluator => {
+      let left = parseTerm();
+      while (isOp('+') || isOp('-')) {
+        const op = tokens[pos++].value;
+        left = binary(op, left, parseTerm());
+      }
+      return left;
+    };
+
+    const evaluator = parseExpr();
+    if (pos < tokens.length) return unsupported();
+    return evaluator;
   }
 
   // === Clause WHERE ===
@@ -250,7 +550,7 @@ export class SQLEngine {
       return `'${t.value}'`;
     };
     const unsupported = (): never => {
-      throw new Error(`Clause WHERE non supportée près de ${describe(peek())} : ${clause}`);
+      throw new NotSupportedError(`Clause WHERE près de ${describe(peek())} : ${clause}`);
     };
 
     const parseOperand = (): Operand => {
@@ -266,8 +566,12 @@ export class SQLEngine {
       }
       if (t.kind === 'word' && !['AND', 'OR', 'NOT', 'IS'].includes(t.value.toUpperCase())) {
         pos++;
-        if (t.value.toUpperCase() === 'NULL') return { kind: 'literal', value: null };
         const name = t.value.toUpperCase();
+        if (name === 'NULL') return { kind: 'literal', value: null };
+        // Fonction, CURRENT DATE, CASE... : pas une simple colonne
+        if (peek()?.kind === 'lparen' || isReservedSqlWord(name, knownColumns)) {
+          throw new NotSupportedError(`Clause WHERE : '${t.value}' : ${clause}`);
+        }
         if (!knownColumns.has(name)) throw new Error(`Colonne inconnue: ${name}`);
         return { kind: 'column', name };
       }
@@ -353,10 +657,11 @@ export class SQLEngine {
           value += clause[i++];
         }
         tokens.push({ kind: 'string', value });
-      } else if ((m = rest.match(/^\d+(?:\.\d+)?/))) {
-        tokens.push({ kind: 'number', value: Number(m[0]) });
+      } else if ((m = rest.match(/^-?\s*\d+(?:\.\d+)?/)) && (m[0][0] !== '-' || tokens[tokens.length - 1]?.kind === 'op')) {
+        // Un signe moins ne fait partie d'un littéral qu'après un opérateur de comparaison
+        tokens.push({ kind: 'number', value: Number(m[0].replace(/\s+/g, '')) });
         i += m[0].length;
-      } else if ((m = rest.match(/^:(\w+)/))) {
+      } else if ((m = rest.match(/^:([A-Za-z_$#@][\w$#@]*(?:\.[\w$#@]+)?)/))) {
         tokens.push({ kind: 'host', name: m[1] });
         i += m[0].length;
       } else if ((m = rest.match(/^(<=|>=|<>|!=|=|<|>)/))) {
@@ -372,7 +677,7 @@ export class SQLEngine {
         tokens.push({ kind: 'word', value: m[0] });
         i += m[0].length;
       } else {
-        throw new Error(`Caractère '${ch}' non supporté dans la clause WHERE : ${clause}`);
+        throw new NotSupportedError(`Caractère '${ch}' dans la clause WHERE : ${clause}`);
       }
     }
 

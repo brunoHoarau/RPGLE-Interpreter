@@ -3,7 +3,33 @@
 
 import { DateTimeKind, DurationUnit, RpgDate, RpgDuration, RpgTime, RpgTimestamp, diffDateTime, fromClock, isDateTime, kindOf, parseIso, subdt, unitFromName } from './datetime';
 import { describeValue } from './datatypes';
-import { RpgError, STATUS_INVALID_DATE, incompatibleTypes } from './errors';
+import { NotSupportedError, RpgError, STATUS_INVALID_DATE, STATUS_INVALID_NUMERIC, incompatibleTypes } from './errors';
+
+// %INT et %DEC sur un texte : il doit être numérique, sinon RNX0105
+// Grammaire IBM : blancs n'importe où, un signe en tête ou en queue, un seul séparateur décimal (. ou ,), un chiffre au moins
+function numericText(value: any): number {
+  if (typeof value === 'number') return checkDigits(value);
+  const text = String(value).replace(/ /g, '');
+  const m = text.match(/^([+-])?(\d*[.,]?\d*)([+-])?$/);
+  if (!m || (m[1] && m[3]) || !/\d/.test(m[2])) throw new RpgError(STATUS_INVALID_NUMERIC, `Valeur non numérique '${value}' (RNX0105)`);
+  const n = Number(m[2].replace(',', '.')) * (m[1] === '-' || m[3] === '-' ? -1 : 1);
+  return checkDigits(n);
+}
+
+// Au-delà de 15 chiffres significatifs, la précision des décimaux IBM n'est pas simulée
+function checkDigits(n: number): number {
+  if (Math.abs(n) >= 1e15) throw new NotSupportedError('Valeur numérique de 15 chiffres ou plus');
+  return n;
+}
+
+// %DEC tronque (%DECH arrondit) : troncature sur le texte, sans erreur binaire (1.15 donne 1.1 à 1 décimale)
+function truncateDecimals(n: number, decimals: number): number {
+  let text = Math.abs(n).toPrecision(15);
+  if (/e/i.test(text)) text = Math.abs(n).toFixed(20);
+  const [int, frac = ''] = text.split('.');
+  const result = Number(decimals > 0 ? `${int}.${frac.slice(0, decimals)}` : int);
+  return n < 0 && result !== 0 ? -result : result;   // jamais -0
+}
 
 export interface BuiltinContext {
   status: number; // Pour %STATUS
@@ -88,10 +114,18 @@ export const BUILTINS: { [name: string]: Builtin } = {
     const startPos = start - 1;
     return length !== undefined ? str.substr(startPos, length) : str.substr(startPos);
   },
-  '%int': (_, value: any) => parseInt(value),
+  '%int': (_, value: any) => Math.trunc(numericText(value)),
   '%dec': (_, value: any, precision?: number, decimals?: number) => {
-    const num = parseFloat(value);
-    return decimals !== undefined ? parseFloat(num.toFixed(decimals)) : num;
+    const num = numericText(value);
+    // Précision demandée supérieure à 15 et texte de plus de 15 chiffres significatifs : non exact
+    if (precision !== undefined && precision > 15 && typeof value === 'string' && value.replace(/\D/g, '').replace(/^0+/, '').length > 15) {
+      throw new NotSupportedError('%DEC d\'une valeur de plus de 15 chiffres');
+    }
+    // La partie entière doit tenir dans precision - decimals chiffres ; sinon le comportement IBM n'est pas vérifié
+    if (precision !== undefined && String(Math.trunc(Math.abs(num))).replace(/^0$/, '').length > precision - (decimals ?? 0)) {
+      throw new NotSupportedError('%DEC : valeur dont la partie entière dépasse la précision demandée');
+    }
+    return decimals !== undefined ? truncateDecimals(num, decimals) : num;
   },
   '%char': (_, value: any) => String(value),
   '%scan': (_, search: any, source: any) => {

@@ -10,9 +10,10 @@ interface Scope {
   constants: Map<string, any>;
   types: Map<string, DataTypeNode>; // Clés : 'var' ou 'ds.champ', en minuscules
   aliases: Map<string, string>;     // Champ de DS non qualifiée -> nom de la DS
+  readOnly: Set<string>;            // Paramètres CONST de l'appel (minuscules)
 }
 
-const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), types: new Map(), aliases: new Map() });
+const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), types: new Map(), aliases: new Map(), readOnly: new Set() });
 
 // Un nom visible est une variable, ou un champ de DS non qualifiée (dsName renseigné)
 interface Resolved {
@@ -166,6 +167,16 @@ export class Runtime {
     return this.resolve(name) !== undefined;
   }
 
+  // Paramètre CONST de la procédure en cours : il ne peut pas être transmis à un paramètre modifiable
+  markReadOnly(name: string): void {
+    this.currentScope.readOnly.add(name.toLowerCase());
+  }
+
+  isReadOnly(name: string): boolean {
+    // La portée qui porte le nom : paramètre CONST de la procédure en cours ou du programme principal
+    return this.resolve(name)?.scope.readOnly.has(name.toLowerCase()) ?? false;
+  }
+
   setConstant(name: string, value: any): void {
     this.currentScope.constants.set(name.toLowerCase(), value);
   }
@@ -194,9 +205,22 @@ export class Runtime {
 
   // Variables hôtes SQL résolues dans la portée courante
   private hostVariables(): HostVariables {
+    // :ds.champ désigne un champ de DS ; :nom une variable (ou un champ de DS non qualifiée)
+    const split = (name: string): [string, string] | undefined => {
+      const dot = name.indexOf('.');
+      return dot < 0 ? undefined : [name.slice(0, dot), name.slice(dot + 1)];
+    };
     return {
-      get: name => this.lookup(name),
-      set: (name, value) => this.setVariable(name, value),
+      get: name => {
+        const parts = split(name);
+        if (!parts) return this.lookup(name);
+        return this.lookup(parts[0]) === undefined ? undefined : this.getField(parts[0], parts[1]);
+      },
+      set: (name, value) => {
+        const parts = split(name);
+        if (parts) this.setField(parts[0], parts[1], value);
+        else this.setVariable(name, value);
+      },
     };
   }
 

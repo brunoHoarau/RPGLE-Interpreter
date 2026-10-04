@@ -1,7 +1,7 @@
 // Sémantique des types RPG : valeurs par défaut, conversion à l'affectation, %CHAR
 import { DataTypeNode } from './types';
 import { DateTimeKind, FigurativeValue, isDateTime, isDateTimeType, isDuration, kindOf, lowValue, resolveFigurative } from './datetime';
-import { RpgError, STATUS_INVALID_NUMERIC, STATUS_OVERFLOW, incompatibleTypes } from './errors';
+import { NotSupportedError, RpgError, STATUS_INVALID_NUMERIC, STATUS_OVERFLOW, incompatibleTypes } from './errors';
 
 const INT_BITS: { [digits: number]: number } = { 3: 8, 5: 16, 10: 32, 20: 64 };
 
@@ -64,6 +64,34 @@ export function coerce(value: any, type: DataTypeNode | undefined, target: strin
   }
 }
 
+// Contrôle de type d'une affectation écrite dans le code RPG : le compilateur IBM i refuse un nombre dans un
+// caractère (il faut %CHAR), un caractère ou un indicateur dans un nombre, un nombre ou un texte quelconque dans
+// un indicateur. Les dates et durées relèvent de coerce ; les données (bouchons, SQL) ne passent pas par ici.
+// Un caractère affecté à un indicateur est accepté par le compilateur (seul un littéral est refusé) : '1' ou '0' à l'exécution,
+// toute autre valeur arrête le programme (pas encore supporté)
+export function checkAssignable(value: any, type: DataTypeNode | undefined, target: string, isLiteral = true): void {
+  if (!type || value === undefined || value === null) return;
+  if (isDateTimeType(type.typeName) || value instanceof FigurativeValue || isDateTime(value) || isDuration(value)) return;
+  const refuse = () => { throw incompatibleAssignment(value, type, target); };
+  switch (type.typeName) {
+    case 'char': case 'varchar':
+      if (typeof value === 'number') refuse();
+      return;
+    case 'int': case 'uns': case 'packed': case 'zoned':
+      if (typeof value !== 'number') refuse();
+      return;
+    case 'ind':
+      if (typeof value === 'boolean') return;
+      if (value !== '1' && value !== '0') {
+        if (typeof value === 'string' && !isLiteral) {
+          throw new NotSupportedError(`Affectation de ${describeValue(value)} à l'indicateur ${target}`);
+        }
+        refuse();
+      }
+      return;
+  }
+}
+
 // %CHAR : un décimal garde ses décimales déclarées, sans zéros de tête (0.5 -> '.50')
 export function formatChar(value: any, type: DataTypeNode | undefined): string {
   if (typeof value === 'boolean') return value ? '1' : '0';
@@ -73,6 +101,21 @@ export function formatChar(value: any, type: DataTypeNode | undefined): string {
   const decimals = type.decimals ?? 0;
   const text = Math.abs(value).toFixed(decimals).replace(/^0+(?=\.|$)/, decimals > 0 ? '' : '0');
   return value < 0 ? `-${text}` : text;
+}
+
+// Structure de données entière (objet de champs), par opposition à une date, une durée ou un figuratif
+export function isDataStructure(value: any): boolean {
+  return typeof value === 'object' && value !== null && !isDateTime(value) && !isDuration(value) && !(value instanceof FigurativeValue);
+}
+
+// Deux types déclarés identiques : même nom, même longueur, mêmes décimales (les défauts du langage sont appliqués)
+export function sameDeclaredType(a: DataTypeNode, b: DataTypeNode): boolean {
+  const signature = (t: DataTypeNode) => {
+    const defaultLength = t.typeName === 'int' || t.typeName === 'uns' ? 10 : t.typeName === 'char' ? 1 : undefined;
+    const defaultDecimals = t.typeName === 'varchar' ? 2 : 0;
+    return `${t.typeName}|${t.length ?? defaultLength}|${t.decimals ?? defaultDecimals}`;
+  };
+  return signature(a) === signature(b);
 }
 
 // Longueur en octets d'un champ de DS (sert à détecter les chevauchements de POS)
@@ -141,11 +184,13 @@ function incompatibleAssignment(value: any, type: DataTypeNode, target: string):
 
 // Nature d'une valeur pour les messages d'erreur
 export function describeValue(value: any): string {
+  if (value === null || value === undefined) return 'valeur nulle';
   if (value instanceof FigurativeValue) return value.name.toUpperCase();
   if (isDuration(value)) return `durée ${value}`;
   const kind = kindOf(value);
   if (kind) return `${kind.toUpperCase()} ${value}`;
   if (typeof value === 'number') return `numérique ${value}`;
   if (typeof value === 'boolean') return 'indicateur';
+  if (isDataStructure(value)) return 'structure de données';
   return `caractère '${value}'`;
 }

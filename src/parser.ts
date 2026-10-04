@@ -55,6 +55,8 @@ export class Parser {
   // Noms déclarés DATE / TIME / TIMESTAMP ('var', 'ds.champ', champ de DS non qualifiée) :
   // *LOVAL et *HIVAL ne sont acceptés que pour eux
   private dateTimeNames = new Set<string>();
+  // Constantes DCL-C et paramètres CONST visibles (nom en minuscules -> genre) : toute affectation est refusée
+  private readOnlyNames = new Map<string, string>();
 
   constructor(tokens: Token[]) {
     this.tokens = tokens;
@@ -209,12 +211,14 @@ export class Parser {
     const name = this.expectName().value;
     const value = this.parseExpression();
     this.expect(TokenType.SEMICOLON);
+    this.readOnlyNames.set(name.toLowerCase(), 'une constante');
     return { type: 'ConstantDeclaration', name, value };
   }
 
   private parseDataStructure(): ASTNode {
     this.expect(TokenType.DCL_DS);
     const name = this.expectName().value;
+    this.readOnlyNames.delete(name.toLowerCase());
     let isQualified = false;
     const fields: any[] = [];
     const layout: { name: string; type: DataTypeNode; pos?: number; token: Token }[] = [];
@@ -291,6 +295,7 @@ export class Parser {
     let parameters: ParameterNode[] = [];
     const body: ASTNode[] = [];
     const outerNames = new Set(this.dateTimeNames);
+    const outerReadOnly = new Map(this.readOnlyNames);
 
     while (!this.check(TokenType.END_PROC) && !this.isAtEnd()) {
       if (this.check(TokenType.DCL_PI)) {
@@ -310,6 +315,7 @@ export class Parser {
 
     this.expect(TokenType.END_PROC);
     this.dateTimeNames = outerNames; // Les noms locaux disparaissent avec la procédure
+    this.readOnlyNames = outerReadOnly;
     this.skipToSemicolon(); // end-proc peut répéter le nom
 
     return { type: 'Procedure', name, returnType, parameters, body };
@@ -346,7 +352,10 @@ export class Parser {
     this.expect(TokenType.END_PI);
     this.skipToSemicolon();
 
-    parameters.forEach(p => this.rememberDateTime(p.name, p.dataType));
+    parameters.forEach(p => {
+      this.rememberDateTime(p.name, p.dataType);
+      if (p.isConst) this.readOnlyNames.set(p.name.toLowerCase(), 'un paramètre CONST');
+    });
     return { returnType, parameters };
   }
 
@@ -455,6 +464,7 @@ export class Parser {
 
   // Une déclaration d'un autre type masque un nom date homonyme (variable locale)
   private rememberDateTime(name: string, dataType: DataTypeNode): void {
+    this.readOnlyNames.delete(name.toLowerCase()); // Une déclaration locale masque la constante
     if (isDateTimeType(dataType.typeName)) {
       this.dateTimeNames.add(name.toLowerCase());
     } else {
@@ -576,11 +586,21 @@ export class Parser {
     return { type: 'SelectStatement', whenBlocks, otherBlock };
   }
 
+  // IBM i refuse à la compilation d'affecter une constante ou un paramètre CONST
+  private checkWritable(name: string, line: number): void {
+    const kind = this.readOnlyNames.get(name.toLowerCase());
+    if (kind) {
+      throw new Error(`${name} est ${kind} : affectation refusée par le compilateur IBM i (ligne ${line})`);
+    }
+  }
+
   private parseLoop(): ASTNode {
     const loopType = this.advance().value as 'dow' | 'dou' | 'for';
 
     if (loopType === 'for') {
-      const varName = this.expectName().value;
+      const varToken = this.expectName();
+      const varName = varToken.value;
+      this.checkWritable(varName, varToken.line);
       this.expect(TokenType.EQUALS);
       const init = this.parseExpression();
       const direction = this.advance().value as 'to' | 'downto';
@@ -719,6 +739,14 @@ export class Parser {
         previousTokenType = token.type;
     }
 
+    // Variables hôtes de sortie (SELECT ... INTO :a, :b FROM) : ce sont des cibles d'affectation
+    const into = !/^\s*select\b/i.test(sql) ? null : /\binto\s+(.*?)\s+from\b/is.exec(sql.replace(/'(?:[^']|'')*'/g, "''"));
+    if (into) {
+      for (const [, host] of into[1].matchAll(/:\s*([A-Za-z_$#@][\w$#@]*)/g)) {
+        this.checkWritable(host, this.peek().line);
+      }
+    }
+
     this.expect(TokenType.SEMICOLON);
 
     return { type: 'SQL', sql };
@@ -779,6 +807,7 @@ export class Parser {
     }
 
     if (this.check(TokenType.EQUALS)) {
+      this.checkWritable(name, nameToken.line);
       this.advance();
       const allowed = this.dateTimeNames.has(name.toLowerCase()) ? ['*loval', '*hival'] : [];
       const value = this.parseDateTimeSpecial(allowed, TokenType.SEMICOLON) ?? this.parseExpression();
@@ -787,6 +816,7 @@ export class Parser {
     }
 
     if (this.checkCompound()) {
+      this.checkWritable(name, nameToken.line);
       const operator = this.advanceCompound();
       const value = this.compoundValue(name, operator);
       this.expect(TokenType.SEMICOLON);
@@ -1150,8 +1180,9 @@ export class Parser {
     }
 
     // 2. Collecter tous les paramètres jusqu'au ';'
-    // Les paramètres après le message peuvent être des valeurs spéciales
-    // propres à DSPLY (*BLANK = pas de réponse, *EXT, *JOBLOG...)
+    // DSPLY message {file-de-messages {réponse}} : la file peut être une valeur
+    // spéciale (*EXT, *JOBLOG, *BLANK...)
+    const line = this.peek().line;
     const params: ExpressionNode[] = [];
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
         if (params.length > 0 && this.check(TokenType.SPECIAL_VALUE)) {
@@ -1162,13 +1193,21 @@ export class Parser {
     }
     this.expect(TokenType.SEMICOLON);
 
+    if (params.length > 3) {
+        throw new Error(`DSPLY accepte au plus 3 opérandes (ligne ${line})`);
+    }
+    if (params[2] && params[2].valueType !== 'identifier') {
+        throw new Error(`La réponse de DSPLY doit être une variable (ligne ${line})`);
+    }
+    if (params[2]) this.checkWritable(String(params[2].value), line);
+
     // 3. Assigner selon la position
     return {
         type: 'Dsply',
         hasErrorExtender,
         message: params[0],
-        responseVar: params[1]?.valueType === 'identifier' ? params[1].value : undefined,
-        queue: params[2]
+        queue: params[1],
+        responseVar: params[2]?.value
     } as any;
   }
 
