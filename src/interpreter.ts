@@ -165,6 +165,7 @@ export class Interpreter {
           + `pas encore supporté par l'interpréteur`);
       }
       this.runtime.declareVariable(p.name, args[i], p.dataType);
+      if (p.isConst) this.runtime.markReadOnly(p.name);
     });
 
     // Première passe : déclarer variables, constantes, procédures

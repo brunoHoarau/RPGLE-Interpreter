@@ -28,7 +28,7 @@ function truncateDecimals(n: number, decimals: number): number {
   if (/e/i.test(text)) text = Math.abs(n).toFixed(20);
   const [int, frac = ''] = text.split('.');
   const result = Number(decimals > 0 ? `${int}.${frac.slice(0, decimals)}` : int);
-  return n < 0 ? -result : result;
+  return n < 0 && result !== 0 ? -result : result;   // jamais -0
 }
 
 export interface BuiltinContext {
@@ -120,6 +120,10 @@ export const BUILTINS: { [name: string]: Builtin } = {
     // Précision demandée supérieure à 15 et texte de plus de 15 chiffres significatifs : non exact
     if (precision !== undefined && precision > 15 && typeof value === 'string' && value.replace(/\D/g, '').replace(/^0+/, '').length > 15) {
       throw new NotSupportedError('%DEC d\'une valeur de plus de 15 chiffres');
+    }
+    // La partie entière doit tenir dans precision - decimals chiffres ; sinon le comportement IBM n'est pas vérifié
+    if (precision !== undefined && String(Math.trunc(Math.abs(num))).replace(/^0$/, '').length > precision - (decimals ?? 0)) {
+      throw new NotSupportedError('%DEC : valeur dont la partie entière dépasse la précision demandée');
     }
     return decimals !== undefined ? truncateDecimals(num, decimals) : num;
   },

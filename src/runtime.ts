@@ -173,7 +173,8 @@ export class Runtime {
   }
 
   isReadOnly(name: string): boolean {
-    return this.frames.length > 0 && this.currentScope.readOnly.has(name.toLowerCase());
+    // La portée qui porte le nom : paramètre CONST de la procédure en cours ou du programme principal
+    return this.resolve(name)?.scope.readOnly.has(name.toLowerCase()) ?? false;
   }
 
   setConstant(name: string, value: any): void {

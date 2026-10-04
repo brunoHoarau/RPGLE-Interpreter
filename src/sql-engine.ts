@@ -1,4 +1,5 @@
 import { ExecutionContext, TableDefinition } from './context';
+import { isDataStructure } from './datatypes';
 import { NotSupportedError } from './errors';
 
 export interface SQLResult {
@@ -40,7 +41,13 @@ type Condition =
 const RESERVED_SQL_WORDS = new Set(['CURRENT', 'CASE', 'CAST', 'SELECT', 'DEFAULT', 'DATE', 'TIME', 'TIMESTAMP', 'USER', 'SESSION_USER', 'SYSTEM_USER']);
 
 // CURRENT_DATE, CURRENT_TIMESTAMP, CURRENT_USER, CURRENT DATE... : jamais pris pour une colonne
-const isReservedSqlWord = (upper: string) => RESERVED_SQL_WORDS.has(upper) || upper.startsWith('CURRENT_');
+// Mots toujours réservés : même une colonne de ce nom ne pourrait pas être écrite sans guillemets
+const ALWAYS_RESERVED_SQL_WORDS = new Set(['CURRENT', 'CASE', 'CAST', 'SELECT', 'DEFAULT']);
+
+// Une colonne réelle de la table nommée DATE, USER, CURRENT_BALANCE... reste une colonne
+const isReservedSqlWord = (upper: string, columns?: Set<string> | null) =>
+  (RESERVED_SQL_WORDS.has(upper) || upper.startsWith('CURRENT_'))
+  && (ALWAYS_RESERVED_SQL_WORDS.has(upper) || !columns?.has(upper));
 
 // Erreur SQL ordinaire avec son SQLCOD et son SQLSTATE (le programme continue)
 class SqlError extends Error {
@@ -112,10 +119,17 @@ export class SQLEngine {
     const targets = intoAt < 0 ? [] : this.splitTopLevel(intoText, ',').map(v => v.trim());
     for (const target of targets) {
       if (!target.startsWith(':') || !HOST_NAME.test(target.slice(1))) throw new NotSupportedError(`INTO '${target}'`);
+      // IBM remplit les sous-champs d'une DS entière : non simulé
+      if (isDataStructure(hostVars.get(target.slice(1).toLowerCase()))) throw new NotSupportedError(`INTO d'une structure de données entière '${target}'`);
     }
 
     // 2. Table et filtrage WHERE
     const table = this.getTable(after[1]);
+    const knownColumns = this.columnNames(table);
+    // CURRENT_DATE & co ne sont pas des colonnes : registre spécial, non supporté
+    for (const item of items) {
+      if (item !== '*' && isReservedSqlWord(item, knownColumns)) throw new NotSupportedError(`Liste de SELECT '${item}'`);
+    }
     let rows = [...table.data];
     if (tail !== '') {
       rows = rows.filter(this.compileWhere(tail.slice(5), table, hostVars));
@@ -133,22 +147,17 @@ export class SQLEngine {
       }
       if (rows.length > 1) throw new SqlError('SELECT INTO : plusieurs lignes trouvées', -811, '21000');
 
-      // Mapper colonne -> variable hôte ; une valeur NULL sans indicateur laisse la variable inchangée (SQLCOD -305)
-      let nullColumn: string | undefined;
-      targets.forEach((target, idx) => {
-        if (idx >= selectedColumns.length) return;
-        const targetCol = selectedColumns[idx];
+      // Toutes les colonnes sont validées, puis les NULL repérés (SQLCOD -305), avant d'affecter quoi que ce soit
+      const values = selectedColumns.map(targetCol => {
         const actualCol = Object.keys(firstRow).find(k => k.toUpperCase() === targetCol);
-        if (actualCol === undefined) {
-          throw new Error(`Colonne inconnue: ${targetCol}`);
-        }
-        const value = firstRow[actualCol];
-        if (value === null || value === undefined) nullColumn ??= targetCol;
-        else hostVars.set(target.slice(1).toLowerCase(), value);
+        if (actualCol === undefined) throw new Error(`Colonne inconnue: ${targetCol}`);
+        return firstRow[actualCol];
       });
-      if (nullColumn !== undefined) {
-        throw new SqlError(`Valeur NULL de ${nullColumn} sans variable indicatrice`, -305, '22002');
+      const nullAt = values.findIndex(v => v === null || v === undefined);
+      if (nullAt >= 0) {
+        throw new SqlError(`Valeur NULL de ${selectedColumns[nullAt]} sans variable indicatrice`, -305, '22002');
       }
+      targets.forEach((target, idx) => hostVars.set(target.slice(1).toLowerCase(), values[idx]));
     }
 
     return this.resultFor(rows, rows.length);
@@ -235,7 +244,7 @@ export class SQLEngine {
   private normalizeWhitespace(sql: string): string {
     return sql
       .split(/('(?:[^']|'')*')/)
-      .map((part, i) => (i % 2 === 1 ? part : part.replace(/\s+/g, ' ')))
+      .map((part, i) => (i % 2 === 1 ? part : part.replace(/\s+/g, ' ').replace(/\bWHERE\(/gi, 'WHERE (')))
       .join('')
       .trim();
   }
@@ -443,7 +452,7 @@ export class SQLEngine {
           const upper = t.value.toUpperCase();
           if (upper === 'NULL') return () => null;
           // Fonction, CURRENT DATE, CASE... : pas une simple colonne
-          if (tokens[pos]?.kind === 'lparen' || isReservedSqlWord(upper) || !columns) return unsupported();
+          if (tokens[pos]?.kind === 'lparen' || isReservedSqlWord(upper, columns) || !columns) return unsupported();
           if (!columns.has(upper)) throw new Error(`Colonne inconnue: ${upper}`);
           return (row) => {
             const key = Object.keys(row).find(k => k.toUpperCase() === upper);
@@ -560,7 +569,7 @@ export class SQLEngine {
         const name = t.value.toUpperCase();
         if (name === 'NULL') return { kind: 'literal', value: null };
         // Fonction, CURRENT DATE, CASE... : pas une simple colonne
-        if (peek()?.kind === 'lparen' || isReservedSqlWord(name)) {
+        if (peek()?.kind === 'lparen' || isReservedSqlWord(name, knownColumns)) {
           throw new NotSupportedError(`Clause WHERE : '${t.value}' : ${clause}`);
         }
         if (!knownColumns.has(name)) throw new Error(`Colonne inconnue: ${name}`);
@@ -648,8 +657,9 @@ export class SQLEngine {
           value += clause[i++];
         }
         tokens.push({ kind: 'string', value });
-      } else if ((m = rest.match(/^\d+(?:\.\d+)?/))) {
-        tokens.push({ kind: 'number', value: Number(m[0]) });
+      } else if ((m = rest.match(/^-?\s*\d+(?:\.\d+)?/)) && (m[0][0] !== '-' || tokens[tokens.length - 1]?.kind === 'op')) {
+        // Un signe moins ne fait partie d'un littéral qu'après un opérateur de comparaison
+        tokens.push({ kind: 'number', value: Number(m[0].replace(/\s+/g, '')) });
         i += m[0].length;
       } else if ((m = rest.match(/^:([A-Za-z_$#@][\w$#@]*(?:\.[\w$#@]+)?)/))) {
         tokens.push({ kind: 'host', name: m[1] });
