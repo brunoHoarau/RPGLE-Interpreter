@@ -1,6 +1,7 @@
 // Sémantique des types RPG : valeurs par défaut, conversion à l'affectation, %CHAR
 import { DataTypeNode } from './types';
-import { RpgError, STATUS_INVALID_NUMERIC, STATUS_OVERFLOW } from './errors';
+import { DateTimeKind, FigurativeValue, isDateTime, isDateTimeType, kindOf, lowValue, resolveFigurative } from './datetime';
+import { RpgError, STATUS_INVALID_NUMERIC, STATUS_OVERFLOW, incompatibleTypes } from './errors';
 
 const INT_BITS: { [digits: number]: number } = { 3: 8, 5: 16, 10: 32, 20: 64 };
 
@@ -10,7 +11,7 @@ export function defaultValue(type: DataTypeNode): any {
     case 'varchar': return '';
     case 'packed': case 'zoned': case 'int': case 'uns': return 0;
     case 'ind': return false;
-    case 'date': return new Date();
+    case 'date': case 'time': case 'timestamp': return lowValue(type.typeName as DateTimeKind);
     default: return null;
   }
 }
@@ -19,6 +20,11 @@ export function defaultValue(type: DataTypeNode): any {
 // Lève RNX0103 si la valeur ne tient pas dans la cible.
 export function coerce(value: any, type: DataTypeNode | undefined, target: string): any {
   if (!type || value === undefined || value === null) return value;
+  if (isDateTimeType(type.typeName)) return coerceDateTime(value, type, target);
+  if (value instanceof FigurativeValue) {
+    throw new Error(`${value.name.toUpperCase()} affecté à ${target} ${describeType(type)} : pas encore supporté par l'interpréteur`);
+  }
+  if (isDateTime(value)) throw incompatibleAssignment(value, type, target);
 
   switch (type.typeName) {
     case 'char': {
@@ -99,4 +105,25 @@ function normalize(n: number): number {
 
 function overflow(value: any, type: DataTypeNode, target: string): Error {
   return new RpgError(STATUS_OVERFLOW, `Dépassement de capacité : ${value} ne tient pas dans ${target} ${describeType(type)} (RNX0103)`);
+}
+
+// Une date, une heure ou un timestamp ne reçoit qu'une valeur du même type
+function coerceDateTime(value: any, type: DataTypeNode, target: string): any {
+  if (value instanceof FigurativeValue) return resolveFigurative(value, type.typeName as DateTimeKind);
+  if (kindOf(value) === type.typeName) return value;
+  throw incompatibleAssignment(value, type, target);
+}
+
+function incompatibleAssignment(value: any, type: DataTypeNode, target: string): Error {
+  return incompatibleTypes(`Affectation de ${describeValue(value)} à ${target} ${describeType(type)}`);
+}
+
+// Nature d'une valeur pour les messages d'erreur
+export function describeValue(value: any): string {
+  if (value instanceof FigurativeValue) return value.name.toUpperCase();
+  const kind = kindOf(value);
+  if (kind) return `${kind.toUpperCase()} ${value}`;
+  if (typeof value === 'number') return `numérique ${value}`;
+  if (typeof value === 'boolean') return 'indicateur';
+  return `caractère '${value}'`;
 }

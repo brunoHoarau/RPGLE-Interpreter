@@ -1,5 +1,6 @@
 import { Token, TokenType, ASTNode, ProgramNode, ExpressionNode, DataTypeNode, ParameterNode } from './types';
 import { isSupportedBuiltin } from './builtins';
+import { DateTimeKind, isDateTimeType, parseIso } from './datetime';
 
 const TYPE_TOKENS = [
   TokenType.CHAR, TokenType.VARCHAR, TokenType.PACKED, TokenType.ZONED, TokenType.INT, TokenType.UNS,
@@ -7,7 +8,11 @@ const TYPE_TOKENS = [
 ];
 
 // Types reconnus par la syntaxe mais sans sémantique dans l'interpréteur
-const UNSUPPORTED_TYPE_TOKENS = [TokenType.DATE, TokenType.TIME, TokenType.TIMESTAMP, TokenType.POINTER];
+const UNSUPPORTED_TYPE_TOKENS = [TokenType.POINTER];
+
+const DATETIME_LITERALS = new Map<TokenType, DateTimeKind>([
+  [TokenType.DATE_LITERAL, 'date'], [TokenType.TIME_LITERAL, 'time'], [TokenType.TIMESTAMP_LITERAL, 'timestamp'],
+]);
 
 // Opérations sur fichiers natifs : tokens dédiés
 const FILE_OPERATION_TOKENS = [
@@ -26,6 +31,10 @@ const UNSUPPORTED_OPCODES = new Set([
 const INDICATOR = /^\*in(lr|\d\d)$/;
 const SUPPORTED_SPECIAL_VALUES = new Set(['*on', '*off', '*zero', '*zeros', '*blank', '*blanks']);
 
+// Fonctions dont le 2e argument est un format de date (*ISO, *EUR...)
+const NO_ARGUMENT_BUILTINS = new Set(['%date', '%time', '%timestamp']);
+const FORMAT_BUILTINS = new Set(['%char', '%date', '%time', '%timestamp']);
+
 function unsupported(what: string, token: Token): Error {
   return new Error(`${what} : pas encore supporté par l'interpréteur (ligne ${token.line})`);
 }
@@ -33,6 +42,9 @@ function unsupported(what: string, token: Token): Error {
 export class Parser {
   private tokens: Token[];
   private pos: number = 0;
+  // Noms déclarés DATE / TIME / TIMESTAMP ('var', 'ds.champ', champ de DS non qualifiée) :
+  // *LOVAL et *HIVAL ne sont acceptés que pour eux
+  private dateTimeNames = new Set<string>();
 
   constructor(tokens: Token[]) {
     this.tokens = tokens;
@@ -67,11 +79,19 @@ export class Parser {
     return { type: 'Program', body, parameters };
   }
 
+  // Options sans effet ici, sauf DATFMT et TIMFMT : un autre format que *ISO changerait les dates
   private parseControlOptions(): ASTNode {
     this.expect(TokenType.CTL_OPT);
-    // Skip options until semicolon
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
-      this.advance();
+      const keyword = this.advance().value.toLowerCase();
+      if ((keyword === 'datfmt' || keyword === 'timfmt') && this.check(TokenType.LPAREN)) {
+        this.advance();
+        const format = this.advance();
+        if (format.value.toLowerCase() !== '*iso' || !this.check(TokenType.RPAREN)) {
+          const text = `${format.value}${this.check(TokenType.RPAREN) ? '' : this.peek().value}`.toUpperCase();
+          throw unsupported(`CTL-OPT ${keyword.toUpperCase()}(${text})`, format);
+        }
+      }
     }
     this.expect(TokenType.SEMICOLON);
     return { type: 'ControlOptions' } as any;
@@ -81,14 +101,15 @@ export class Parser {
     this.expect(TokenType.DCL_S);
     const name = this.expect(TokenType.IDENTIFIER).value;
     const dataType = this.parseDataType();
-    const initialValue = this.parseDeclarationKeywords('DCL-S');
+    this.rememberDateTime(name, dataType);
+    const initialValue = this.parseDeclarationKeywords('DCL-S', dataType);
     this.expect(TokenType.SEMICOLON);
     return { type: 'VariableDeclaration', name, dataType, initialValue };
   }
 
   // Mots-clés d'une déclaration jusqu'au ';' : seul INZ est supporté.
   // Renvoie la valeur de INZ(...), undefined pour INZ seul (valeur par défaut du type).
-  private parseDeclarationKeywords(context: string): ExpressionNode | undefined {
+  private parseDeclarationKeywords(context: string, dataType: DataTypeNode): ExpressionNode | undefined {
     let initialValue: ExpressionNode | undefined;
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
       const token = this.peek();
@@ -96,7 +117,7 @@ export class Parser {
         this.advance();
         if (this.check(TokenType.LPAREN)) {
           this.advance();
-          initialValue = this.parseExpression();
+          initialValue = this.parseDateTimeSpecial(this.inzSpecials(dataType), TokenType.RPAREN) ?? this.parseExpression();
           this.expect(TokenType.RPAREN);
         }
       } else {
@@ -121,6 +142,7 @@ export class Parser {
     }
     this.advance();
     const typeName = typeToken.value;
+    if (isDateTimeType(typeName)) return this.parseDateTimeType(typeName);
     let length: number | undefined;
     let decimals: number | undefined;
     let format: string | undefined;
@@ -142,6 +164,24 @@ export class Parser {
     }
 
     return { type: 'DataType', typeName, length, decimals, format };
+  }
+
+  // date | date(*ISO) | time | time(*ISO) | timestamp | timestamp(6) : seul le format *ISO est supporté
+  private parseDateTimeType(typeName: DateTimeKind): DataTypeNode {
+    if (this.check(TokenType.LPAREN)) {
+      this.advance();
+      const arg = this.advance();
+      if (typeName === 'timestamp') {
+        if (arg.type !== TokenType.NUMBER || parseInt(arg.value) !== 6 || !this.check(TokenType.RPAREN)) {
+          throw unsupported(`TIMESTAMP(${arg.value})`, arg);
+        }
+      } else if (arg.value.toLowerCase() !== '*iso' || !this.check(TokenType.RPAREN)) {
+        const text = `${arg.value}${this.check(TokenType.RPAREN) ? '' : this.peek().value}`.toUpperCase();
+        throw unsupported(`Le format ${text} de ${typeName.toUpperCase()}`, arg);
+      }
+      this.expect(TokenType.RPAREN);
+    }
+    return { type: 'DataType', typeName };
   }
 
   private parseConstantDeclaration(): ASTNode {
@@ -177,7 +217,9 @@ export class Parser {
     while (!this.check(TokenType.END_DS) && !this.isAtEnd()) {
       const fieldName = this.expect(TokenType.IDENTIFIER).value;
       const fieldType = this.parseDataType();
-      const initialValue = this.parseDeclarationKeywords('champ de DS');
+      this.rememberDateTime(`${name}.${fieldName}`, fieldType);
+      if (!isQualified) this.rememberDateTime(fieldName, fieldType);
+      const initialValue = this.parseDeclarationKeywords('champ de DS', fieldType);
       this.expect(TokenType.SEMICOLON);
       fields.push({ name: fieldName, dataType: fieldType, initialValue });
     }
@@ -196,6 +238,7 @@ export class Parser {
     let returnType: DataTypeNode | undefined;
     let parameters: ParameterNode[] = [];
     const body: ASTNode[] = [];
+    const outerNames = new Set(this.dateTimeNames);
 
     while (!this.check(TokenType.END_PROC) && !this.isAtEnd()) {
       if (this.check(TokenType.DCL_PI)) {
@@ -214,6 +257,7 @@ export class Parser {
     }
 
     this.expect(TokenType.END_PROC);
+    this.dateTimeNames = outerNames; // Les noms locaux disparaissent avec la procédure
     this.skipToSemicolon(); // end-proc peut répéter le nom
 
     return { type: 'Procedure', name, returnType, parameters, body };
@@ -250,6 +294,7 @@ export class Parser {
     this.expect(TokenType.END_PI);
     this.skipToSemicolon();
 
+    parameters.forEach(p => this.rememberDateTime(p.name, p.dataType));
     return { returnType, parameters };
   }
 
@@ -351,6 +396,32 @@ export class Parser {
       if (token.type === TokenType.RPAREN) depth--;
     }
     if (depth > 0) throw new Error(`Parenthèse fermante attendue à la ligne ${this.peek().line}`);
+  }
+
+  // Une déclaration d'un autre type masque un nom date homonyme (variable locale)
+  private rememberDateTime(name: string, dataType: DataTypeNode): void {
+    if (isDateTimeType(dataType.typeName)) {
+      this.dateTimeNames.add(name.toLowerCase());
+    } else {
+      this.dateTimeNames.delete(name.toLowerCase());
+    }
+  }
+
+  // Valeurs spéciales permises dans INZ selon le type déclaré
+  private inzSpecials(dataType: DataTypeNode): string[] {
+    if (dataType.typeName === 'date') return ['*loval', '*hival', '*sys', '*job'];
+    if (isDateTimeType(dataType.typeName)) return ['*loval', '*hival', '*sys'];
+    return [];
+  }
+
+  // Valeur spéciale propre aux dates à la position courante, si elle est permise ici
+  // (et suivie du token de fin attendu, s'il est donné)
+  private parseDateTimeSpecial(allowed: string[], end?: TokenType): ExpressionNode | undefined {
+    const token = this.peek();
+    if (token.type !== TokenType.SPECIAL_VALUE || !allowed.includes(token.value)) return undefined;
+    if (end !== undefined && this.peekNext()?.type !== end) return undefined;
+    this.advance();
+    return { type: 'Expression', value: token.value, valueType: 'special' };
   }
 
   private isTypeToken(): boolean {
@@ -533,6 +604,21 @@ export class Parser {
     return { type: 'Return', value };
   }
 
+  // Variable hôte :nom ou :ds.champ déclarée DATE / TIME / TIMESTAMP
+  private refuseDateHostVariable(colon: Token): void {
+    let i = this.pos;
+    let name = '';
+    while (this.tokens[i]?.type === TokenType.IDENTIFIER) {
+      name += this.tokens[i].value;
+      if (this.tokens[i + 1]?.type !== TokenType.DOT) break;
+      name += '.';
+      i += 2;
+    }
+    if (name && this.dateTimeNames.has(name.toLowerCase())) {
+      throw unsupported(`Variable hôte :${name} de type date/heure dans EXEC SQL`, colon);
+    }
+  }
+
  private parseSQL(): ASTNode {
     this.expect(TokenType.EXEC_SQL);
 
@@ -546,6 +632,10 @@ export class Parser {
 
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
         const token = this.advance();
+        if (DATETIME_LITERALS.has(token.type)) {
+          throw unsupported('Un littéral date ou heure dans EXEC SQL', token);
+        }
+        if (token.type === TokenType.COLON) this.refuseDateHostVariable(token);
 
         // 🔥 CORRECTION DE LA LOGIQUE :
         // - noSpaceBefore : le token ACTUEL doit-il être collé au précédent ?
@@ -607,7 +697,8 @@ export class Parser {
 
     if (this.check(TokenType.EQUALS)) {
       this.advance();
-      const value = this.parseExpression();
+      const allowed = this.dateTimeNames.has(name.toLowerCase()) ? ['*loval', '*hival'] : [];
+      const value = this.parseDateTimeSpecial(allowed, TokenType.SEMICOLON) ?? this.parseExpression();
       this.expect(TokenType.SEMICOLON);
       return { type: 'Assignment', variable: name, value };
     }
@@ -715,7 +806,9 @@ export class Parser {
         this.check(TokenType.LESS) || this.check(TokenType.LESS_EQ) ||
         this.check(TokenType.GREATER) || this.check(TokenType.GREATER_EQ)) {
       const op = this.advance().value;
-      const right = this.parseAddition();
+      const allowed = left.valueType === 'identifier' && this.dateTimeNames.has(String(left.value).toLowerCase())
+        ? ['*loval', '*hival'] : [];
+      const right = this.parseDateTimeSpecial(allowed) ?? this.parseAddition();
       return { type: 'Expression', operator: op, left, right };
     }
 
@@ -772,6 +865,16 @@ export class Parser {
     return this.parsePrimary();
   }
 
+  // 2e argument de %CHAR / %DATE / %TIME / %TIMESTAMP : seul %CHAR(x : *ISO) est supporté
+  private parseFormatArgument(builtin: string): ExpressionNode {
+    const token = this.peek();
+    if (builtin.toLowerCase() === '%char' && token.type === TokenType.SPECIAL_VALUE && token.value.toLowerCase() === '*iso') {
+      this.advance();
+      return { type: 'Expression', value: '*iso', valueType: 'special' };
+    }
+    throw unsupported(`${builtin.toUpperCase()} avec le 2e argument ${token.value.toUpperCase()}`, token);
+  }
+
   private parsePrimary(): ExpressionNode {
     if (this.check(TokenType.NUMBER)) {
       const value = parseFloat(this.advance().value);
@@ -781,6 +884,17 @@ export class Parser {
     if (this.check(TokenType.STRING)) {
       const value = this.advance().value;
       return { type: 'Expression', value, valueType: 'string' };
+    }
+
+    const literalKind = DATETIME_LITERALS.get(this.peek().type);
+    if (literalKind) {
+      const token = this.advance();
+      const value = parseIso(literalKind, token.value);
+      if (!value) {
+        const letter = { date: 'D', time: 'T', timestamp: 'Z' }[literalKind];
+        throw new Error(`${letter}'${token.value}' : littéral ${literalKind.toUpperCase()} invalide (ligne ${token.line})`);
+      }
+      return { type: 'Expression', value, valueType: 'datetime' };
     }
 
     if (this.check(TokenType.SPECIAL_VALUE)) {
@@ -798,11 +912,22 @@ export class Parser {
       if (!isSupportedBuiltin(name)) {
         throw unsupported(`La fonction ${name.toUpperCase()}`, token);
       }
+      // %DATE, %TIME et %TIMESTAMP sont valides sans parenthèses
+      if (NO_ARGUMENT_BUILTINS.has(name.toLowerCase()) && !this.check(TokenType.LPAREN)) {
+        return { type: 'Expression', value: { name, args: [] }, valueType: 'builtin' };
+      }
       this.expect(TokenType.LPAREN);
       const args: ExpressionNode[] = [];
 
       while (!this.check(TokenType.RPAREN)) {
-        args.push(this.parseExpression());
+        if (args.length === 2 && name.toLowerCase() === '%char') {
+          throw new Error(`%CHAR accepte au plus 2 arguments (ligne ${token.line})`);
+        }
+        if (args.length === 1 && FORMAT_BUILTINS.has(name.toLowerCase())) {
+          args.push(this.parseFormatArgument(name));
+        } else {
+          args.push(this.parseExpression());
+        }
         if (this.check(TokenType.COLON) || this.check(TokenType.COMMA)) {
           this.advance();
         }

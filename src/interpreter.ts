@@ -1,11 +1,12 @@
 import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, ParameterNode, DataTypeNode } from './types';
 import { Runtime } from './runtime';
 import { ExecutionContext, MockCase, emptyContext } from './context';
-import { coerce, defaultValue, formatChar } from './datatypes';
+import { coerce, defaultValue, describeValue, formatChar } from './datatypes';
+import { FigurativeValue, compareDateTime, fromClock, isDateTime, isDateTimeType, kindOf, parseIso, resolveFigurative } from './datetime';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { ProgramResolver } from './sources';
-import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DIVIDE_BY_ZERO, matchesStatus } from './errors';
+import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DIVIDE_BY_ZERO, incompatibleTypes, matchesStatus } from './errors';
 
 // Signaux de contrôle : levés comme exceptions pour traverser les blocs imbriqués
 // jusqu'à la boucle (LEAVE/ITER) ou la procédure / le programme (RETURN) concerné.
@@ -22,6 +23,8 @@ export interface InterpreterOptions {
   maxCallDepth?: number;
   // Source des programmes appelés par EXTPGM sans bouchon
   resolveProgram?: ProgramResolver;
+  // Horloge de *SYS, *JOB, %DATE()... ; les tests la figent
+  clock?: () => Date;
 }
 
 const DEFAULT_MAX_ITERATIONS = 1_000_000;
@@ -37,6 +40,42 @@ function compare(left: any, right: any): number {
   if (left === right) return 0;
   return left < right ? -1 : left > right ? 1 : NaN;
 }
+
+const COMPARISONS: { [op: string]: (c: number) => boolean } = {
+  '=': c => c === 0, '<>': c => c !== 0, '<': c => c < 0, '<=': c => c <= 0, '>': c => c > 0, '>=': c => c >= 0,
+};
+
+const involvesDateTime = (value: any) => isDateTime(value) || value instanceof FigurativeValue;
+
+// Avec une date, une heure ou un timestamp, seule la comparaison au même type est permise.
+// *LOVAL / *HIVAL prennent le type de l'autre opérande.
+function dateTimeOperation(op: string, left: any, right: any): boolean {
+  const test = COMPARISONS[op];
+  if (left instanceof FigurativeValue && kindOf(right)) left = resolveFigurative(left, kindOf(right)!);
+  if (right instanceof FigurativeValue && kindOf(left)) right = resolveFigurative(right, kindOf(left)!);
+  if (test && kindOf(left) !== undefined && kindOf(left) === kindOf(right)) {
+    return test(compareDateTime(left, right));
+  }
+  const operands = right === undefined ? describeValue(left) : `${describeValue(left)} et ${describeValue(right)}`;
+  throw incompatibleTypes(`Opération ${op.toUpperCase()} avec ${operands}`);
+}
+
+// Un bouchon JSON donne les dates, heures et timestamps en texte *ISO
+function fromMock(value: any, type: DataTypeNode | undefined, what: string): any {
+  if (!type || !isDateTimeType(type.typeName) || value === undefined || value === null || isDateTime(value)) return value;
+  if (typeof value !== 'string') {
+    throw new Error(`${what} : la valeur ${type.typeName.toUpperCase()} doit être un texte *ISO, reçu ${value}`);
+  }
+  const parsed = parseIso(type.typeName, value);
+  if (!parsed) throw new Error(`${what} : '${value}' n'est pas une valeur ${type.typeName.toUpperCase()} *ISO valide`);
+  return parsed;
+}
+
+// Fonctions intégrées qui acceptent une date, une heure ou un timestamp
+const DATE_AWARE_BUILTINS = new Set(['%date', '%time', '%timestamp', '%len']);
+// Acceptées sur IBM i (ou doute) mais pas encore implémentées pour les dates
+const NOT_YET_DATE_BUILTINS = new Set(['%dec', '%int', '%max', '%min']);
+
 const DEFAULT_MAX_CALL_DEPTH = 256;
 
 export class Interpreter {
@@ -53,7 +92,7 @@ export class Interpreter {
   constructor(context?: ExecutionContext, options: InterpreterOptions = {}) {
     this.context = context ?? emptyContext();
     this.options = options;
-    this.runtime = new Runtime(this.context);
+    this.runtime = new Runtime(this.context, options.clock);
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     this.maxCallDepth = options.maxCallDepth ?? DEFAULT_MAX_CALL_DEPTH;
   }
@@ -89,7 +128,15 @@ export class Interpreter {
 
     // Paramètres d'entrée du programme (dcl-pi principal), passés par l'appelant
     const parameters = ast.parameters ?? [];
-    parameters.forEach((p, i) => this.runtime.declareVariable(p.name, args[i], p.dataType));
+    parameters.forEach((p, i) => {
+      const type = p.dataType.typeName;
+      // Sur IBM i les octets d'un autre type seraient réinterprétés comme une date
+      if (isDateTimeType(type) && args[i] !== undefined && kindOf(args[i]) !== type) {
+        throw new Error(`Paramètre ${p.name} : passage d'une valeur ${describeValue(args[i])} à un paramètre ${type.toUpperCase()} : `
+          + `pas encore supporté par l'interpréteur`);
+      }
+      this.runtime.declareVariable(p.name, args[i], p.dataType);
+    });
 
     // Première passe : déclarer variables, constantes, procédures
     for (const node of ast.body) {
@@ -186,8 +233,16 @@ export class Interpreter {
   }
 
   private executeVariableDeclaration(node: any): void {
-    const value = node.initialValue ? this.evaluate(node.initialValue) : defaultValue(node.dataType);
-    this.runtime.declareVariable(node.name, value, node.dataType);
+    this.runtime.declareVariable(node.name, this.initialValue(node.initialValue, node.dataType), node.dataType);
+  }
+
+  // Valeur de INZ ; INZ(*SYS) et INZ(*JOB) lisent l'horloge (*JOB : date du jour, faute de travail IBM i)
+  private initialValue(expr: ExpressionNode | undefined, type: DataTypeNode): any {
+    if (!expr) return defaultValue(type);
+    if (expr.valueType === 'special' && (expr.value === '*sys' || expr.value === '*job') && isDateTimeType(type.typeName)) {
+      return fromClock(type.typeName, this.runtime.now());
+    }
+    return this.evaluate(expr);
   }
 
   private executeConstantDeclaration(node: any): void {
@@ -198,7 +253,7 @@ export class Interpreter {
     this.runtime.declareDataStructure(node.name, node.fields.map((field: any) => ({
       name: field.name,
       type: field.dataType,
-      value: field.initialValue ? this.evaluate(field.initialValue) : defaultValue(field.dataType),
+      value: this.initialValue(field.initialValue, field.dataType),
     })), node.isQualified);
   }
 
@@ -300,7 +355,9 @@ export class Interpreter {
       return index;
     };
     const sameValue = (actual: any, expected: any) =>
-      typeof actual === 'string' ? actual.trimEnd() === String(expected).trimEnd() : actual === expected;
+      typeof actual === 'string' ? actual.trimEnd() === String(expected).trimEnd()
+        : isDateTime(actual) ? String(actual) === String(expected)
+        : actual === expected;
 
     const matching = mock.calls.find((c: MockCase) =>
       Object.entries(c.when ?? {}).every(([paramName, expected]) => sameValue(args[paramIndex(paramName)], expected)));
@@ -321,9 +378,9 @@ export class Interpreter {
       if (!arg || arg.valueType !== 'identifier') {
         throw new Error(`Bouchon ${target} : le paramètre ${param.name} doit recevoir une variable pour être renvoyé`);
       }
-      this.assignTo(arg.value, coerce(value, param.dataType, param.name));
+      this.assignTo(arg.value, coerce(fromMock(value, param.dataType, `Bouchon ${target}`), param.dataType, param.name));
     }
-    return coerce(matching.return, proto.returnType, proto.name);
+    return coerce(fromMock(matching.return, proto.returnType, `Bouchon ${target}`), proto.returnType, proto.name);
   }
 
   // Exécute le source d'un programme appelé, avec ses propres variables globales.
@@ -381,13 +438,22 @@ export class Interpreter {
     }
 }
 
+  // Évalue une condition (IF, WHEN, DOW, DOU) : une date, une heure ou un timestamp n'est pas un indicateur
+  private condition(expr: ExpressionNode): any {
+    const value = this.evaluate(expr);
+    if (isDateTime(value) || value instanceof FigurativeValue) {
+      throw incompatibleTypes(`Condition ${describeValue(value)}`);
+    }
+    return value;
+  }
+
   private executeIf(node: any): void {
-    if (this.evaluate(node.condition)) {
+    if (this.condition(node.condition)) {
       this.executeBlock(node.thenBlock);
       return;
     }
     for (const elseIf of node.elseIfBlocks ?? []) {
-      if (this.evaluate(elseIf.condition)) {
+      if (this.condition(elseIf.condition)) {
         this.executeBlock(elseIf.block);
         return;
       }
@@ -399,7 +465,7 @@ export class Interpreter {
 
   private executeSelect(node: any): void {
     for (const when of node.whenBlocks) {
-      if (this.evaluate(when.condition)) {
+      if (this.condition(when.condition)) {
         this.executeBlock(when.block);
         return;
       }
@@ -428,13 +494,13 @@ export class Interpreter {
         this.runtime.setVariable(varName, this.runtime.getVariable(varName) + delta);
       }
     } else if (node.loopType === 'dow') {
-      while (this.evaluate(node.condition)) {
+      while (this.condition(node.condition)) {
         if (!this.runIteration(node.body)) return;
       }
     } else if (node.loopType === 'dou') {
       do {
         if (!this.runIteration(node.body)) return;
-      } while (!this.evaluate(node.condition));
+      } while (!this.condition(node.condition));
     }
   }
 
@@ -463,6 +529,13 @@ export class Interpreter {
 
   // 🆕 MÉTHODE SQL AJOUTÉE
   private executeSQL(node: any): void {
+    // Variables hôtes date/heure : les dates en SQL font l'objet d'un incrément à venir
+    for (const [, name] of node.sql.matchAll(/:([A-Za-z_$#@][\w$#@]*(?:\.[\w$#@]+)?)/g)) {
+      const type = this.runtime.getType(name);
+      if (type && isDateTimeType(type.typeName)) {
+        throw new Error(`Variable hôte :${name} de type ${type.typeName.toUpperCase()} dans EXEC SQL : pas encore supporté par l'interpréteur`);
+      }
+    }
     const result = this.runtime.executeSQL(node.sql);
 
     // Mettre à jour les variables RPG standard
@@ -506,8 +579,13 @@ export class Interpreter {
       return expr.value;
     }
 
+    if (expr.valueType === 'datetime') {
+      return expr.value;
+    }
+
     if (expr.valueType === 'special') {
       switch (expr.value) {
+        case '*loval': case '*hival': return new FigurativeValue(expr.value);
         case '*on': return true;
         case '*off': return false;
         case '*zero': case '*zeros': return 0;
@@ -543,8 +621,16 @@ export class Interpreter {
     }
 
     if (expr.valueType === 'builtin') {
-      const args = expr.value.args.map((arg: ExpressionNode) => this.evaluate(arg));
-      if (expr.value.name.toLowerCase() === '%char') {
+      const builtin = expr.value.name.toLowerCase();
+      const isChar = builtin === '%char';
+      // Le 2e argument (*ISO) est un format, inutile à évaluer
+      const args = (isChar ? expr.value.args.slice(0, 1) : expr.value.args).map((arg: ExpressionNode) => this.evaluate(arg));
+      if (!isChar && !DATE_AWARE_BUILTINS.has(builtin)) this.refuseDateArguments(expr.value.name, args);
+      if (isChar) {
+        // %CHAR(x : *ISO) n'existe que pour une date, une heure ou un timestamp
+        if (expr.value.args.length > 1 && !isDateTime(args[0])) {
+          throw incompatibleTypes(`%CHAR(${describeValue(args[0])} : *ISO)`);
+        }
         // Le format dépend du type déclaré : variable, ou valeur de retour d'une procédure
         return formatChar(args[0], this.declaredType(expr.value.args[0]));
       }
@@ -558,9 +644,22 @@ export class Interpreter {
     throw new Error(`Expression non supportée`);
   }
 
+  // Les autres fonctions intégrées ne savent pas traiter une date, une heure ou un timestamp
+  private refuseDateArguments(name: string, args: any[]): void {
+    const date = args.find(isDateTime);
+    if (!date) return;
+    if (NOT_YET_DATE_BUILTINS.has(name.toLowerCase())) {
+      throw new Error(`${name.toUpperCase()} d'une valeur ${date.kind.toUpperCase()} : pas encore supporté par l'interpréteur`);
+    }
+    throw incompatibleTypes(`${name.toUpperCase()}(${describeValue(date)})`);
+  }
+
   private executeOperator(expr: ExpressionNode): any {
     const left = expr.left ? this.evaluate(expr.left) : undefined;
     const right = expr.right ? this.evaluate(expr.right) : undefined;
+    if (involvesDateTime(left) || involvesDateTime(right)) {
+      return dateTimeOperation(expr.operator!, left, right);
+    }
 
     switch (expr.operator) {
       case '+': 

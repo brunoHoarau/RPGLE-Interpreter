@@ -84,9 +84,26 @@ test('LIKE est refusé sur dcl-s', () => {
 });
 
 test('les types sans sémantique sont refusés', () => {
-  for (const decl of ['dcl-s f float(8);', 'dcl-s d date;', 'dcl-s t time;', 'dcl-s s timestamp;', 'dcl-s p pointer;']) {
+  for (const decl of ['dcl-s f float(8);', 'dcl-s p pointer;']) {
     assert.throws(() => parse(decl), NOT_SUPPORTED, decl);
   }
+});
+
+test('les formats de date et d\'heure autres que *ISO sont refusés', () => {
+  for (const decl of ['dcl-s d date(*eur);', 'dcl-s d date(*dmy);', 'dcl-s t time(*hms);',
+                      'dcl-s d date(*iso0);', 'dcl-s d date(*iso-);']) {
+    assert.throws(() => parse(decl), NOT_SUPPORTED, decl);
+  }
+});
+
+test('CTL-OPT DATFMT ou TIMFMT autre que *ISO est refusé', () => {
+  assert.throws(() => parse(`ctl-opt datfmt(*eur);`), err => NOT_SUPPORTED.test(err.message) && /DATFMT/.test(err.message));
+  assert.throws(() => parse(`ctl-opt timfmt(*hms);`), err => NOT_SUPPORTED.test(err.message) && /TIMFMT/.test(err.message));
+});
+
+test('TIMESTAMP(n) autre que 6 est refusé', () => {
+  assert.throws(() => parse(`dcl-s z timestamp(3);`), NOT_SUPPORTED);
+  assert.throws(() => parse(`dcl-s z timestamp(12);`), NOT_SUPPORTED);
 });
 
 test('LIKEDS et OPTIONS(*OMIT) sont refusés sur un paramètre', () => {
@@ -111,6 +128,24 @@ test('INZ sans valeur reste accepté', () => {
 test('les valeurs spéciales non supportées sont refusées', () => {
   for (const decl of ['x = *hival;', 'x = *loval;', "x = *all'-';"]) {
     assert.throws(() => parse(`dcl-s x char(5); ${decl}`), NOT_SUPPORTED, decl);
+  }
+});
+
+test('*SYS et *JOB ne sont acceptés qu\'en INZ d\'une date ou d\'une heure', () => {
+  for (const src of ['dcl-s c char(10) inz(*sys);', 'dcl-s t time inz(*job);', 'dcl-s d date; d = *sys;']) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
+  }
+});
+
+test('*LOVAL et *HIVAL hors date ou heure restent refusés', () => {
+  for (const src of [
+    'dcl-s n int(5) inz(*loval);',
+    'dcl-s d date; dcl-s x int(5); x = *hival;',
+    'dcl-proc p; dcl-s d date; end-proc; dcl-s d char(5); d = *loval;',
+    'dcl-s d date; if d + 1 = *loval; endif;',
+    'dcl-s d date; dcl-proc p; dcl-s d char(5); d = *loval; end-proc;',
+  ]) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
   }
 });
 
@@ -151,4 +186,21 @@ test('EVAL(H) est refusé tant que l\'arrondi n\'est pas supporté', () => {
 
 test('DSPLY accepte encore *BLANK et une file d\'attente en paramètres', () => {
   assert.deepEqual(run(`dsply 'Fin' *blank *joblog;`), ['Fin (File: *joblog)']);
+});
+
+test('les fonctions et formats de dates des incréments suivants sont refusés', () => {
+  for (const src of [
+    `dcl-s d date; d = d + %days(1);`,
+    `dcl-s n int(10); n = %diff(D'2026-10-04' : D'2026-01-01' : *days);`,
+    `dcl-s n int(5); n = %subdt(D'2026-10-04' : *years);`,
+    `dcl-s d date; d = %date('04/10/2026' : *eur);`,
+    `dcl-s c char(10); c = %char(D'2026-10-04' : *eur);`,
+    `dcl-s z timestamp; z = %timestamp('x' : 3);`,
+  ]) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
+  }
+});
+
+test('%DATE d\'un nombre est refusé tant que les conversions numériques manquent', () => {
+  assert.throws(() => run(`dcl-s d date; d = %date(20261004);`), NOT_SUPPORTED);
 });

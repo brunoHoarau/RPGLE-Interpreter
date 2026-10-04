@@ -98,6 +98,9 @@ export class Lexer {
         this.readBuiltin();
       } else if (char === '*') {
         this.readSpecialValue();
+      } else if (/[dtz]/i.test(char) && this.peek(1) === "'") {
+        // Littéraux D'2026-10-04', T'13.45.00', Z'2026-10-04-13.45.00.000000'
+        this.readDateTimeLiteral(char.toLowerCase() as 'd' | 't' | 'z');
       } else if (this.isAlpha(char)) {
         this.readKeywordOrIdentifier();
       } else {
@@ -158,6 +161,13 @@ export class Lexer {
 
     this.advance(); // Skip closing quote
     this.addToken(TokenType.STRING, value);
+  }
+
+  private readDateTimeLiteral(letter: 'd' | 't' | 'z') {
+    const types = { d: TokenType.DATE_LITERAL, t: TokenType.TIME_LITERAL, z: TokenType.TIMESTAMP_LITERAL };
+    this.advance(); // La lettre ; readString lit le texte entre apostrophes
+    this.readString("'");
+    this.tokens[this.tokens.length - 1].type = types[letter];
   }
 
   private readNumber() {

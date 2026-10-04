@@ -42,7 +42,7 @@ export class Runtime {
   private sqlEngine: SQLEngine;
   public lastSQLResult: SQLResult = { rows: [], rowCount: 0, sqlCode: 0, sqlState: '00000' };
 
-  constructor(context?: ExecutionContext) {
+  constructor(context?: ExecutionContext, private clock: () => Date = () => new Date()) {
     // ✅ UTILISATION DE this.context
     this.context = context || emptyContext();
     this.sqlEngine = new SQLEngine(this.context);
@@ -275,6 +275,11 @@ export class Runtime {
       throw new Error(`Fonction intégrée non supportée: ${name}`);
     }
     return builtin(this, ...args);
+  }
+
+  // Instant présent : *SYS, *JOB, %DATE()... (horloge injectable pour les tests)
+  now(): Date {
+    return this.clock();
   }
 
   addOutput(message: string): void {
