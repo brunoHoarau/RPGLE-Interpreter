@@ -124,9 +124,34 @@ Format *ISO uniquement : date `2026-10-04`, heure `13.45.00`, timestamp `2026-10
 - `%CHAR(x)` et `%CHAR(x : *ISO)`, `DSPLY` d'une variable date
 - Bouchons : les dates s'écrivent en texte *ISO dans `programs.json` (`"fin": "2026-11-04"`)
 
+## Fichiers natifs
+
+`dcl-f` lit les mêmes données simulées que le SQL : la table de `context/tables.json` portant le nom du fichier. Pour un fichier natif, décrivez la table avec `schema` (les zones, dans l'ordre), et au besoin `keys` et `format` :
+
+```json
+{
+  "CLIENT": {
+    "format": "CLIENTF",
+    "keys": ["NUMCLI"],
+    "schema": { "NUMCLI": "packed(7:0)", "NOM": "char(10)", "SOLDE": "DECIMAL(9,2)", "CREE": "date", "ACTIF": "ind" },
+    "data": [ { "NUMCLI": 1, "NOM": "Dupont", "SOLDE": 1500.50, "CREE": "2025-01-15", "ACTIF": "1" } ]
+  }
+}
+```
+
+- **Déclaration** : `dcl-f client;` (ordre d'arrivée des lignes), `dcl-f client keyed;` (ordre des `keys`), `usropn` (le fichier reste fermé jusqu'à `open`). Les zones deviennent des variables globales du programme, au type de leur colonne ; `format` vaut `<FICHIER>F` par défaut et peut remplacer le nom du fichier dans `read`, `readp`, `reade`, `readpe`.
+- **Types de zones** : `char(n)`, `varchar(n)`, `packed`/`decimal`, `zoned`/`numeric`, `int`, `uns`, `smallint`, `bigint`, `ind`, `date`, `time`, `timestamp` ; les dates et heures s'écrivent en texte *ISO dans `data`, les indicateurs `"1"`/`"0"`.
+- **Opérations** : `read`, `readp`, `reade`, `readpe`, `chain`, `setll`, `setgt` (clé simple ou liste `(a : b)`, clé partielle acceptée, `*start`/`*loval`/`*end`/`*hival`), `open`, `close`. `chain` sur un fichier sans clé lit par numéro d'enregistrement.
+- **Fonctions** : `%eof`, `%found`, `%equal`, `%open`, avec un nom de fichier ou de format, ou sans argument (dernière opération qui a positionné cet indicateur).
+- **Ordre des clés caractère** : l'ordre EBCDIC d'IBM i (minuscules avant majuscules avant chiffres). Un caractère hors du jeu invariant dans une clé est refusé.
+- **Statuts** : opération sur un fichier `usropn` non ouvert : 01211 (RNX1211) ; `open` d'un fichier déjà ouvert : 01215 (RNX1215). Ils sont interceptables par `MONITOR`/`ON-ERROR 01211` ou `*FILE`.
+- **Données partagées avec le SQL** : un `INSERT`, `UPDATE` ou `DELETE` est vu par les lectures suivantes. Un programme appelé a sa propre position dans le fichier.
+- **Refusé** (« pas encore supporté ») : écriture (`WRITE`, `UPDATE`, `DELETE`), `PREFIX`, `RENAME` et autres mots-clés de `dcl-f`, `%KDS`, `READE`/`READPE` sans clé, extenseurs d'opération (`chain(e)`), lecture séquentielle après un `CHAIN` non trouvé, après une fin de fichier ou après un `READE`/`READPE` sans correspondance, `CHAIN` par numéro d'enregistrement après une suppression, fichiers écran et impression.
+
 ## Limites connues
 
-- Pas de fichiers natifs (`dcl-f`, `read`, `chain`, `setll`…), de tableaux (`dim`), ni de `float`
+- Fichiers natifs : lecture seulement (pas encore d'écriture `WRITE`/`UPDATE`/`DELETE`) ; pas d'écrans ni d'impressions
+- Pas de tableaux (`dim`), ni de `float`
 - Pas de sous-routines (`BEGSR`/`EXSR`), de `LIKE`/`LIKEDS`/`EXTNAME`, de `/COPY`, ni de paramètres pour le programme principal
 - `ctl-opt` est accepté mais ses options sont ignorées, sauf `DATFMT`/`TIMFMT` (seul `*ISO` est accepté)
 - Un programme appelé repart toujours de zéro, comme s'il s'était terminé avec `*INLR = *ON` : ses variables ne sont pas conservées d'un appel à l'autre

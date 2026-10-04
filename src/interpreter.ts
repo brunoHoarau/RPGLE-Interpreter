@@ -1,4 +1,5 @@
-import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, ParameterNode, DataTypeNode } from './types';
+import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, ParameterNode, DataTypeNode, FileDeclarationNode, FileOperationNode } from './types';
+import { NativeFile, FileResult, parseFieldType } from './files';
 import { Runtime } from './runtime';
 import { ExecutionContext, MockCase, emptyContext } from './context';
 import { checkAssignable, coerce, defaultValue, describeType, describeValue, formatChar, isDataStructure, sameDeclaredType } from './datatypes';
@@ -106,6 +107,18 @@ const NOT_YET_DATE_BUILTINS = new Set(['%dec', '%int', '%max', '%min']);
 
 const DEFAULT_MAX_CALL_DEPTH = 256;
 
+const FILE_BUILTINS = new Set(['%eof', '%found', '%equal', '%open']);
+const NUMERIC_TYPES = new Set(['int', 'uns', 'packed', 'zoned']);
+
+// État d'un fichier déclaré par DCL-F dans le programme en cours
+interface FileState {
+  file: NativeFile;
+  open: boolean;
+  eof: boolean;
+  found: boolean;
+  equal: boolean;
+}
+
 export class Interpreter {
   private runtime: Runtime;
   private maxIterations: number;
@@ -117,6 +130,9 @@ export class Interpreter {
   private context: ExecutionContext;
   private options: InterpreterOptions;
   private programDepth = 0; // Niveau d'imbrication des appels de programmes source
+  private files = new Map<string, FileState>();          // Par nom de fichier et par nom de format, en majuscules
+  private fileFields = new Map<string, DataTypeNode>();  // Zones des fichiers, en minuscules
+  private lastIndicators = { eof: false, found: false, equal: false }; // %EOF, %FOUND, %EQUAL sans argument
 
   constructor(context?: ExecutionContext, options: InterpreterOptions = {}) {
     this.context = context ?? emptyContext();
@@ -143,6 +159,9 @@ export class Interpreter {
     this.iterations = 0;
     this.procedures.clear();
     this.prototypes.clear();
+    this.files.clear();
+    this.fileFields.clear();
+    this.lastIndicators = { eof: false, found: false, equal: false };
 
     // Déclarer SQLCOD et SQLSTT par défaut
     this.runtime.declareVariable('SQLCOD', 0, { type: 'DataType', typeName: 'int', length: 10 });
@@ -167,6 +186,9 @@ export class Interpreter {
       this.runtime.declareVariable(p.name, args[i], p.dataType);
       if (p.isConst) this.runtime.markReadOnly(p.name);
     });
+
+    // Fichiers : avant les autres déclarations, leurs zones sont des variables globales
+    for (const declaration of ast.files ?? []) this.declareFile(declaration);
 
     // Première passe : déclarer variables, constantes, procédures
     for (const node of ast.body) {
@@ -245,6 +267,8 @@ export class Interpreter {
         return this.executeVariableDeclaration(node as any);
       case 'ConstantDeclaration':
         return this.executeConstantDeclaration(node as any);
+      case 'FileOperation':
+        return this.executeFileOperation(node as FileOperationNode);
       case 'Dsply':
         return this.executeDsply(node as any);
       case 'SQL':
@@ -263,7 +287,140 @@ export class Interpreter {
   }
 
   private executeVariableDeclaration(node: any): void {
+    const fieldType = this.fileFields.get(String(node.name).toLowerCase());
+    if (fieldType && !sameDeclaredType(fieldType, node.dataType)) {
+      throw incompatibleTypes(`Variable ${node.name} ${describeType(node.dataType)} déclarée comme zone de fichier ${describeType(fieldType)}`);
+    }
     this.runtime.declareVariable(node.name, this.initialValue(node.initialValue, node.dataType, node.name), node.dataType);
+  }
+
+  // --- Fichiers natifs (lecture) ---
+
+  private declareFile(node: FileDeclarationNode): void {
+    const name = node.name.toUpperCase();
+    const tableName = Object.keys(this.context.tables).find(n => n.toUpperCase() === name);
+    const table = tableName === undefined ? undefined : this.context.tables[tableName];
+    if (!table) throw new Error(`Fichier ${name} absent de context/tables.json`);
+    if (table.columns.some(c => c.type === 'AUTO')) {
+      throw new Error(`Fichier ${name} : décrivez ses zones dans "schema" de context/tables.json`);
+    }
+    if (node.keyed && !(table.keys && table.keys.length > 0)) {
+      throw new Error(`Fichier ${name} déclaré KEYED sans "keys" dans context/tables.json`);
+    }
+    const fields = table.columns.map(col => {
+      const type = parseFieldType(col.type);
+      if (!type) throw new Error(`Fichier ${name} : type '${col.type}' de la zone ${col.name} inconnu`);
+      return { name: col.name.toUpperCase(), type };
+    });
+    const format = (table.format ?? name + 'F').toUpperCase();
+    // Le moteur SQL remplace table.data à chaque DELETE : la source est relue à chaque opération
+    const file = new NativeFile(name, format, fields, node.keyed ? table.keys! : [], () => table.data);
+    const state: FileState = { file, open: !node.usropn, eof: false, found: false, equal: false };
+    this.files.set(name, state);
+    this.files.set(format, state);
+
+    for (const field of fields) {
+      const key = field.name.toLowerCase();
+      const existing = this.fileFields.get(key);
+      if (existing) {
+        if (!sameDeclaredType(existing, field.type)) {
+          throw incompatibleTypes(`Zone ${field.name} du fichier ${name} ${describeType(field.type)} déjà déclarée par un autre fichier ${describeType(existing)}`);
+        }
+        continue;
+      }
+      this.fileFields.set(key, field.type);
+      this.runtime.declareVariable(field.name, defaultValue(field.type), field.type);
+    }
+  }
+
+  private fileState(name: string): FileState {
+    const state = this.files.get(name.toUpperCase());
+    if (!state) throw new Error(`Fichier ou format ${name.toUpperCase()} inconnu`);
+    return state;
+  }
+
+  private executeFileOperation(node: FileOperationNode): void {
+    const state = this.fileState(node.file);
+    const file = state.file;
+    if (node.operation === 'open') {
+      if (state.open) throw new RpgError(1215, `Fichier ${file.name} déjà ouvert (RNX1215)`);
+      state.open = true;
+      file.reset();
+      return;
+    }
+    if (!state.open) throw new RpgError(1211, `Fichier ${file.name} non ouvert (RNX1211)`);
+    if (node.operation === 'close') {
+      state.open = false;
+      return;
+    }
+
+    const key = (node.key ?? []).map(expr => this.evaluate(expr));
+    let result: FileResult;
+    switch (node.operation) {
+      case 'read': result = file.read(); break;
+      case 'readp': result = file.readp(); break;
+      case 'reade': result = file.reade(key); break;
+      case 'readpe': result = file.readpe(key); break;
+      case 'chain': result = file.keyed ? file.chain(key) : file.chainRrn(key[0]); break;
+      case 'setll': result = file.setll(node.special ?? key); break;
+      case 'setgt': result = file.setgt(node.special ?? key); break;
+      default: throw new Error(`Opération ${node.operation} non supportée`);
+    }
+    if (result.record) this.copyRecord(file, result.record);
+
+    switch (node.operation) {
+      case 'read': case 'readp': case 'reade': case 'readpe':
+        state.eof = this.lastIndicators.eof = result.eof;
+        break;
+      case 'chain':
+        state.found = this.lastIndicators.found = result.found;
+        break;
+      case 'setll':
+        state.found = this.lastIndicators.found = result.found;
+        state.equal = this.lastIndicators.equal = result.equal;
+        break;
+      case 'setgt':
+        state.found = this.lastIndicators.found = result.found;
+        break;
+    }
+  }
+
+  // Copie les zones d'un enregistrement dans les variables du programme (chemin « données » : pas de checkAssignable)
+  private copyRecord(file: NativeFile, row: any): void {
+    for (const field of file.fields) {
+      const column = Object.keys(row).find(c => c.toUpperCase() === field.name);
+      const raw = column === undefined ? undefined : row[column];
+      const invalid = () => new Error(`Donnée invalide dans le fichier ${file.name} : zone ${field.name} = '${String(raw)}'`);
+      if (raw === undefined || raw === null) throw invalid();
+      const kind = field.type.typeName;
+      let value = raw;
+      if (isDateTimeType(kind)) {
+        if (!isDateTime(raw)) {
+          const parsed = typeof raw === 'string' ? parseIso(kind, raw) : undefined;
+          if (!parsed) throw invalid();
+          value = parsed;
+        }
+      } else if (kind === 'ind') {
+        if (raw === '1' || raw === 1 || raw === true) value = true;
+        else if (raw === '0' || raw === 0 || raw === false) value = false;
+        else throw invalid();
+      } else if (NUMERIC_TYPES.has(kind)) {
+        if (typeof raw === 'string' && /^[+-]?\d+(\.\d+)?$/.test(raw)) value = Number(raw);
+        else if (typeof raw !== 'number' || !Number.isFinite(raw)) throw invalid();
+      }
+      this.runtime.setVariable(field.name, coerce(value, field.type, field.name));
+    }
+  }
+
+  // %EOF, %FOUND, %EQUAL, %OPEN : état d'un fichier, ou dernier état connu sans argument
+  private fileBuiltin(name: string, args: ExpressionNode[]): boolean {
+    const builtin = name.toLowerCase();
+    if (args.length > 0) {
+      const state = this.fileState(String(args[0].value));
+      return builtin === '%open' ? state.open : builtin === '%eof' ? state.eof : builtin === '%found' ? state.found : state.equal;
+    }
+    if (this.files.size === 0) throw new Error(`${name.toUpperCase()} sans fichier déclaré`);
+    return builtin === '%eof' ? this.lastIndicators.eof : builtin === '%found' ? this.lastIndicators.found : this.lastIndicators.equal;
   }
 
   // Valeur de INZ ; INZ(*SYS) et INZ(*JOB) lisent l'horloge (*JOB : date du jour, faute de travail IBM i)
@@ -747,6 +904,7 @@ export class Interpreter {
 
     if (expr.valueType === 'builtin') {
       const builtin = expr.value.name.toLowerCase();
+      if (FILE_BUILTINS.has(builtin)) return this.fileBuiltin(expr.value.name, expr.value.args);
       const isChar = builtin === '%char';
       // Le 2e argument (*ISO) est un format, inutile à évaluer
       const args = (isChar ? expr.value.args.slice(0, 1) : expr.value.args).map((arg: ExpressionNode) => this.evaluate(arg));
