@@ -1,6 +1,6 @@
 // Sémantique des types RPG : valeurs par défaut, conversion à l'affectation, %CHAR
 import { DataTypeNode } from './types';
-import { DateTimeKind, FigurativeValue, isDateTime, isDateTimeType, kindOf, lowValue } from './datetime';
+import { DateTimeKind, FigurativeValue, isDateTime, isDateTimeType, kindOf, lowValue, resolveFigurative } from './datetime';
 import { RpgError, STATUS_INVALID_NUMERIC, STATUS_OVERFLOW, incompatibleTypes } from './errors';
 
 const INT_BITS: { [digits: number]: number } = { 3: 8, 5: 16, 10: 32, 20: 64 };
@@ -21,6 +21,9 @@ export function defaultValue(type: DataTypeNode): any {
 export function coerce(value: any, type: DataTypeNode | undefined, target: string): any {
   if (!type || value === undefined || value === null) return value;
   if (isDateTimeType(type.typeName)) return coerceDateTime(value, type, target);
+  if (value instanceof FigurativeValue) {
+    throw new Error(`${value.name.toUpperCase()} affecté à ${target} ${describeType(type)} : pas encore supporté par l'interpréteur`);
+  }
   if (isDateTime(value)) throw incompatibleAssignment(value, type, target);
 
   switch (type.typeName) {
@@ -106,6 +109,7 @@ function overflow(value: any, type: DataTypeNode, target: string): Error {
 
 // Une date, une heure ou un timestamp ne reçoit qu'une valeur du même type
 function coerceDateTime(value: any, type: DataTypeNode, target: string): any {
+  if (value instanceof FigurativeValue) return resolveFigurative(value, type.typeName as DateTimeKind);
   if (kindOf(value) === type.typeName) return value;
   throw incompatibleAssignment(value, type, target);
 }

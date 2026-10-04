@@ -6,6 +6,9 @@ const { parse, run } = require('./helpers');
 const NOT_SUPPORTED = /pas encore support/i;
 const INCOMPATIBLE = /types incompatibles/i;
 
+// 4 octobre 2026, 13 h 45 min 07 s 089 ms, heure locale
+const CLOCK = { clock: () => new Date(2026, 9, 4, 13, 45, 7, 89) };
+
 test('valeurs par défaut sans INZ', () => {
   const out = run(`
     dcl-s d date;
@@ -136,4 +139,60 @@ test('calculer ou concaténer avec une date est refusé', () => {
   assert.throws(() => run(`dcl-s d date; d = d + 1;`), INCOMPATIBLE);
   assert.throws(() => run(`dcl-s t time; dcl-s n int(5); n = t * 2;`), INCOMPATIBLE);
   assert.throws(() => run(`dcl-s d date; if not d; endif;`), INCOMPATIBLE);
+});
+
+test('INZ(*SYS) et INZ(*JOB) lisent l\'horloge', () => {
+  const out = run(`
+    dcl-s d date inz(*sys);
+    dcl-s j date inz(*JOB);
+    dcl-s t time inz(*SYS);
+    dcl-s z timestamp inz(*sys);
+    dsply d;
+    dsply j;
+    dsply t;
+    dsply z;
+  `, undefined, CLOCK);
+  assert.deepEqual(out, ['2026-10-04', '2026-10-04', '13.45.07', '2026-10-04-13.45.07.089000']);
+});
+
+test('*LOVAL et *HIVAL en INZ, affectation et comparaison', () => {
+  const out = run(`
+    dcl-s d date inz(*hival);
+    dcl-s t time;
+    dcl-ds p qualified;
+      z timestamp inz(*loval);
+    end-ds;
+    dsply d;
+    t = *HIVAL;
+    dsply t;
+    dsply p.z;
+    if P.Z = *loval and d <> *loval;
+      dsply 'ok';
+    endif;
+    d = *loval;
+    if d = *loval;
+      dsply 'remis';
+    endif;
+  `);
+  assert.deepEqual(out, ['9999-12-31', '24.00.00', '0001-01-01-00.00.00.000000', 'ok', 'remis']);
+});
+
+test('*HIVAL sur un champ de DS non qualifiée et sur un paramètre', () => {
+  const out = run(`
+    dcl-ds infos;
+      echeance date;
+    end-ds;
+    echeance = *hival;
+    dsply echeance;
+    verifier(echeance);
+    dcl-proc verifier;
+      dcl-pi *n;
+        d date const;
+      end-pi;
+      if d = *hival;
+        dsply 'sans echeance';
+      endif;
+    end-proc;
+  `);
+  assert.deepEqual(out, ['9999-12-31', 'sans echeance']);
 });

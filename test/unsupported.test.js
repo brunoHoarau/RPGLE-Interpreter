@@ -131,6 +131,24 @@ test('les valeurs spéciales non supportées sont refusées', () => {
   }
 });
 
+test('*SYS et *JOB ne sont acceptés qu\'en INZ d\'une date ou d\'une heure', () => {
+  for (const src of ['dcl-s c char(10) inz(*sys);', 'dcl-s t time inz(*job);', 'dcl-s d date; d = *sys;']) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
+  }
+});
+
+test('*LOVAL et *HIVAL hors date ou heure restent refusés', () => {
+  for (const src of [
+    'dcl-s n int(5) inz(*loval);',
+    'dcl-s d date; dcl-s x int(5); x = *hival;',
+    'dcl-proc p; dcl-s d date; end-proc; dcl-s d char(5); d = *loval;',
+    'dcl-s d date; if d + 1 = *loval; endif;',
+    'dcl-s d date; dcl-proc p; dcl-s d char(5); d = *loval; end-proc;',
+  ]) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
+  }
+});
+
 test('*BLANKS et *ZEROS sont acceptés', () => {
   const out = run(`
     dcl-s c char(3) inz('abc');

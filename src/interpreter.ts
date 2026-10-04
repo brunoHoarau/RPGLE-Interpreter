@@ -2,7 +2,7 @@ import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, Par
 import { Runtime } from './runtime';
 import { ExecutionContext, MockCase, emptyContext } from './context';
 import { coerce, defaultValue, describeValue, formatChar } from './datatypes';
-import { FigurativeValue, compareDateTime, isDateTime, kindOf, resolveFigurative } from './datetime';
+import { FigurativeValue, compareDateTime, fromClock, isDateTime, isDateTimeType, kindOf, resolveFigurative } from './datetime';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { ProgramResolver } from './sources';
@@ -23,6 +23,8 @@ export interface InterpreterOptions {
   maxCallDepth?: number;
   // Source des programmes appelés par EXTPGM sans bouchon
   resolveProgram?: ProgramResolver;
+  // Horloge de *SYS, *JOB, %DATE()... ; les tests la figent
+  clock?: () => Date;
 }
 
 const DEFAULT_MAX_ITERATIONS = 1_000_000;
@@ -74,7 +76,7 @@ export class Interpreter {
   constructor(context?: ExecutionContext, options: InterpreterOptions = {}) {
     this.context = context ?? emptyContext();
     this.options = options;
-    this.runtime = new Runtime(this.context);
+    this.runtime = new Runtime(this.context, options.clock);
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     this.maxCallDepth = options.maxCallDepth ?? DEFAULT_MAX_CALL_DEPTH;
   }
@@ -207,8 +209,16 @@ export class Interpreter {
   }
 
   private executeVariableDeclaration(node: any): void {
-    const value = node.initialValue ? this.evaluate(node.initialValue) : defaultValue(node.dataType);
-    this.runtime.declareVariable(node.name, value, node.dataType);
+    this.runtime.declareVariable(node.name, this.initialValue(node.initialValue, node.dataType), node.dataType);
+  }
+
+  // Valeur de INZ ; INZ(*SYS) et INZ(*JOB) lisent l'horloge (*JOB : date du jour, faute de travail IBM i)
+  private initialValue(expr: ExpressionNode | undefined, type: DataTypeNode): any {
+    if (!expr) return defaultValue(type);
+    if (expr.valueType === 'special' && (expr.value === '*sys' || expr.value === '*job') && isDateTimeType(type.typeName)) {
+      return fromClock(type.typeName, this.runtime.now());
+    }
+    return this.evaluate(expr);
   }
 
   private executeConstantDeclaration(node: any): void {
@@ -219,7 +229,7 @@ export class Interpreter {
     this.runtime.declareDataStructure(node.name, node.fields.map((field: any) => ({
       name: field.name,
       type: field.dataType,
-      value: field.initialValue ? this.evaluate(field.initialValue) : defaultValue(field.dataType),
+      value: this.initialValue(field.initialValue, field.dataType),
     })), node.isQualified);
   }
 
@@ -533,6 +543,7 @@ export class Interpreter {
 
     if (expr.valueType === 'special') {
       switch (expr.value) {
+        case '*loval': case '*hival': return new FigurativeValue(expr.value);
         case '*on': return true;
         case '*off': return false;
         case '*zero': case '*zeros': return 0;

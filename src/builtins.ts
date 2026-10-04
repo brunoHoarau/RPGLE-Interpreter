@@ -3,6 +3,7 @@
 
 export interface BuiltinContext {
   status: number; // Pour %STATUS
+  now(): Date;    // Pour %DATE(), %TIME(), %TIMESTAMP()
 }
 
 type Builtin = (ctx: BuiltinContext, ...args: any[]) => any;
