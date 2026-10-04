@@ -350,3 +350,42 @@ test('un paramètre VALUE reçoit une constante', () => {
 test('variable hôte de SELECT INTO constante : refusée', () => {
   assert.throws(() => parse(`dcl-c K 1; exec sql select id into :K from customers where id = 1;`), /est une constante : affectation refusée par le compilateur IBM i/i);
 });
+
+test('FOR : la variable de boucle doit être numérique', () => {
+  for (const src of [
+    `dcl-s i char(3); for i = 1 to 3; endfor;`,
+    `dcl-s i ind; for i = 1 to 3; endfor;`,
+  ]) {
+    assert.throws(() => run(src), INCOMPATIBLE, src);
+  }
+  assert.deepEqual(run(`dcl-s i int(10); dcl-s s int(10); for i = 1 to 3; s += i; endfor; dsply %char(s);`), ['6']);
+});
+
+test('INSERT ... SELECT : une constante en entrée est acceptée', () => {
+  assert.doesNotThrow(() => parse(`dcl-c K 1; exec sql insert into customers (id, name) select :K, 'x' from customers where id = 1;`));
+});
+
+test('%INT et %DEC : texte décimal seulement', () => {
+  for (const src of [`dcl-s n int(10); n = %int('1e3');`, `dcl-s n int(10); n = %int('0x1F');`, `dcl-s n packed(5:0); n = %dec('Infinity' : 5 : 0);`]) {
+    assert.throws(() => run(src), /RNX0105/, src);
+  }
+  assert.deepEqual(run(`dsply %char(%int(' -5 '));`), ['-5']);
+});
+
+test('SQL : table vide sans colonnes déclarées refusée à l\'INSERT', () => {
+  const ctx = { tables: { T: { columns: [], data: [] } }, files: {}, programs: {} };
+  assert.throws(() => run(`exec sql insert into t (id) values (1);`, ctx), /Table T vide sans colonnes déclarées.*pas encore support/i);
+  const ok = { tables: { T: { columns: [{ name: 'ID', type: 'INT' }], data: [] } }, files: {}, programs: {} };
+  assert.ok(runRaw(`exec sql insert into t (id) values (1);`, ok).some(l => /Succès/.test(l)));
+});
+
+test('SQL : colonne en double = erreur SQL', () => {
+  const out = runRaw(`exec sql insert into customers (id, id) values (9, 9);`, customersContext());
+  assert.ok(out.some(l => /SQLCOD=-1/.test(l)));
+  const out2 = runRaw(`exec sql update customers set balance = 1, balance = 2;`, customersContext());
+  assert.ok(out2.some(l => /SQLCOD=-1/.test(l)));
+});
+
+test('SQL : calcul au-delà de 15 chiffres : pas encore supporté', () => {
+  assert.throws(() => run(`exec sql update customers set balance = balance * 1000000000000;`, customersContext()), NOT_SUPPORTED);
+});

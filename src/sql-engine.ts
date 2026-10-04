@@ -139,7 +139,8 @@ export class SQLEngine {
     if (close < 0 || sql.slice(close + 1).trim() !== '') throw new Error('Syntaxe INSERT invalide');
     const values = this.splitTopLevel(sql.slice(match[0].length, close), ',')
       .map(v => this.compileValue(v, null)({}, hostVars));
-    this.checkColumns(table, columns);
+    this.checkColumns(table, columns, match[1].toUpperCase());
+    this.checkDuplicates(columns);
     if (values.length !== columns.length) {
       throw new Error(`INSERT : ${columns.length} colonnes pour ${values.length} valeurs`);
     }
@@ -171,9 +172,10 @@ export class SQLEngine {
       if (/^\s*\(/.test(eq[0])) throw new NotSupportedError(`Clause SET '${assign.trim()}'`);
       if (eq.length !== 2 || !/^\s*\w+\s*$/.test(eq[0])) throw new Error(`Clause SET invalide : ${assign.trim()}`);
       const col = eq[0].trim().toUpperCase();
-      this.checkColumns(table, [col]);
+      this.checkColumns(table, [col], head[1].toUpperCase());
       return { col, value: this.compileValue(eq[1], known) };
     });
+    this.checkDuplicates(assignments.map(a => a.col));
     for (const row of targets) {
       // Toutes les expressions lisent la ligne avant mise à jour
       const before = { ...row };
@@ -243,9 +245,23 @@ export class SQLEngine {
   }
 
   // Une colonne qui n'existe pas dans la table est une erreur SQL (table sans aucune colonne connue : pas de contrôle)
-  private checkColumns(table: TableDefinition, columns: string[]): void {
+  private checkDuplicates(columns: string[]): void {
+    const seen = new Set<string>();
+    for (const col of columns) {
+      if (seen.has(col)) throw new Error(`Colonne en double: ${col}`);
+      seen.add(col);
+    }
+  }
+
+  private checkColumns(table: TableDefinition, columns: string[], tableName = ''): void {
     const known = this.columnNames(table);
-    if (known.size === 0) return;
+    if (known.size === 0) {
+      // Aucune colonne connue : une faute de frappe créerait une colonne fantôme
+      if (table.data.length === 0) {
+        throw new NotSupportedError(`Table ${tableName} vide sans colonnes déclarées : déclarez "columns" dans context/tables.json`);
+      }
+      return;
+    }
     for (const col of columns) {
       if (!known.has(col)) throw new Error(`Colonne inconnue: ${col}`);
     }
@@ -432,7 +448,10 @@ export class SQLEngine {
     };
 
     // 15 chiffres significatifs, comme les décimaux : balance + 0.1 ne laisse pas de résidu binaire
-    const exact = (n: number) => Number(n.toPrecision(15));
+    const exact = (n: number) => {
+      if (Math.abs(n) >= 1e15) throw new NotSupportedError('Résultat de calcul SQL de 15 chiffres ou plus');
+      return Number(n.toPrecision(15));
+    };
 
     const binary = (op: string, left: Evaluator, right: Evaluator): Evaluator => (row, hv) => {
       const a = numeric(left(row, hv));

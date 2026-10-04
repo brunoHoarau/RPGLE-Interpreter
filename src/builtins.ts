@@ -10,7 +10,7 @@ function numericText(value: any): number {
   if (typeof value === 'number') return value;
   const text = String(value).trim();
   const n = Number(text);
-  if (text === '' || isNaN(n)) throw new RpgError(STATUS_INVALID_NUMERIC, `Valeur non numérique '${value}' (RNX0105)`);
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(text) || isNaN(n)) throw new RpgError(STATUS_INVALID_NUMERIC, `Valeur non numérique '${value}' (RNX0105)`);
   return n;
 }
 

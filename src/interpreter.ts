@@ -563,6 +563,10 @@ export class Interpreter {
       // La variable de boucle est relue à chaque tour : le corps peut la modifier,
       // et elle vaut limite + pas en sortie de boucle, comme en RPG.
       const varName = node.variable;
+      const loopType = this.runtime.getType(varName);
+      if (loopType && !['int', 'uns', 'packed', 'zoned'].includes(loopType.typeName)) {
+        throw incompatibleTypes(`FOR, variable ${varName} ${describeType(loopType)}`);
+      }
       const limit = this.numericBound(node.limit, 'limite');
       const step = node.step ? this.numericBound(node.step, 'pas') : 1;
       const delta = node.direction === 'to' ? step : -step;

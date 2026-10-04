@@ -740,7 +740,7 @@ export class Parser {
     }
 
     // Variables hôtes de sortie (SELECT ... INTO :a, :b FROM) : ce sont des cibles d'affectation
-    const into = /\binto\s+(.*?)\s+from\b/is.exec(sql.replace(/'(?:[^']|'')*'/g, "''"));
+    const into = !/^\s*select\b/i.test(sql) ? null : /\binto\s+(.*?)\s+from\b/is.exec(sql.replace(/'(?:[^']|'')*'/g, "''"));
     if (into) {
       for (const [, host] of into[1].matchAll(/:\s*([A-Za-z_$#@][\w$#@]*)/g)) {
         this.checkWritable(host, this.peek().line);
