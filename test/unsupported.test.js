@@ -84,9 +84,26 @@ test('LIKE est refusé sur dcl-s', () => {
 });
 
 test('les types sans sémantique sont refusés', () => {
-  for (const decl of ['dcl-s f float(8);', 'dcl-s d date;', 'dcl-s t time;', 'dcl-s s timestamp;', 'dcl-s p pointer;']) {
+  for (const decl of ['dcl-s f float(8);', 'dcl-s p pointer;']) {
     assert.throws(() => parse(decl), NOT_SUPPORTED, decl);
   }
+});
+
+test('les formats de date et d\'heure autres que *ISO sont refusés', () => {
+  for (const decl of ['dcl-s d date(*eur);', 'dcl-s d date(*dmy);', 'dcl-s t time(*hms);',
+                      'dcl-s d date(*iso0);', 'dcl-s d date(*iso-);']) {
+    assert.throws(() => parse(decl), NOT_SUPPORTED, decl);
+  }
+});
+
+test('CTL-OPT DATFMT ou TIMFMT autre que *ISO est refusé', () => {
+  assert.throws(() => parse(`ctl-opt datfmt(*eur);`), err => NOT_SUPPORTED.test(err.message) && /DATFMT/.test(err.message));
+  assert.throws(() => parse(`ctl-opt timfmt(*hms);`), err => NOT_SUPPORTED.test(err.message) && /TIMFMT/.test(err.message));
+});
+
+test('TIMESTAMP(n) autre que 6 est refusé', () => {
+  assert.throws(() => parse(`dcl-s z timestamp(3);`), NOT_SUPPORTED);
+  assert.throws(() => parse(`dcl-s z timestamp(12);`), NOT_SUPPORTED);
 });
 
 test('LIKEDS et OPTIONS(*OMIT) sont refusés sur un paramètre', () => {

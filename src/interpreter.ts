@@ -506,6 +506,10 @@ export class Interpreter {
       return expr.value;
     }
 
+    if (expr.valueType === 'datetime') {
+      return expr.value;
+    }
+
     if (expr.valueType === 'special') {
       switch (expr.value) {
         case '*on': return true;

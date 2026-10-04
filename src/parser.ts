@@ -1,5 +1,6 @@
 import { Token, TokenType, ASTNode, ProgramNode, ExpressionNode, DataTypeNode, ParameterNode } from './types';
 import { isSupportedBuiltin } from './builtins';
+import { DateTimeKind, isDateTimeType, parseIso } from './datetime';
 
 const TYPE_TOKENS = [
   TokenType.CHAR, TokenType.VARCHAR, TokenType.PACKED, TokenType.ZONED, TokenType.INT, TokenType.UNS,
@@ -7,7 +8,11 @@ const TYPE_TOKENS = [
 ];
 
 // Types reconnus par la syntaxe mais sans sémantique dans l'interpréteur
-const UNSUPPORTED_TYPE_TOKENS = [TokenType.DATE, TokenType.TIME, TokenType.TIMESTAMP, TokenType.POINTER];
+const UNSUPPORTED_TYPE_TOKENS = [TokenType.POINTER];
+
+const DATETIME_LITERALS = new Map<TokenType, DateTimeKind>([
+  [TokenType.DATE_LITERAL, 'date'], [TokenType.TIME_LITERAL, 'time'], [TokenType.TIMESTAMP_LITERAL, 'timestamp'],
+]);
 
 // Opérations sur fichiers natifs : tokens dédiés
 const FILE_OPERATION_TOKENS = [
@@ -67,11 +72,19 @@ export class Parser {
     return { type: 'Program', body, parameters };
   }
 
+  // Options sans effet ici, sauf DATFMT et TIMFMT : un autre format que *ISO changerait les dates
   private parseControlOptions(): ASTNode {
     this.expect(TokenType.CTL_OPT);
-    // Skip options until semicolon
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
-      this.advance();
+      const keyword = this.advance().value.toLowerCase();
+      if ((keyword === 'datfmt' || keyword === 'timfmt') && this.check(TokenType.LPAREN)) {
+        this.advance();
+        const format = this.advance();
+        if (format.value.toLowerCase() !== '*iso' || !this.check(TokenType.RPAREN)) {
+          const text = `${format.value}${this.check(TokenType.RPAREN) ? '' : this.peek().value}`.toUpperCase();
+          throw unsupported(`CTL-OPT ${keyword.toUpperCase()}(${text})`, format);
+        }
+      }
     }
     this.expect(TokenType.SEMICOLON);
     return { type: 'ControlOptions' } as any;
@@ -121,6 +134,7 @@ export class Parser {
     }
     this.advance();
     const typeName = typeToken.value;
+    if (isDateTimeType(typeName)) return this.parseDateTimeType(typeName);
     let length: number | undefined;
     let decimals: number | undefined;
     let format: string | undefined;
@@ -142,6 +156,24 @@ export class Parser {
     }
 
     return { type: 'DataType', typeName, length, decimals, format };
+  }
+
+  // date | date(*ISO) | time | time(*ISO) | timestamp | timestamp(6) : seul le format *ISO est supporté
+  private parseDateTimeType(typeName: DateTimeKind): DataTypeNode {
+    if (this.check(TokenType.LPAREN)) {
+      this.advance();
+      const arg = this.advance();
+      if (typeName === 'timestamp') {
+        if (arg.type !== TokenType.NUMBER || parseInt(arg.value) !== 6 || !this.check(TokenType.RPAREN)) {
+          throw unsupported(`TIMESTAMP(${arg.value})`, arg);
+        }
+      } else if (arg.value.toLowerCase() !== '*iso' || !this.check(TokenType.RPAREN)) {
+        const text = `${arg.value}${this.check(TokenType.RPAREN) ? '' : this.peek().value}`.toUpperCase();
+        throw unsupported(`Le format ${text} de ${typeName.toUpperCase()}`, arg);
+      }
+      this.expect(TokenType.RPAREN);
+    }
+    return { type: 'DataType', typeName };
   }
 
   private parseConstantDeclaration(): ASTNode {
@@ -781,6 +813,17 @@ export class Parser {
     if (this.check(TokenType.STRING)) {
       const value = this.advance().value;
       return { type: 'Expression', value, valueType: 'string' };
+    }
+
+    const literalKind = DATETIME_LITERALS.get(this.peek().type);
+    if (literalKind) {
+      const token = this.advance();
+      const value = parseIso(literalKind, token.value);
+      if (!value) {
+        const letter = { date: 'D', time: 'T', timestamp: 'Z' }[literalKind];
+        throw new Error(`${letter}'${token.value}' : littéral ${literalKind.toUpperCase()} invalide (ligne ${token.line})`);
+      }
+      return { type: 'Expression', value, valueType: 'datetime' };
     }
 
     if (this.check(TokenType.SPECIAL_VALUE)) {

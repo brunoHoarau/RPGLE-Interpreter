@@ -87,6 +87,9 @@ export enum TokenType {
   // Littéraux et identifiants
   STRING = 'STRING',
   NUMBER = 'NUMBER',
+  DATE_LITERAL = 'DATE_LITERAL',           // D'2026-10-04'
+  TIME_LITERAL = 'TIME_LITERAL',           // T'13.45.00'
+  TIMESTAMP_LITERAL = 'TIMESTAMP_LITERAL', // Z'2026-10-04-13.45.00.000000'
   IDENTIFIER = 'IDENTIFIER',
   BUILTIN = 'BUILTIN', // ex: %len, %trim
   SPECIAL_VALUE = 'SPECIAL_VALUE', // ex: *on, *off, *zero
@@ -294,7 +297,7 @@ export interface ExpressionNode {
   left?: ExpressionNode;
   right?: ExpressionNode;
   value?: any;
-  valueType?: 'number' | 'string' | 'boolean' | 'identifier' | 'builtin' | 'special' | 'call';
+  valueType?: 'number' | 'string' | 'boolean' | 'identifier' | 'builtin' | 'special' | 'call' | 'datetime';
 }
 
 
