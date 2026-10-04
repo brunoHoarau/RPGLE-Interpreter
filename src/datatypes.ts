@@ -64,6 +64,27 @@ export function coerce(value: any, type: DataTypeNode | undefined, target: strin
   }
 }
 
+// Contrôle de type d'une affectation écrite dans le code RPG : le compilateur IBM i refuse un nombre dans un
+// caractère (il faut %CHAR), un caractère ou un indicateur dans un nombre, un nombre ou un texte quelconque dans
+// un indicateur. Les dates et durées relèvent de coerce ; les données (bouchons, SQL) ne passent pas par ici.
+export function checkAssignable(value: any, type: DataTypeNode | undefined, target: string): void {
+  if (!type || value === undefined || value === null) return;
+  if (isDateTimeType(type.typeName) || value instanceof FigurativeValue || isDateTime(value) || isDuration(value)) return;
+  const refuse = () => { throw incompatibleAssignment(value, type, target); };
+  switch (type.typeName) {
+    case 'char': case 'varchar':
+      if (typeof value === 'number') refuse();
+      return;
+    case 'int': case 'uns': case 'packed': case 'zoned':
+      if (typeof value !== 'number') refuse();
+      return;
+    case 'ind':
+      if (typeof value === 'boolean') return;
+      if (value !== '1' && value !== '0') refuse();
+      return;
+  }
+}
+
 // %CHAR : un décimal garde ses décimales déclarées, sans zéros de tête (0.5 -> '.50')
 export function formatChar(value: any, type: DataTypeNode | undefined): string {
   if (typeof value === 'boolean') return value ? '1' : '0';

@@ -3,7 +3,16 @@
 
 import { DateTimeKind, DurationUnit, RpgDate, RpgDuration, RpgTime, RpgTimestamp, diffDateTime, fromClock, isDateTime, kindOf, parseIso, subdt, unitFromName } from './datetime';
 import { describeValue } from './datatypes';
-import { RpgError, STATUS_INVALID_DATE, incompatibleTypes } from './errors';
+import { RpgError, STATUS_INVALID_DATE, STATUS_INVALID_NUMERIC, incompatibleTypes } from './errors';
+
+// %INT et %DEC sur un texte : il doit être numérique, sinon RNX0105
+function numericText(value: any): number {
+  if (typeof value === 'number') return value;
+  const text = String(value).trim();
+  const n = Number(text);
+  if (text === '' || isNaN(n)) throw new RpgError(STATUS_INVALID_NUMERIC, `Valeur non numérique '${value}' (RNX0105)`);
+  return n;
+}
 
 export interface BuiltinContext {
   status: number; // Pour %STATUS
@@ -88,9 +97,9 @@ export const BUILTINS: { [name: string]: Builtin } = {
     const startPos = start - 1;
     return length !== undefined ? str.substr(startPos, length) : str.substr(startPos);
   },
-  '%int': (_, value: any) => parseInt(value),
+  '%int': (_, value: any) => Math.trunc(numericText(value)),
   '%dec': (_, value: any, precision?: number, decimals?: number) => {
-    const num = parseFloat(value);
+    const num = numericText(value);
     return decimals !== undefined ? parseFloat(num.toFixed(decimals)) : num;
   },
   '%char': (_, value: any) => String(value),

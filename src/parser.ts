@@ -739,6 +739,14 @@ export class Parser {
         previousTokenType = token.type;
     }
 
+    // Variables hôtes de sortie (SELECT ... INTO :a, :b FROM) : ce sont des cibles d'affectation
+    const into = /\binto\s+(.*?)\s+from\b/is.exec(sql.replace(/'(?:[^']|'')*'/g, "''"));
+    if (into) {
+      for (const [, host] of into[1].matchAll(/:\s*([A-Za-z_$#@][\w$#@]*)/g)) {
+        this.checkWritable(host, this.peek().line);
+      }
+    }
+
     this.expect(TokenType.SEMICOLON);
 
     return { type: 'SQL', sql };

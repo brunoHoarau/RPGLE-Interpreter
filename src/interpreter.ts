@@ -1,12 +1,12 @@
 import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, ParameterNode, DataTypeNode } from './types';
 import { Runtime } from './runtime';
 import { ExecutionContext, MockCase, emptyContext } from './context';
-import { coerce, defaultValue, describeValue, formatChar } from './datatypes';
+import { checkAssignable, coerce, defaultValue, describeType, describeValue, formatChar } from './datatypes';
 import { DateTimeValue, FigurativeValue, RpgDuration, addDuration, compareDateTime, fromClock, isDateTime, isDateTimeType, isDuration, kindOf, parseIso, resolveFigurative } from './datetime';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { ProgramResolver } from './sources';
-import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DATE_OVERFLOW, STATUS_DIVIDE_BY_ZERO, incompatibleTypes, matchesStatus } from './errors';
+import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, STATUS_DATE_OVERFLOW, STATUS_DIVIDE_BY_ZERO, NotSupportedError, incompatibleTypes, matchesStatus } from './errors';
 
 // Signaux de contrôle : levés comme exceptions pour traverser les blocs imbriqués
 // jusqu'à la boucle (LEAVE/ITER) ou la procédure / le programme (RETURN) concerné.
@@ -32,6 +32,9 @@ const DEFAULT_MAX_ITERATIONS = 1_000_000;
 // Deux chaînes de longueurs différentes se comparent comme si la plus courte
 // était complétée par des blancs : 'Dupont    ' = 'Dupont'
 function compare(left: any, right: any): number {
+  // Un indicateur se compare à un caractère comme '1' ou '0'
+  if (typeof left === 'boolean' && typeof right === 'string') left = left ? '1' : '0';
+  if (typeof right === 'boolean' && typeof left === 'string') right = right ? '1' : '0';
   if (typeof left === 'string' && typeof right === 'string') {
     const length = Math.max(left.length, right.length);
     left = left.padEnd(length, ' ');
@@ -44,6 +47,9 @@ function compare(left: any, right: any): number {
 const COMPARISONS: { [op: string]: (c: number) => boolean } = {
   '=': c => c === 0, '<>': c => c !== 0, '<': c => c < 0, '<=': c => c <= 0, '>': c => c > 0, '>=': c => c >= 0,
 };
+
+const isZeroOrBlank = (expr: ExpressionNode | undefined) =>
+  expr?.valueType === 'special' && /^\*(zero|blank)s?$/.test(expr.value);
 
 const involvesDateTime = (value: any) => isDateTime(value) || isDuration(value) || value instanceof FigurativeValue;
 
@@ -105,6 +111,7 @@ export class Interpreter {
   private maxIterations: number;
   private maxCallDepth: number;
   private iterations = 0;
+  private returnTypes: (DataTypeNode | undefined)[] = [];
   private procedures = new Map<string, ProcedureNode>();
   private prototypes = new Map<string, PrototypeNode>();
   private context: ExecutionContext;
@@ -255,16 +262,41 @@ export class Interpreter {
   }
 
   private executeVariableDeclaration(node: any): void {
-    this.runtime.declareVariable(node.name, this.initialValue(node.initialValue, node.dataType), node.dataType);
+    this.runtime.declareVariable(node.name, this.initialValue(node.initialValue, node.dataType, node.name), node.dataType);
   }
 
   // Valeur de INZ ; INZ(*SYS) et INZ(*JOB) lisent l'horloge (*JOB : date du jour, faute de travail IBM i)
-  private initialValue(expr: ExpressionNode | undefined, type: DataTypeNode): any {
+  private initialValue(expr: ExpressionNode | undefined, type: DataTypeNode, target: string): any {
     if (!expr) return defaultValue(type);
     if (expr.valueType === 'special' && (expr.value === '*sys' || expr.value === '*job') && isDateTimeType(type.typeName)) {
       return fromClock(type.typeName, this.runtime.now());
     }
-    return this.evaluate(expr);
+    return this.valueFor(expr, type, target);
+  }
+
+  // Valeur d'une expression destinée à une cible typée, écrite dans le code RPG : *ZEROS et *BLANKS
+  // prennent la longueur de la cible, puis le type de la valeur est contrôlé comme le fait le compilateur IBM i
+  private valueFor(expr: ExpressionNode, type: DataTypeNode | undefined, target: string): any {
+    let value: any;
+    if (type && !isDateTimeType(type.typeName) && isZeroOrBlank(expr)) {
+      value = this.zeroOrBlankFor(expr.value, type, target);
+    } else {
+      value = this.evaluate(expr);
+    }
+    checkAssignable(value, type, target);
+    return value;
+  }
+
+  private zeroOrBlankFor(name: string, type: DataTypeNode, target: string): any {
+    const zeros = name.startsWith('*zero');
+    switch (type.typeName) {
+      case 'char': return (zeros ? '0' : ' ').repeat(type.length ?? 1);
+      case 'int': case 'uns': case 'packed': case 'zoned':
+        if (!zeros) throw incompatibleTypes(`Affectation de ${name.toUpperCase()} à ${target} ${describeType(type)}`);
+        return 0;
+      default:
+        throw new NotSupportedError(`${name.toUpperCase()} affecté à ${target} ${describeType(type)}`);
+    }
   }
 
   private executeConstantDeclaration(node: any): void {
@@ -275,7 +307,7 @@ export class Interpreter {
     this.runtime.declareDataStructure(node.name, node.fields.map((field: any) => ({
       name: field.name,
       type: field.dataType,
-      value: this.initialValue(field.initialValue, field.dataType),
+      value: this.initialValue(field.initialValue, field.dataType, `${node.name}.${field.name}`),
     })), node.isQualified);
   }
 
@@ -298,13 +330,14 @@ export class Interpreter {
       throw new Error(`Profondeur de récursion maximale (${this.maxCallDepth}) atteinte dans ${proc.name}`);
     }
 
-    const args = argExprs.map(arg => this.evaluate(arg));
+    const args = argExprs.map((arg, i) => this.valueFor(arg, params[i].dataType, params[i].name));
     const byReference = params.map((p, i) =>
       i < argExprs.length && !p.isConst && !p.byValue && argExprs[i].valueType === 'identifier');
 
     let returnValue: any;
     const outValues: any[] = [];
     this.runtime.pushFrame(proc.name);
+    this.returnTypes.push(proc.returnType);
     try {
       params.forEach((p, i) => this.runtime.declareVariable(p.name, args[i], p.dataType));
       try {
@@ -319,6 +352,7 @@ export class Interpreter {
         if (byReference[i]) outValues[i] = this.runtime.getVariable(p.name);
       });
     } finally {
+      this.returnTypes.pop();
       this.runtime.popFrame();
     }
 
@@ -369,7 +403,7 @@ export class Interpreter {
     this.checkArgumentCount(proto.name, proto.parameters, argExprs.length);
     this.checkConstantArguments(proto.parameters, argExprs);
 
-    const args = argExprs.map((arg, i) => coerce(this.evaluate(arg), proto.parameters[i].dataType, proto.parameters[i].name));
+    const args = argExprs.map((arg, i) => coerce(this.valueFor(arg, proto.parameters[i].dataType, proto.parameters[i].name), proto.parameters[i].dataType, proto.parameters[i].name));
     const describe = (v: any) => (typeof v === 'string' ? `'${v.trimEnd()}'` : String(v));
     const callText = proto.parameters
       .slice(0, args.length)
@@ -462,7 +496,7 @@ export class Interpreter {
   }
 
   private executeAssignment(node: any): void {
-    this.assignTo(node.variable, this.evaluate(node.value));
+    this.assignTo(node.variable, this.valueFor(node.value, this.runtime.getType(node.variable), node.variable));
   }
 
   private assignTo(variable: string, value: any): void {
@@ -481,7 +515,7 @@ export class Interpreter {
   // Évalue une condition (IF, WHEN, DOW, DOU) : une date, une heure ou un timestamp n'est pas un indicateur
   private condition(expr: ExpressionNode): any {
     const value = this.evaluate(expr);
-    if (isDateTime(value) || isDuration(value) || value instanceof FigurativeValue) {
+    if (typeof value !== 'boolean') {
       throw incompatibleTypes(`Condition ${describeValue(value)}`);
     }
     return value;
@@ -515,10 +549,10 @@ export class Interpreter {
     }
   }
 
-  // Borne d'une boucle FOR : ni date, ni durée, ni constante figurative
+  // Variable ou borne d'une boucle FOR : un nombre
   private numericBound(expr: ExpressionNode, what: string): any {
     const value = this.evaluate(expr);
-    if (isDateTime(value) || isDuration(value) || value instanceof FigurativeValue) {
+    if (typeof value !== 'number') {
       throw incompatibleTypes(`FOR, ${what} ${describeValue(value)}`);
     }
     return value;
@@ -608,7 +642,8 @@ export class Interpreter {
   }
 
   private executeReturn(node: any): never {
-    throw new ReturnSignal(node.value ? this.evaluate(node.value) : undefined);
+    const returnType = this.returnTypes[this.returnTypes.length - 1];
+    throw new ReturnSignal(node.value ? this.valueFor(node.value, returnType, 'valeur de retour') : undefined);
   }
 
   private executeMonitor(node: any): void {
@@ -733,35 +768,78 @@ export class Interpreter {
     throw incompatibleTypes(`${name.toUpperCase()}(${describeValue(date)})`);
   }
 
+  // *ZEROS / *BLANKS face à une autre valeur : ils prennent sa nature (texte : blancs ou zéros à sa longueur)
+  private zeroOrBlankLike(name: string, other: any): any {
+    const zeros = name.startsWith('*zero');
+    if (typeof other === 'string') return zeros ? '0'.repeat(other.length) : '';
+    if (typeof other === 'number') {
+      if (!zeros) throw incompatibleTypes(`Comparaison de ${name.toUpperCase()} avec ${describeValue(other)}`);
+      return 0;
+    }
+    if (typeof other === 'boolean') throw new NotSupportedError(`Comparaison de ${name.toUpperCase()} avec un indicateur`);
+    return zeros ? 0 : '';
+  }
+
   private executeOperator(expr: ExpressionNode): any {
-    const left = expr.left ? this.evaluate(expr.left) : undefined;
-    const right = expr.right ? this.evaluate(expr.right) : undefined;
+    const op = expr.operator!;
+    let left: any;
+    let right: any;
+    if (COMPARISONS[op] && isZeroOrBlank(expr.left) !== isZeroOrBlank(expr.right)) {
+      if (isZeroOrBlank(expr.left)) {
+        right = this.evaluate(expr.right!);
+        left = this.zeroOrBlankLike(expr.left!.value, right);
+      } else {
+        left = this.evaluate(expr.left!);
+        right = this.zeroOrBlankLike(expr.right!.value, left);
+      }
+    } else {
+      left = expr.left ? this.evaluate(expr.left) : undefined;
+      right = expr.right ? this.evaluate(expr.right) : undefined;
+    }
     if (involvesDateTime(left) || involvesDateTime(right)) {
-      return dateTimeOperation(expr.operator!, left, right);
+      return dateTimeOperation(op, left, right);
     }
 
-    switch (expr.operator) {
-      case '+': 
-        if (typeof left === 'string' || typeof right === 'string') {
-          return String(left) + String(right);
+    const refuse = () => incompatibleTypes(
+      op === 'neg' || op === 'not'
+        ? `Opérateur ${op === 'neg' ? '-' : 'NOT'} appliqué à ${describeValue(left)}`
+        : `Opérateur ${op.toUpperCase()} entre ${describeValue(left)} et ${describeValue(right)}`);
+    const isNum = (v: any) => typeof v === 'number';
+    const isText = (v: any) => typeof v === 'string';
+    const isInd = (v: any) => typeof v === 'boolean';
+    const unknown = left === null || left === undefined || (op !== 'neg' && op !== 'not' && (right === null || right === undefined));
+
+    switch (op) {
+      case '+':
+        if (isNum(left) && isNum(right)) return left + right;
+        if (isText(left) && isText(right)) return left + right;
+        if ((isText(left) && isInd(right)) || (isInd(left) && isText(right))) {
+          throw new NotSupportedError('Indicateur dans une concaténation');
         }
+        if (!unknown) throw refuse();
         return left + right;
-      case '-': return left - right;
-      case '*': return left * right;
-      case '/': 
+      case '-': case '*': case '/': case '**':
+        if (!unknown && !(isNum(left) && isNum(right))) throw refuse();
+        if (op === '-') return left - right;
+        if (op === '*') return left * right;
+        if (op === '**') return Math.pow(left, right);
         if (right === 0) throw new RpgError(STATUS_DIVIDE_BY_ZERO, 'Division par zéro (RNX0102)');
         return left / right;
-      case '**': return Math.pow(left, right);
-      case '=': return compare(left, right) === 0;
-      case '<>': return compare(left, right) !== 0;
-      case '<': return compare(left, right) < 0;
-      case '<=': return compare(left, right) <= 0;
-      case '>': return compare(left, right) > 0;
-      case '>=': return compare(left, right) >= 0;
-      case 'and': return left && right;
-      case 'or': return left || right;
-      case 'not': return !left;
-      case 'neg': return -left;
+      case '=': case '<>': case '<': case '<=': case '>': case '>=': {
+        const comparable = (isNum(left) && isNum(right)) || (isText(left) && isText(right)) || (isInd(left) && isInd(right))
+          || (isInd(left) && isText(right)) || (isText(left) && isInd(right));
+        if (!unknown && !comparable) throw refuse();
+        return COMPARISONS[op](compare(left, right));
+      }
+      case 'and': case 'or':
+        if (!unknown && !(isInd(left) && isInd(right))) throw refuse();
+        return op === 'and' ? left && right : left || right;
+      case 'not':
+        if (!isInd(left)) throw refuse();
+        return !left;
+      case 'neg':
+        if (!isNum(left)) throw refuse();
+        return -left;
       default: throw new Error(`Opérateur non supporté: ${expr.operator}`);
     }
   }

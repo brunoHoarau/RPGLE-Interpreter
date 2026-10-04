@@ -124,7 +124,7 @@ test('une conversion non numérique a le statut 00105', () => {
     dcl-s n int(10);
     dcl-s c char(5) inz('abc');
     monitor;
-      n = c;
+      n = %int(c);
     on-error 00105;
       dsply 'conversion';
     endmon;
