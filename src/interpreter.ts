@@ -2,7 +2,7 @@ import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, Par
 import { Runtime } from './runtime';
 import { ExecutionContext, MockCase, emptyContext } from './context';
 import { coerce, defaultValue, describeValue, formatChar } from './datatypes';
-import { FigurativeValue, compareDateTime, fromClock, isDateTime, isDateTimeType, kindOf, resolveFigurative } from './datetime';
+import { FigurativeValue, compareDateTime, fromClock, isDateTime, isDateTimeType, kindOf, parseIso, resolveFigurative } from './datetime';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { ProgramResolver } from './sources';
@@ -58,6 +58,14 @@ function dateTimeOperation(op: string, left: any, right: any): boolean {
   }
   const operands = right === undefined ? describeValue(left) : `${describeValue(left)} et ${describeValue(right)}`;
   throw incompatibleTypes(`Opération ${op.toUpperCase()} avec ${operands}`);
+}
+
+// Un bouchon JSON donne les dates, heures et timestamps en texte *ISO
+function fromMock(value: any, type: DataTypeNode | undefined, what: string): any {
+  if (!type || !isDateTimeType(type.typeName) || typeof value !== 'string') return value;
+  const parsed = parseIso(type.typeName, value);
+  if (!parsed) throw new Error(`${what} : '${value}' n'est pas une valeur ${type.typeName.toUpperCase()} *ISO valide`);
+  return parsed;
 }
 
 const DEFAULT_MAX_CALL_DEPTH = 256;
@@ -331,7 +339,9 @@ export class Interpreter {
       return index;
     };
     const sameValue = (actual: any, expected: any) =>
-      typeof actual === 'string' ? actual.trimEnd() === String(expected).trimEnd() : actual === expected;
+      typeof actual === 'string' ? actual.trimEnd() === String(expected).trimEnd()
+        : isDateTime(actual) ? String(actual) === String(expected)
+        : actual === expected;
 
     const matching = mock.calls.find((c: MockCase) =>
       Object.entries(c.when ?? {}).every(([paramName, expected]) => sameValue(args[paramIndex(paramName)], expected)));
@@ -352,9 +362,9 @@ export class Interpreter {
       if (!arg || arg.valueType !== 'identifier') {
         throw new Error(`Bouchon ${target} : le paramètre ${param.name} doit recevoir une variable pour être renvoyé`);
       }
-      this.assignTo(arg.value, coerce(value, param.dataType, param.name));
+      this.assignTo(arg.value, coerce(fromMock(value, param.dataType, `Bouchon ${target}`), param.dataType, param.name));
     }
-    return coerce(matching.return, proto.returnType, proto.name);
+    return coerce(fromMock(matching.return, proto.returnType, `Bouchon ${target}`), proto.returnType, proto.name);
   }
 
   // Exécute le source d'un programme appelé, avec ses propres variables globales.
@@ -494,6 +504,13 @@ export class Interpreter {
 
   // 🆕 MÉTHODE SQL AJOUTÉE
   private executeSQL(node: any): void {
+    // Variables hôtes date/heure : les dates en SQL font l'objet d'un incrément à venir
+    for (const [, name] of node.sql.matchAll(/:([A-Za-z_$#@][\w$#@]*(?:\.[\w$#@]+)?)/g)) {
+      const type = this.runtime.getType(name);
+      if (type && isDateTimeType(type.typeName)) {
+        throw new Error(`Variable hôte :${name} de type ${type.typeName.toUpperCase()} dans EXEC SQL : pas encore supporté par l'interpréteur`);
+      }
+    }
     const result = this.runtime.executeSQL(node.sql);
 
     // Mettre à jour les variables RPG standard

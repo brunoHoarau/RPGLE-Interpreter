@@ -1,7 +1,7 @@
 // Dates, heures et timestamps (socle *ISO) : comportement attendu sur IBM i
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parse, run } = require('./helpers');
+const { parse, run, customersContext } = require('./helpers');
 
 const NOT_SUPPORTED = /pas encore support/i;
 const INCOMPATIBLE = /types incompatibles/i;
@@ -262,4 +262,50 @@ test('%CHAR(x : *ISO) donne le texte ISO', () => {
   `);
   assert.deepEqual(out, ['Le 2026-10-04 a 13.45.00']);
   assert.throws(() => run(`dcl-s n int(5); dsply %char(n : *iso);`), INCOMPATIBLE);
+});
+
+test('une variable hôte date dans EXEC SQL est refusée', () => {
+  assert.throws(() => run(`
+    dcl-s d date;
+    exec sql select date_creation into :d from customers where id = 1;
+  `, customersContext()), NOT_SUPPORTED);
+  assert.throws(() => run(`
+    dcl-s d date inz(D'2026-10-04');
+    exec sql update customers set city = 'X' where date_maj < :d;
+  `, customersContext()), NOT_SUPPORTED);
+});
+
+test('un littéral date dans EXEC SQL est refusé', () => {
+  assert.throws(() => parse(`exec sql update customers set city = 'X' where d < D'2026-10-04';`), NOT_SUPPORTED);
+});
+
+test('un bouchon reçoit et renvoie des dates en texte *ISO', () => {
+  const ctx = { tables: {}, files: {}, programs: {
+    ECHEANCE: { calls: [{ when: { depart: '2026-10-04' }, set: { fin: '2026-11-04' } }] },
+    DERNIER: { calls: [{ return: '2026-12-31' }] },
+  } };
+  const out = run(`
+    dcl-pr echeance extpgm('ECHEANCE');
+      depart date const;
+      fin date;
+    end-pr;
+    dcl-pr dernier date extproc('DERNIER');
+    end-pr;
+    dcl-s fin date;
+    echeance(D'2026-10-04' : fin);
+    dsply fin;
+    dsply %char(dernier());
+  `, ctx);
+  assert.deepEqual(out, ['2026-11-04', '2026-12-31']);
+});
+
+test('un bouchon qui renvoie une date invalide est une erreur claire', () => {
+  const ctx = { tables: {}, files: {}, programs: { ECHEANCE: { calls: [{ set: { fin: '04/11/2026' } }] } } };
+  assert.throws(() => run(`
+    dcl-pr echeance extpgm('ECHEANCE');
+      fin date;
+    end-pr;
+    dcl-s fin date;
+    echeance(fin);
+  `, ctx), /ECHEANCE.*'04\/11\/2026'.*DATE \*ISO/);
 });

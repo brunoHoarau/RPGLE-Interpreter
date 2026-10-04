@@ -616,6 +616,9 @@ export class Parser {
 
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
         const token = this.advance();
+        if (DATETIME_LITERALS.has(token.type)) {
+          throw unsupported('Un littéral date ou heure dans EXEC SQL', token);
+        }
 
         // 🔥 CORRECTION DE LA LOGIQUE :
         // - noSpaceBefore : le token ACTUEL doit-il être collé au précédent ?
