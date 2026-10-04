@@ -39,6 +39,18 @@ type Condition =
 // Mots qui ouvrent une construction SQL hors périmètre (jamais pris pour une colonne inconnue)
 const RESERVED_SQL_WORDS = new Set(['CURRENT', 'CASE', 'CAST', 'SELECT', 'DEFAULT', 'DATE', 'TIME', 'TIMESTAMP', 'USER', 'SESSION_USER', 'SYSTEM_USER']);
 
+// CURRENT_DATE, CURRENT_TIMESTAMP, CURRENT_USER, CURRENT DATE... : jamais pris pour une colonne
+const isReservedSqlWord = (upper: string) => RESERVED_SQL_WORDS.has(upper) || upper.startsWith('CURRENT_');
+
+// Erreur SQL ordinaire avec son SQLCOD et son SQLSTATE (le programme continue)
+class SqlError extends Error {
+  constructor(message: string, public readonly sqlCode: number, public readonly sqlState: string) {
+    super(message);
+  }
+}
+
+const HOST_NAME = /^[A-Za-z_$#@][\w$#@]*(?:\.[\w$#@]+)?$/;
+
 export class SQLEngine {
   private tables: { [name: string]: TableDefinition };
 
@@ -48,31 +60,30 @@ export class SQLEngine {
 
   // Point d'entrée principal
   execute(sql: string, hostVariables: HostVariables): SQLResult {
+    // Un commentaire SQL ne serait pas interprété : refusé plutôt que mal compris
+    if (sql.split(/('(?:[^']|'')*')/).some((part, i) => i % 2 === 0 && /--|\/\*/.test(part))) {
+      throw new NotSupportedError('Commentaire dans une instruction SQL');
+    }
     const normalized = this.normalizeWhitespace(sql);
-    const upperSql = normalized.toUpperCase();
+    const verb = (normalized.match(/^\w+/)?.[0] ?? '').toUpperCase();
 
     try {
-      if (upperSql.startsWith('SELECT')) {
-        return this.executeSelect(normalized, hostVariables);
+      switch (verb) {
+        case 'SELECT': return this.executeSelect(normalized, hostVariables);
+        case 'INSERT': return this.executeInsert(normalized, hostVariables);
+        case 'UPDATE': return this.executeUpdate(normalized, hostVariables);
+        case 'DELETE': return this.executeDelete(normalized, hostVariables);
       }
-      if (upperSql.startsWith('INSERT')) {
-        return this.executeInsert(normalized, hostVariables);
-      }
-      if (upperSql.startsWith('UPDATE')) {
-        return this.executeUpdate(normalized, hostVariables);
-      }
-      if (upperSql.startsWith('DELETE')) {
-        return this.executeDelete(normalized, hostVariables);
-      }
-      throw new Error(`Type de requête SQL non supporté: ${normalized.split(' ')[0]}`);
+      // DECLARE CURSOR, OPEN, FETCH, CLOSE, SET, VALUES, COMMIT, CALL, WITH... : le programme s'arrête
+      throw new NotSupportedError(`Instruction SQL ${verb || normalized}`);
     } catch (error: any) {
       // Un refus « pas encore supporté » arrête le programme, il n'est pas une erreur SQL
       if (error instanceof NotSupportedError) throw error;
       return {
         rows: [],
         rowCount: 0,
-        sqlCode: -1,
-        sqlState: 'HY000',
+        sqlCode: error instanceof SqlError ? error.sqlCode : -1,
+        sqlState: error instanceof SqlError ? error.sqlState : 'HY000',
         message: error.message,
       };
     }
@@ -80,49 +91,57 @@ export class SQLEngine {
 
   // === SELECT ===
   private executeSelect(sql: string, hostVars: HostVariables): SQLResult {
-    // 1. Trouver la table
-    const fromMatch = sql.match(/\bFROM\s+(\w+)/i);
-    if (!fromMatch) {
-      throw new Error('FROM manquant dans le SELECT');
-    }
-    const table = this.getTable(fromMatch[1]);
+    // 1. Découpe : SELECT liste [INTO variables] FROM table [WHERE ...]
+    const fromAt = this.findTopLevelWord(sql, 'FROM');
+    if (fromAt < 0) throw new NotSupportedError('SELECT sans FROM');
+    const intoAt = this.findTopLevelWord(sql, 'INTO');
+    if (intoAt > fromAt) throw new NotSupportedError('INTO après FROM');
+    const listText = sql.slice(6, intoAt < 0 ? fromAt : intoAt).trim();
+    const intoText = intoAt < 0 ? '' : sql.slice(intoAt + 4, fromAt).trim();
+    const after = sql.slice(fromAt + 4).trim().match(/^(\w+)\s*(.*)$/);
+    if (!after) throw new NotSupportedError(`Clause FROM '${sql.slice(fromAt + 4).trim()}'`);
+    const tail = after[2];
+    if (tail !== '' && !/^WHERE\s/i.test(tail)) throw new NotSupportedError(`Clause SELECT '${tail}'`);
 
-    // 2. Filtrage WHERE
+    // La liste ne contient que * ou des colonnes ; INTO que des variables hôtes sans indicateur
+    const items = this.splitTopLevel(listText, ',').map(c => c.trim().toUpperCase());
+    for (const item of items) {
+      if (item !== '*' && !/^\w+$/.test(item)) throw new NotSupportedError(`Liste de SELECT '${item}'`);
+    }
+    if (items.includes('*') && items.length > 1) throw new NotSupportedError(`Liste de SELECT '${listText}'`);
+    const targets = intoAt < 0 ? [] : this.splitTopLevel(intoText, ',').map(v => v.trim());
+    for (const target of targets) {
+      if (!target.startsWith(':') || !HOST_NAME.test(target.slice(1))) throw new NotSupportedError(`INTO '${target}'`);
+    }
+
+    // 2. Table et filtrage WHERE
+    const table = this.getTable(after[1]);
     let rows = [...table.data];
-    const whereMatch = sql.match(/\bWHERE\s+(.+?)(?:\s+ORDER|\s+GROUP|\s+LIMIT|\s+FOR|\s*$)/i);
-    if (whereMatch) {
-      const matches = this.compileWhere(whereMatch[1], table, hostVars);
-      rows = rows.filter(matches);
+    if (tail !== '') {
+      rows = rows.filter(this.compileWhere(tail.slice(5), table, hostVars));
     }
 
-    // 3. Gestion INTO
-    const intoMatch = sql.match(/\bINTO\s+(.+?)\s+FROM\b/i);
-    if (intoMatch && rows.length > 0) {
+    // 3. Gestion INTO (la première ligne)
+    if (intoAt >= 0 && rows.length > 0) {
       const firstRow = rows[0];
+      const selectedColumns = items[0] === '*' ? Object.keys(firstRow).map(k => k.toUpperCase()) : items;
 
-      // A. Trouver les colonnes sélectionnées
-      const selectMatch = sql.match(/SELECT\s+(.+?)\s+(?:INTO|FROM)\b/i);
-      let selectedColumns: string[];
-      if (selectMatch && selectMatch[1].trim() !== '*') {
-        selectedColumns = selectMatch[1].split(',').map(c => c.trim().toUpperCase());
-      } else {
-        selectedColumns = Object.keys(firstRow);
-      }
-
-      // B. Trouver les variables hôtes
-      const hostVarsInInto = intoMatch[1].match(/:\w+/g)?.map(v => v.substring(1).toLowerCase()) || [];
-
-      // C. Mapper colonne -> variable hôte
-      hostVarsInInto.forEach((varName, idx) => {
-        if (idx < selectedColumns.length) {
-          const targetCol = selectedColumns[idx];
-          const actualCol = Object.keys(firstRow).find(k => k.toUpperCase() === targetCol);
-          if (actualCol === undefined) {
-            throw new Error(`Colonne inconnue: ${targetCol}`);
-          }
-          hostVars.set(varName, firstRow[actualCol]);
+      // Mapper colonne -> variable hôte ; une valeur NULL sans indicateur laisse la variable inchangée (SQLCOD -305)
+      let nullColumn: string | undefined;
+      targets.forEach((target, idx) => {
+        if (idx >= selectedColumns.length) return;
+        const targetCol = selectedColumns[idx];
+        const actualCol = Object.keys(firstRow).find(k => k.toUpperCase() === targetCol);
+        if (actualCol === undefined) {
+          throw new Error(`Colonne inconnue: ${targetCol}`);
         }
+        const value = firstRow[actualCol];
+        if (value === null || value === undefined) nullColumn ??= targetCol;
+        else hostVars.set(target.slice(1).toLowerCase(), value);
       });
+      if (nullColumn !== undefined) {
+        throw new SqlError(`Valeur NULL de ${nullColumn} sans variable indicatrice`, -305, '22002');
+      }
     }
 
     return this.resultFor(rows, rows.length);
@@ -131,12 +150,12 @@ export class SQLEngine {
   // === INSERT ===
   private executeInsert(sql: string, hostVars: HostVariables): SQLResult {
     const match = sql.match(/^INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(/i);
-    if (!match) throw new Error('Syntaxe INSERT invalide');
+    if (!match) throw new NotSupportedError(`INSERT '${sql}'`);
 
     const table = this.getTable(match[1]);
     const columns = match[2].split(',').map(c => c.trim().toUpperCase());
     const close = this.findClosingParen(sql, match[0].length);
-    if (close < 0 || sql.slice(close + 1).trim() !== '') throw new Error('Syntaxe INSERT invalide');
+    if (close < 0 || sql.slice(close + 1).trim() !== '') throw new NotSupportedError(`INSERT '${sql}'`);
     const values = this.splitTopLevel(sql.slice(match[0].length, close), ',')
       .map(v => this.compileValue(v, null)({}, hostVars));
     this.checkColumns(table, columns, match[1].toUpperCase());
@@ -156,7 +175,7 @@ export class SQLEngine {
   // === UPDATE ===
   private executeUpdate(sql: string, hostVars: HostVariables): SQLResult {
     const head = sql.match(/^UPDATE\s+(\w+)\s+SET\s+/i);
-    if (!head) throw new Error('Syntaxe UPDATE invalide');
+    if (!head) throw new NotSupportedError(`UPDATE '${sql}'`);
 
     const table = this.getTable(head[1]);
     const rest = sql.slice(head[0].length);
@@ -188,8 +207,8 @@ export class SQLEngine {
 
   // === DELETE ===
   private executeDelete(sql: string, hostVars: HostVariables): SQLResult {
-    const match = sql.match(/DELETE\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?/i);
-    if (!match) throw new Error('Syntaxe DELETE invalide');
+    const match = sql.match(/^DELETE\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?$/i);
+    if (!match) throw new NotSupportedError(`DELETE '${sql}'`);
 
     const table = this.getTable(match[1]);
     const before = table.data.length;
@@ -417,7 +436,7 @@ export class SQLEngine {
           const upper = t.value.toUpperCase();
           if (upper === 'NULL') return () => null;
           // Fonction, CURRENT DATE, CASE... : pas une simple colonne
-          if (tokens[pos]?.kind === 'lparen' || RESERVED_SQL_WORDS.has(upper) || !columns) return unsupported();
+          if (tokens[pos]?.kind === 'lparen' || isReservedSqlWord(upper) || !columns) return unsupported();
           if (!columns.has(upper)) throw new Error(`Colonne inconnue: ${upper}`);
           return (row) => {
             const key = Object.keys(row).find(k => k.toUpperCase() === upper);
@@ -515,7 +534,7 @@ export class SQLEngine {
       return `'${t.value}'`;
     };
     const unsupported = (): never => {
-      throw new Error(`Clause WHERE non supportée près de ${describe(peek())} : ${clause}`);
+      throw new NotSupportedError(`Clause WHERE près de ${describe(peek())} : ${clause}`);
     };
 
     const parseOperand = (): Operand => {
@@ -531,8 +550,12 @@ export class SQLEngine {
       }
       if (t.kind === 'word' && !['AND', 'OR', 'NOT', 'IS'].includes(t.value.toUpperCase())) {
         pos++;
-        if (t.value.toUpperCase() === 'NULL') return { kind: 'literal', value: null };
         const name = t.value.toUpperCase();
+        if (name === 'NULL') return { kind: 'literal', value: null };
+        // Fonction, CURRENT DATE, CASE... : pas une simple colonne
+        if (peek()?.kind === 'lparen' || isReservedSqlWord(name)) {
+          throw new NotSupportedError(`Clause WHERE : '${t.value}' : ${clause}`);
+        }
         if (!knownColumns.has(name)) throw new Error(`Colonne inconnue: ${name}`);
         return { kind: 'column', name };
       }
@@ -621,7 +644,7 @@ export class SQLEngine {
       } else if ((m = rest.match(/^\d+(?:\.\d+)?/))) {
         tokens.push({ kind: 'number', value: Number(m[0]) });
         i += m[0].length;
-      } else if ((m = rest.match(/^:(\w+)/))) {
+      } else if ((m = rest.match(/^:([A-Za-z_$#@][\w$#@]*(?:\.[\w$#@]+)?)/))) {
         tokens.push({ kind: 'host', name: m[1] });
         i += m[0].length;
       } else if ((m = rest.match(/^(<=|>=|<>|!=|=|<|>)/))) {
@@ -637,7 +660,7 @@ export class SQLEngine {
         tokens.push({ kind: 'word', value: m[0] });
         i += m[0].length;
       } else {
-        throw new Error(`Caractère '${ch}' non supporté dans la clause WHERE : ${clause}`);
+        throw new NotSupportedError(`Caractère '${ch}' dans la clause WHERE : ${clause}`);
       }
     }
 

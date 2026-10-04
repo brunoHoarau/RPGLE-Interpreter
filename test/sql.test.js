@@ -4,13 +4,12 @@ const { run, customersContext } = require('./helpers');
 
 const names = ctx => ctx.tables.CUSTOMERS.data.map(r => r.NAME);
 
-test('une clause WHERE non supportée renvoie une erreur sans rien supprimer', () => {
+test('une clause WHERE non supportée arrête le programme sans rien supprimer', () => {
   const ctx = customersContext();
-  const out = run(`
+  assert.throws(() => run(`
     exec sql delete from customers where name like 'D%';
     dsply %char(sqlcod);
-  `, ctx);
-  assert.ok(Number(out[0]) < 0, `SQLCOD attendu négatif, reçu ${out[0]}`);
+  `, ctx), /pas encore support/i);
   assert.equal(ctx.tables.CUSTOMERS.data.length, 3);
 });
 

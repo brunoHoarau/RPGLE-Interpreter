@@ -194,9 +194,22 @@ export class Runtime {
 
   // Variables hôtes SQL résolues dans la portée courante
   private hostVariables(): HostVariables {
+    // :ds.champ désigne un champ de DS ; :nom une variable (ou un champ de DS non qualifiée)
+    const split = (name: string): [string, string] | undefined => {
+      const dot = name.indexOf('.');
+      return dot < 0 ? undefined : [name.slice(0, dot), name.slice(dot + 1)];
+    };
     return {
-      get: name => this.lookup(name),
-      set: (name, value) => this.setVariable(name, value),
+      get: name => {
+        const parts = split(name);
+        if (!parts) return this.lookup(name);
+        return this.lookup(parts[0]) === undefined ? undefined : this.getField(parts[0], parts[1]);
+      },
+      set: (name, value) => {
+        const parts = split(name);
+        if (parts) this.setField(parts[0], parts[1], value);
+        else this.setVariable(name, value);
+      },
     };
   }
 
