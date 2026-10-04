@@ -184,7 +184,7 @@ test('EVAL(H) est refusé tant que l\'arrondi n\'est pas supporté', () => {
   assert.throws(() => parse(`dcl-s n int(5); eval(h) n = 2.5;`), NOT_SUPPORTED);
 });
 
-test('DSPLY accepte encore *BLANK et une file d\'attente en paramètres', () => {
+test('DSPLY accepte une file de messages en 2e opérande', () => {
   assert.deepEqual(run(`dsply 'Fin' *joblog;`), ['Fin (File: *joblog)']);
 });
 

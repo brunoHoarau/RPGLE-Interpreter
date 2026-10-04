@@ -88,3 +88,79 @@ test('SQL : une vraie erreur SQL reste un SQLCOD négatif', () => {
   assert.ok(out.some(l => /SQLCOD=-1/.test(l)));
   assert.ok(out.some(l => /apres/.test(l)));
 });
+
+const READ_ONLY = /affectation refusée par le compilateur IBM i/i;
+
+test('affectation à une constante dcl-c refusée à l\'analyse', () => {
+  for (const src of [
+    `dcl-c TAUX 20; TAUX = 99;`,
+    `dcl-c TAUX 20; taux += 1;`,
+    `dcl-c TAUX 20; eval TAUX = 1;`,
+    `dcl-c I 1; for i = 1 to 3; endfor;`,
+    `dcl-c REP 'x'; dsply 'Q' '' rep;`,
+  ]) {
+    assert.throws(() => parse(src), READ_ONLY, src);
+  }
+});
+
+test('affectation à un paramètre CONST refusée à l\'analyse', () => {
+  assert.throws(() => parse(`
+    dcl-proc p;
+      dcl-pi *n;
+        montant packed(7:2) const;
+      end-pi;
+      montant = 0;
+    end-proc;`), READ_ONLY);
+});
+
+test('portée : une variable locale masque la constante, et le paramètre CONST est local', () => {
+  const out = run(`
+    dcl-c N 5;
+    p(3);
+    dsply %char(N);
+    dcl-proc p;
+      dcl-pi *n;
+        x int(10) const;
+      end-pi;
+      dcl-s n int(10);
+      n = x * 2;
+      dsply %char(n);
+    end-proc;
+    dcl-proc q;
+      dcl-s x int(10);
+      x = 1;
+    end-proc;
+  `);
+  assert.deepEqual(out, ['6', '5']);
+});
+
+test('une constante passée à un paramètre modifiable est refusée', () => {
+  assert.throws(() => run(`
+    dcl-c TAUX 20;
+    p(TAUX);
+    dcl-proc p;
+      dcl-pi *n;
+        t int(10);
+      end-pi;
+      t = 1;
+    end-proc;`), INCOMPATIBLE);
+  // CONST et VALUE restent acceptés
+  const out = run(`
+    dcl-c TAUX 20;
+    dsply %char(double(TAUX));
+    dcl-proc double;
+      dcl-pi *n int(10);
+        t int(10) const;
+      end-pi;
+      return t * 2;
+    end-proc;`);
+  assert.deepEqual(out, ['40']);
+});
+
+test('DSPLY : une réponse nommée comme un type est une variable', () => {
+  assert.deepEqual(run(`dcl-s date char(1); dsply 'Q' '' date; dsply date;`), ['Q', 'Y']);
+});
+
+test('DSPLY : une valeur spéciale ne peut pas être la réponse', () => {
+  assert.throws(() => parse(`dsply 'a' '' *ext;`), /réponse de DSPLY doit être une variable/i);
+});

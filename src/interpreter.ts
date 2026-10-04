@@ -293,6 +293,7 @@ export class Interpreter {
 
     const params = proc.parameters;
     this.checkArgumentCount(proc.name, params, argExprs.length);
+    this.checkConstantArguments(params, argExprs);
     if (this.runtime.callDepth >= this.maxCallDepth) {
       throw new Error(`Profondeur de récursion maximale (${this.maxCallDepth}) atteinte dans ${proc.name}`);
     }
@@ -336,6 +337,22 @@ export class Interpreter {
     return undefined;
   }
 
+  // Une constante DCL-C ne peut pas être passée à un paramètre par référence : le compilateur IBM i la refuse
+  private checkConstantArguments(params: ParameterNode[], argExprs: ExpressionNode[]): void {
+    argExprs.forEach((arg, i) => {
+      const param = params[i];
+      if (!param || param.isConst || param.byValue || arg.valueType !== 'identifier') return;
+      const name = String(arg.value);
+      if (this.runtime.hasVariable(name)) return;
+      try {
+        this.runtime.getConstant(name);
+      } catch {
+        return; // Ni variable ni constante : l'évaluation signalera l'erreur
+      }
+      throw incompatibleTypes(`Constante ${name} passée à un paramètre modifiable ${param.name}`);
+    });
+  }
+
   private checkArgumentCount(name: string, params: ParameterNode[], count: number): void {
     const required = params.filter(p => !p.options.includes('*nopass')).length;
     if (count < required || count > params.length) {
@@ -350,6 +367,7 @@ export class Interpreter {
     const target = proto.externalName.toUpperCase();
     const what = proto.kind === 'program' ? 'Programme' : 'Procédure externe';
     this.checkArgumentCount(proto.name, proto.parameters, argExprs.length);
+    this.checkConstantArguments(proto.parameters, argExprs);
 
     const args = argExprs.map((arg, i) => coerce(this.evaluate(arg), proto.parameters[i].dataType, proto.parameters[i].name));
     const describe = (v: any) => (typeof v === 'string' ? `'${v.trimEnd()}'` : String(v));
