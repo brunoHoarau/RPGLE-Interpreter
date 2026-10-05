@@ -113,6 +113,8 @@ interface Item { row: any; key: any[] }
 // Clé d'une ligne : colonnes et valeurs dont elle est tirée, génération du dernier tri qui contenait la ligne
 interface KeyEntry { columns: (string | undefined)[]; raw: any[]; key: any[]; sort: number }
 
+export interface ReadOptions { noLock?: boolean }
+
 export class NativeFile {
   private sequence = new WeakMap<object, number>();
   private nextSequence = 0;
@@ -129,6 +131,8 @@ export class NativeFile {
   private generation = 0;
   // Dernier enregistrement rendu (la position reste sur lui) et sa clé d'accès au moment de la lecture
   private last: Item | undefined;
+  // Clé d'accès complète du dernier enregistrement rendu (READE/READPE sans clé) ; effacée par une lecture en échec
+  private lastKey: any[] | undefined;
   // Enregistrement courant (UPDATE, DELETE) : dernière lecture réussie, ni mise à jour ni supprimée ni déverrouillée
   private current: object | undefined;
   // Opération depuis la dernière lecture après laquelle UPDATE/DELETE ont un comportement IBM i non vérifié
@@ -187,9 +191,10 @@ export class NativeFile {
     this.cursor = { side: 'before', at: 'start' };
     this.eofReached = undefined;
     this.last = undefined;
+    this.lastKey = undefined;
   }
 
-  read(): FileResult {
+  read(options: ReadOptions = {}): FileResult {
     this.checkPosition();
     this.checkCurrentKey();
     if (this.eofReached === 'read') {
@@ -199,14 +204,15 @@ export class NativeFile {
     const item = this.next();
     if (!item) {
       this.drop();
+      this.lastKey = undefined;
       this.cursor = { side: 'after', at: 'end' };
       this.eofReached = 'read';
       return { found: false, eof: true, equal: false };
     }
-    return this.readOn(item);
+    return this.readOn(item, options.noLock);
   }
 
-  readp(): FileResult {
+  readp(options: ReadOptions = {}): FileResult {
     this.checkPosition();
     this.checkCurrentKey();
     if (this.eofReached === 'readp') {
@@ -216,47 +222,49 @@ export class NativeFile {
     const item = this.previous();
     if (!item) {
       this.drop();
+      this.lastKey = undefined;
       this.cursor = { side: 'before', at: 'start' };
       this.eofReached = 'readp';
       return { found: false, eof: true, equal: false };
     }
-    return this.readOn(item);
+    return this.readOn(item, options.noLock);
   }
 
-  reade(key: any[]): FileResult {
-    const wanted = this.searchKey(key);
+  reade(key: any[] | 'last', options: ReadOptions = {}): FileResult {
+    const wanted = this.wantedKey(key);
     this.checkPosition();
     this.checkCurrentKey();
     this.eofReached = undefined;
     const item = this.next();
     if (!item || this.compare(item.key, wanted) !== 0) return this.mismatch();
-    return this.readOn(item);
+    return this.readOn(item, options.noLock);
   }
 
-  readpe(key: any[]): FileResult {
-    const wanted = this.searchKey(key);
+  readpe(key: any[] | 'last', options: ReadOptions = {}): FileResult {
+    const wanted = this.wantedKey(key);
     this.checkPosition();
     this.checkCurrentKey();
     this.eofReached = undefined;
     const item = this.previous();
     if (!item || this.compare(item.key, wanted) !== 0) return this.mismatch();
-    return this.readOn(item);
+    return this.readOn(item, options.noLock);
   }
 
-  chain(key: any[]): FileResult {
+  chain(key: any[], options: ReadOptions = {}): FileResult {
     const wanted = this.searchKey(key);
     this.eofReached = undefined;
     const item = this.ordered().find(it => this.compare(it.key, wanted) === 0);
     if (!item) {
       this.drop();
+      this.lastKey = undefined;
       this.cursor = { side: 'lost' };
       return { found: false, eof: false, equal: false };
     }
-    return this.readOn(item);
+    return this.readOn(item, options.noLock);
   }
 
   // Fichier sans clé : lecture par rang d'arrivée (1 = premier)
-  chainRrn(n: any): FileResult {
+  chainRrn(n: any, options: ReadOptions = {}): FileResult {
     if (this.keyed) throw new Error(`Fichier ${this.name} avec clé : CHAIN par numéro d'enregistrement impossible`);
     if (typeof n !== 'number') {
       throw incompatibleTypes(`Numéro d'enregistrement ${typeof n === 'string' ? `'${n}'` : String(n)} pour le fichier ${this.name}`);
@@ -273,10 +281,11 @@ export class NativeFile {
     const row = rows[n - 1];
     if (!row) {
       this.drop();
+      this.lastKey = undefined;
       this.cursor = { side: 'lost' };
       return { found: false, eof: false, equal: false };
     }
-    return this.readOn(items.find(it => it.row === row)!);
+    return this.readOn(items.find(it => it.row === row)!, options.noLock);
   }
 
   setll(key: any[] | FileSpecial): FileResult {
@@ -421,15 +430,21 @@ export class NativeFile {
   // --- Interne ---
 
   // Lecture réussie : le fichier est positionné sur l'enregistrement lu, qui devient l'enregistrement courant
-  private readOn(item: Item): FileResult {
-    this.take(item.row);
+  private readOn(item: Item, noLock = false): FileResult {
+    this.take(item.row, noLock);
+    this.lastKey = item.key.slice(0, this.keys.length);   // sans le numéro d'ordre ajouté en fin de clé
     this.cursor = { side: 'on', at: item.key };
     this.last = item;
     return { record: item.row, found: true, eof: false, equal: false };
   }
 
   // Fichier en mise à jour : verrouille l'enregistrement (refusé s'il est tenu par une autre ouverture)
-  private take(row: object): void {
+  // noLock (indicateur N) : pas de verrou ni d'enregistrement courant ; le verrou précédent est libéré comme à toute lecture
+  private take(row: object, noLock = false): void {
+    if (noLock) {
+      this.drop();
+      return;
+    }
     if (this.options.updatable) {
       this.checkLock(row);
       if (this.held !== undefined && this.held !== row) this.unlockHeld();
@@ -498,8 +513,18 @@ export class NativeFile {
   }
 
   // READE/READPE sans correspondance : %EOF, position IBM i non vérifiée
+  // Clé de READE/READPE : explicite, ou clé complète du dernier enregistrement rendu
+  private wantedKey(key: any[] | 'last'): any[] {
+    if (key !== 'last') return this.searchKey(key);
+    if (this.lastKey === undefined) {
+      throw new NotSupportedError(`READE/READPE sans clé de ${this.name} sans lecture préalable (comportement IBM i non vérifié)`);
+    }
+    return this.lastKey;
+  }
+
   private mismatch(): FileResult {
     this.drop();
+    this.lastKey = undefined;
     this.cursor = { side: 'lost' };
     return { found: false, eof: true, equal: false };
   }

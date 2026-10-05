@@ -592,3 +592,30 @@ test('duplicateKey : première clé unique en double dans les données', () => {
   assert.deepEqual(file.duplicateKey(), { NUMCLI: 1 });
   assert.equal(new f.NativeFile('CL', 'CLF', WF, [], wrows(), { uniqueKeys: ['NUMCLI'] }).duplicateKey(), undefined);
 });
+
+// --- Incrément 3a ---
+
+test('READE sans clé : clé complète du dernier enregistrement lu', () => {
+  const F3 = [{ name: 'NUMCLI', type: t('packed', 7, 0) }, { name: 'LIB', type: t('char', 5) }];
+  const rows = [{ NUMCLI: 1, LIB: 'a' }, { NUMCLI: 1, LIB: 'b' }, { NUMCLI: 2, LIB: 'c' }];
+  const file = new f.NativeFile('CDE', 'CDEF', F3, ['NUMCLI'], rows);
+  assert.throws(() => file.reade('last'), NOT_SUPPORTED);
+  assert.equal(file.chain([1]).record.LIB, 'a');
+  assert.equal(file.reade('last').record.LIB, 'b');
+  assert.equal(file.reade('last').eof, true);
+  file.setll('end');
+  assert.equal(file.readp().record.LIB, 'c');
+  assert.equal(file.readpe('last').eof, true);
+});
+
+test('lecture sans verrou : pas d\'enregistrement courant, pas de verrou', () => {
+  const rows = wrows();
+  const locks = new WeakMap();
+  const a = wopen(rows, { locks });
+  const b = wopen(rows, { locks });
+  assert.equal(a.chain([2], { noLock: true }).record.NOM, 'B');
+  assert.equal(a.update({ NUMCLI: 2, NOM: 'X' }).failure, 'noCurrent');
+  assert.equal(b.chain([2]).record.NOM, 'B');
+  assert.equal(a.read({ noLock: true }).record.NOM, 'C');
+  assert.equal(a.reade('last', { noLock: true }).eof, true);
+});
