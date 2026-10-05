@@ -2,6 +2,7 @@ import { ExecutionContext, TableDefinition } from './context';
 import { isDataStructure } from './datatypes';
 import { NotSupportedError } from './errors';
 import { parseFieldType } from './files';
+import { DataTypeNode } from './types';
 
 // Valeur par défaut IBM i d'une colonne omise dans INSERT (numériques : 0)
 const SQL_DEFAULTS: { [typeName: string]: any } = {
@@ -21,6 +22,7 @@ export interface SQLResult {
 export interface HostVariables {
   get(name: string): any;
   set(name: string, value: any): void;
+  type?(name: string): DataTypeNode | undefined;   // Type déclaré (un VARCHAR garde ses blancs de fin)
 }
 
 // === Clause WHERE : tokens et arbre ===
@@ -196,6 +198,7 @@ export class SQLEngine {
       if (type) newRow[name] = SQL_DEFAULTS[type.typeName] ?? 0;
     }
     columns.forEach((col, idx) => newRow[col] = values[idx]);
+    this.checkUnique(table, match[1].toUpperCase(), [...table.data, newRow], new Set([newRow]));
 
     table.data.push(newRow);
     table.revision = (table.revision ?? 0) + 1;
@@ -226,10 +229,26 @@ export class SQLEngine {
       return { col, value: this.compileValue(eq[1], known) };
     });
     this.checkDuplicates(assignments.map(a => a.col));
+    if (targets.some(row => table.locks?.has(row))) {
+      throw new NotSupportedError("UPDATE SQL d'un enregistrement verrouillé par une lecture native");
+    }
+    // Toutes les expressions lisent la ligne avant mise à jour ; rien n'est modifié si une clé unique serait en double
+    const changes = new Map<any, any[]>();
     for (const row of targets) {
-      // Toutes les expressions lisent la ligne avant mise à jour
       const before = { ...row };
-      const computed = assignments.map(a => a.value(before, hostVars));
+      changes.set(row, assignments.map(a => a.value(before, hostVars)));
+    }
+    const written = new Set<any>();
+    const after = (row: any) => {
+      const computed = changes.get(row);
+      if (!computed) return row;
+      const updated = { ...row };
+      assignments.forEach((a, i) => { updated[a.col] = computed[i]; });
+      written.add(updated);
+      return updated;
+    };
+    this.checkUnique(table, head[1].toUpperCase(), table.data.map(after), written);
+    for (const [row, computed] of changes) {
       assignments.forEach((a, i) => { row[a.col] = computed[i]; });
     }
     table.revision = (table.revision ?? 0) + 1;
@@ -244,10 +263,13 @@ export class SQLEngine {
 
     const table = this.getTable(match[1]);
     const before = table.data.length;
+    const locked = () => new NotSupportedError("DELETE SQL d'un enregistrement verrouillé par une lecture native");
     if (match[2]) {
       const matches = this.compileWhere(match[2], table, hostVars);
+      if (table.data.some((row: any) => table.locks?.has(row) && matches(row))) throw locked();
       table.data = table.data.filter((row: any) => !matches(row));
     } else {
+      if (table.data.some((row: any) => table.locks?.has(row))) throw locked();
       table.data = [];
     }
     if (table.data.length < before) table.deletedRows = true;
@@ -273,6 +295,34 @@ export class SQLEngine {
     return table;
   }
 
+  // Table à clé unique ("unique" de tables.json) : deux lignes de même clé → SQLCOD -803 (rien n'est modifié)
+  private checkUnique(table: TableDefinition, name: string, rows: any[], written: Set<any>): void {
+    const keys = table.keys;
+    if (!table.unique || !keys || keys.length === 0) return;
+    const types = keys.map(key => {
+      const column = table.columns.find(c => c.name.toUpperCase() === key);
+      return column ? parseFieldType(column.type)?.typeName : undefined;
+    });
+    const valueOf = (row: any, key: string, i: number) => {
+      const column = key in row ? key : Object.keys(row).find(c => c.toUpperCase() === key);
+      const value = column === undefined ? undefined : row[column];
+      const numeric = ['int', 'uns', 'packed', 'zoned'].includes(types[i] ?? '');
+      if (typeof value === 'number') return Number(value.toPrecision(15));
+      if (numeric && typeof value === 'string' && /^[+-]?\d+(\.\d+)?$/.test(value)) return Number(Number(value).toPrecision(15));
+      if (typeof value === 'string') return value.trimEnd();
+      return value === undefined || value === null ? value : String(value);
+    };
+    // Seules les lignes écrites par l'instruction sont contrôlées contre toutes les autres
+    const count = new Map<string, number>();
+    const keyOf = rows.map(row => JSON.stringify(keys.map((k, i) => valueOf(row, k, i))));
+    for (const key of keyOf) count.set(key, (count.get(key) ?? 0) + 1);
+    const at = rows.findIndex((row, i) => written.has(row) && count.get(keyOf[i])! > 1);
+    if (at >= 0) {
+      const shown = keys.map((k, i) => `${k} = ${String(valueOf(rows[at], k, i))}`).join(', ');
+      throw new SqlError(`Clé en double dans la table ${name} (${shown})`, -803, '23505');
+    }
+  }
+
   private resultFor(rows: any[], count: number): SQLResult {
     return count > 0
       ? { rows, rowCount: count, sqlCode: 0, sqlState: '00000' }
@@ -283,8 +333,9 @@ export class SQLEngine {
   private getHostVariable(name: string, hostVars: HostVariables): any {
     const value = hostVars.get(name.toLowerCase());
     if (value === undefined) throw new Error(`Variable hôte non déclarée: :${name}`);
-    // Les blancs de remplissage d'un char RPG ne font pas partie de la donnée
-    return typeof value === 'string' ? value.trimEnd() : value;
+    // Les blancs de remplissage d'un char RPG ne font pas partie de la donnée ; ceux d'un VARCHAR en font partie
+    if (typeof value !== 'string') return value;
+    return hostVars.type?.(name)?.typeName === 'varchar' ? value : value.trimEnd();
   }
 
   // === Expressions de valeur (SET, VALUES) ===

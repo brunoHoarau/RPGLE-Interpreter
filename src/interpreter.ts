@@ -1,7 +1,7 @@
 import { ASTNode, ProgramNode, ExpressionNode, ProcedureNode, PrototypeNode, ParameterNode, DataTypeNode, FileDeclarationNode, FileOperationNode } from './types';
 import { NativeFile, FileResult, parseFieldType, fitsField } from './files';
 import { Runtime } from './runtime';
-import { ExecutionContext, MockCase, emptyContext } from './context';
+import { ExecutionContext, MockCase, TableDefinition, emptyContext } from './context';
 import { checkAssignable, coerce, defaultValue, describeType, describeValue, formatChar, isDataStructure, sameDeclaredType } from './datatypes';
 import { DateTimeValue, FigurativeValue, RpgDuration, addDuration, compareDateTime, fromClock, isDateTime, isDateTimeType, isDuration, kindOf, parseIso, resolveFigurative } from './datetime';
 import { Lexer } from './lexer';
@@ -117,6 +117,8 @@ interface FileState {
   eof: boolean | undefined;   // undefined : inconnu (après un CHAIN non trouvé)
   found: boolean;
   equal: boolean;
+  usage: FileDeclarationNode['usage'];
+  table: TableDefinition;     // Pour deletedRows après une suppression native
 }
 
 export class Interpreter {
@@ -189,6 +191,7 @@ export class Interpreter {
 
     // Fichiers : avant les autres déclarations, leurs zones sont des variables globales
     for (const declaration of ast.files ?? []) this.declareFile(declaration, parameters);
+    if ((ast.files ?? []).length > 0) this.checkFileChanges(ast.body);
 
     // Première passe : déclarer variables, constantes, procédures
     for (const node of ast.body) {
@@ -205,7 +208,7 @@ export class Interpreter {
       }
     }
 
-    // Deuxième passe : exécuter le code
+    // Deuxième passe : exécuter le code (les verrous de ce programme sont libérés à sa fin)
     try {
       for (const node of ast.body) {
         if (node.type !== 'VariableDeclaration' &&
@@ -219,6 +222,8 @@ export class Interpreter {
       if (e instanceof LeaveSignal) throw new Error('LEAVE en dehors d\'une boucle');
       if (e instanceof IterSignal) throw new Error('ITER en dehors d\'une boucle');
       if (!(e instanceof ReturnSignal)) throw e;
+    } finally {
+      for (const state of this.files.values()) state.file.release();
     }
 
     return parameters.map(p => this.runtime.lookup(p.name));
@@ -330,9 +335,18 @@ export class Interpreter {
     const format = (table.format ?? name + 'F').toUpperCase();
     // Le moteur SQL remplace table.data à chaque DELETE : la source est relue à chaque opération
     // Seul le moteur SQL modifie les données pendant l'exécution : il incrémente table.revision
+    // Les écritures natives font avancer la revision (changed) ; les verrous sont partagés par toutes les ouvertures
+    table.locks ??= new WeakMap();
     const file = new NativeFile(name, format, fields, node.keyed ? table.keys! : [], () => table.data,
-      { rowsDeleted: () => table.deletedRows === true, revision: () => table.revision ?? 0 });
-    const state: FileState = { file, open: !node.usropn, eof: false, found: false, equal: false };
+      { rowsDeleted: () => table.deletedRows === true, revision: () => table.revision ?? 0,
+        updatable: node.usage.update || node.usage.delete, uniqueKeys: table.unique ? table.keys : undefined,
+        locks: table.locks as WeakMap<object, NativeFile>, changed: () => { table.revision = (table.revision ?? 0) + 1; } });
+    const duplicate = file.duplicateKey();
+    if (duplicate) {
+      const shown = Object.entries(duplicate).map(([zone, value]) => `${zone} = ${typeof value === 'string' ? `'${value}'` : String(value)}`);
+      throw new Error(`Fichier ${name} : clé en double dans tables.json (${shown.join(', ')})`);
+    }
+    const state: FileState = { file, open: !node.usropn, eof: false, found: false, equal: false, usage: node.usage, table };
     this.files.set(name, state);
     this.files.set(format, state);
 
@@ -371,6 +385,11 @@ export class Interpreter {
     if (node.operation === 'close') {
       if (!state.open) throw new NotSupportedError(`CLOSE du fichier ${file.name} déjà fermé (comportement IBM i non vérifié)`);
       state.open = false;
+      file.release();
+      return;
+    }
+    if (node.operation === 'write' || node.operation === 'update' || node.operation === 'delete' || node.operation === 'unlock') {
+      this.executeFileChange(node, state);
       return;
     }
     if (!state.open) throw new RpgError(1211, `Fichier ${file.name} non ouvert (RNX1211)`);
@@ -414,6 +433,109 @@ export class Interpreter {
         state.eof = false;
         break;
     }
+  }
+
+  // Contrôles du compilateur pour WRITE, UPDATE, DELETE, UNLOCK : fichier ou format connu, nom du format
+  // pour WRITE/UPDATE, USAGE suffisante. Faits sur tout le programme avant l'exécution (formats connus
+  // seulement avec tables.json), y compris dans les branches et procédures jamais exécutées.
+  private checkFileChanges(node: any): void {
+    if (Array.isArray(node)) {
+      for (const child of node) this.checkFileChanges(child);
+      return;
+    }
+    if (node === null || typeof node !== 'object') return;
+    if (node.type === 'FileOperation' && ['write', 'update', 'delete', 'unlock'].includes(node.operation)) {
+      this.checkFileChange(node, this.fileState(node.file));
+    }
+    for (const value of Object.values(node)) {
+      if (value !== null && typeof value === 'object') this.checkFileChanges(value);
+    }
+  }
+
+  private checkFileChange(node: FileOperationNode, state: FileState): void {
+    const file = state.file;
+    const op = node.operation.toUpperCase();
+    if (node.operation === 'write' || node.operation === 'update') {
+      if (node.file.toUpperCase() !== file.format) {
+        throw new Error(`${op} attend le nom du format ${file.format} du fichier ${file.name}`);
+      }
+    }
+    const needed = { write: 'output', update: 'update', delete: 'delete' } as { [op: string]: 'output' | 'update' | 'delete' | undefined };
+    const usage = needed[node.operation];
+    if (usage && !state.usage[usage]) {
+      throw new Error(`Le fichier ${file.name} n'est pas déclaré avec USAGE(*${usage.toUpperCase()}) : ${op} impossible`);
+    }
+  }
+
+  // WRITE, UPDATE, DELETE, UNLOCK
+  private executeFileChange(node: FileOperationNode, state: FileState): void {
+    const file = state.file;
+    const op = node.operation.toUpperCase();
+    this.checkFileChange(node, state);
+    if (!state.open) throw new RpgError(1211, `Fichier ${file.name} non ouvert (RNX1211)`);
+    const noCurrent = () => new RpgError(1221, `${op} de ${file.format} sans enregistrement lu (RNX1221)`);
+    const refused = (what: string) => new NotSupportedError(
+      `${op} de ${file.format} ${what} (comportement IBM i non vérifié)`);
+    const blocked = () => refused(`sans nouvelle lecture après ${file.blockedReason ?? 'repositionnement'}`);
+
+    switch (node.operation) {
+      case 'unlock':
+        if (!state.usage.update) {
+          throw new NotSupportedError(`UNLOCK du fichier ${file.name} sans USAGE(*UPDATE) (comportement IBM i non vérifié)`);
+        }
+        file.unlock();
+        return;
+      case 'write': {
+        const result = file.write(this.recordValues(file));
+        if (result.failure === 'duplicate') {
+          throw new RpgError(1021, `Clé en double dans le fichier ${file.name} (RNX1021)`);
+        }
+        return;
+      }
+      case 'update': {
+        const result = file.update(this.recordValues(file));
+        if (result.failure === 'noCurrent') throw noCurrent();
+        if (result.failure === 'repositioned') throw blocked();
+        if (result.failure === 'gone') throw refused("d'un enregistrement supprimé entre-temps");
+        if (result.failure === 'duplicate') {
+          throw new RpgError(1021, `Clé en double dans le fichier ${file.name} (RNX1021)`);
+        }
+        return;
+      }
+      case 'delete': {
+        if (node.key) {
+          const found = file.deleteByKey(node.key.map(expr => this.evaluate(expr))).found;
+          state.found = this.lastIndicators.found = found;
+          if (found) this.markDeleted(state);
+          return;
+        }
+        const result = file.delete();
+        if (result.failure === 'noCurrent') throw noCurrent();
+        if (result.failure === 'repositioned') throw blocked();
+        if (result.failure === 'gone') throw refused("d'un enregistrement supprimé entre-temps");
+        this.markDeleted(state);
+        return;
+      }
+    }
+  }
+
+  // Les numéros d'enregistrement ne sont plus fiables après une suppression
+  private markDeleted(state: FileState): void {
+    state.table.deletedRows = true;
+  }
+
+  // Valeurs des zones du fichier, lues dans les variables globales du programme
+  // (une variable locale de même nom ne les masque pas) ; seul un CHAR perd ses blancs de remplissage
+  private recordValues(file: NativeFile): { [zone: string]: any } {
+    const values: { [zone: string]: any } = {};
+    for (const field of file.fields) {
+      const value = this.runtime.getGlobal(field.name);
+      if (typeof value === 'string' && field.type.typeName === 'char') values[field.name] = value.replace(/ +$/, '');
+      else if (typeof value === 'boolean') values[field.name] = value ? '1' : '0';
+      else if (isDateTime(value)) values[field.name] = String(value);
+      else values[field.name] = value;
+    }
+    return values;
   }
 
   // Copie les zones d'un enregistrement dans les variables du programme (chemin « données » : pas de checkAssignable)

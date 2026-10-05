@@ -46,7 +46,7 @@ test('DCL-F et opérations de fichier : nœuds produits', () => {
     if %eof(client) and %found;
     endif;
   `);
-  assert.deepEqual(ast.files, [{ type: 'FileDeclaration', name: 'Client', keyed: true, usropn: true, line: 2 }]);
+  assert.deepEqual(ast.files, [{ type: 'FileDeclaration', name: 'Client', keyed: true, usropn: true, usage: { input: true, output: false, update: false, delete: false }, line: 2 }]);
   const ops = ast.body.filter(n => n.type === 'FileOperation');
   assert.equal(ops.length, 3);
   assert.equal(ops[0].operation, 'setll');
@@ -60,4 +60,26 @@ test('DCL-F et opérations de fichier : nœuds produits', () => {
 test('open, close, read... restent utilisables comme noms de variable', () => {
   const ast = parse(`dcl-s open int(5); dcl-s read int(5); open = 1; read += 2; close = open + read;`);
   assert.equal(ast.body.filter(n => n.type === 'Assignment').length, 3);
+});
+
+test('USAGE : implications et nœuds d\'écriture', () => {
+  const ast = parse(`
+    dcl-f a usage(*delete) keyed;
+    dcl-f b usage(*output);
+    write bf;
+    delete (1) af;
+    delete af;
+    unlock a;
+  `);
+  assert.deepEqual(ast.files[0].usage, { input: true, output: false, update: true, delete: true });
+  assert.deepEqual(ast.files[1].usage, { input: false, output: true, update: false, delete: false });
+  const ops = ast.body.filter(n => n.type === 'FileOperation');
+  assert.deepEqual(ops.map(o => o.operation), ['write', 'delete', 'delete', 'unlock']);
+  assert.equal(ops[1].key.length, 1);
+  assert.equal(ops[2].key, undefined);
+});
+
+test('write, update, delete, unlock restent utilisables comme noms', () => {
+  const ast = parse(`dcl-s write int(5); dcl-s update int(5); write = 1; update += 2; delete = write; unlock = 3;`);
+  assert.equal(ast.body.filter(n => n.type === 'Assignment').length, 4);
 });

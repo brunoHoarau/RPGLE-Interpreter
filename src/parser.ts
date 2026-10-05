@@ -20,7 +20,7 @@ const FILE_OPERATION_TOKENS = [
   TokenType.SETLL, TokenType.SETGT, TokenType.READ, TokenType.READE, TokenType.READP, TokenType.READPE,
   TokenType.CHAIN, TokenType.OPEN, TokenType.CLOSE, TokenType.UPDATE, TokenType.DELETE, TokenType.WRITE,
 ];
-const WRITE_OPERATION_TOKENS = [TokenType.UPDATE, TokenType.DELETE, TokenType.WRITE];
+const READ_OPERATIONS = new Set(['read', 'readp', 'reade', 'readpe', 'chain', 'setll', 'setgt']);
 // Opérations dont le premier opérande est une clé
 const KEYED_OPERATIONS = new Set(['reade', 'readpe', 'chain', 'setll', 'setgt']);
 
@@ -33,7 +33,7 @@ const UNSUPPORTED_OPCODES = new Set([
   'acq', 'begsr', 'clear', 'commit', 'data-gen', 'data-into', 'dealloc', 'dump', 'endsr',
   'eval-corr', 'evalr', 'except', 'exfmt', 'exsr', 'feod', 'force', 'in', 'leavesr', 'next',
   'on-excp', 'on-exit', 'out', 'post', 'readc', 'rel', 'reset',
-  'rolbk', 'snd-msg', 'sorta', 'test', 'unlock', 'xml-into', 'xml-sax',
+  'rolbk', 'snd-msg', 'sorta', 'test', 'xml-into', 'xml-sax',
 ]);
 
 const INDICATOR = /^\*in(lr|\d\d)$/;
@@ -66,6 +66,8 @@ export class Parser {
   private readOnlyNames = new Map<string, string>();
   // Fichiers déclarés par DCL-F (noms en majuscules)
   private fileNames = new Set<string>();
+  // Utilisation (USAGE) de chaque fichier déclaré (noms en majuscules)
+  private fileUsage = new Map<string, FileDeclarationNode['usage']>();
 
   constructor(tokens: Token[]) {
     this.tokens = tokens;
@@ -109,6 +111,7 @@ export class Parser {
     if (this.fileNames.has(key)) throw new Error(`Fichier ${key} déjà déclaré (ligne ${nameToken.line})`);
     let keyed = false;
     let usropn = false;
+    let usage: FileDeclarationNode['usage'] | undefined;
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
       const word = this.advance();
       const lower = word.value.toLowerCase();
@@ -130,10 +133,7 @@ export class Parser {
       } else if (lower === 'usropn') {
         usropn = true;
       } else if (lower === 'usage') {
-        const ok = this.check(TokenType.LPAREN) && this.peekNext()?.value.toLowerCase() === '*input' &&
-                   this.tokens[this.pos + 2]?.type === TokenType.RPAREN;
-        if (!ok) throw unsupported('USAGE de DCL-F autre que USAGE(*INPUT)', word);
-        this.advance(); this.advance(); this.advance();
+        usage = this.parseUsage(word);
       } else if (lower === 'workstn' || lower === 'printer' || lower === 'special') {
         throw unsupported(`DCL-F ${lower.toUpperCase()}`, word);
       } else {
@@ -142,7 +142,33 @@ export class Parser {
     }
     this.expect(TokenType.SEMICOLON);
     this.fileNames.add(key);
-    return { type: 'FileDeclaration', name: nameToken.value, keyed, usropn, line: start.line };
+    const finalUsage = usage ?? { input: true, output: false, update: false, delete: false };
+    this.fileUsage.set(key, finalUsage);
+    return { type: 'FileDeclaration', name: nameToken.value, keyed, usropn, usage: finalUsage, line: start.line };
+  }
+
+  // USAGE(*INPUT : *OUTPUT : *UPDATE : *DELETE) ; *UPDATE implique *INPUT, *DELETE implique *INPUT et *UPDATE
+  private parseUsage(word: Token): FileDeclarationNode['usage'] {
+    const usage = { input: false, output: false, update: false, delete: false };
+    if (!this.check(TokenType.LPAREN)) throw unsupported('USAGE de DCL-F sans valeur', word);
+    this.advance();
+    const given = new Set<string>();
+    for (;;) {
+      const value = this.advance();
+      const name = value.value.toLowerCase();
+      // Mot répété : refusé par le compilateur
+      if (given.has(name)) throw new Error(`USAGE(${value.value.toUpperCase()}) répété (ligne ${value.line})`);
+      given.add(name);
+      if (name === '*input') usage.input = true;
+      else if (name === '*output') usage.output = true;
+      else if (name === '*update') { usage.update = true; usage.input = true; }
+      else if (name === '*delete') { usage.delete = true; usage.update = true; usage.input = true; }
+      else throw unsupported(`USAGE(${value.value.toUpperCase()}) de DCL-F`, value);
+      if (this.check(TokenType.COLON)) { this.advance(); continue; }
+      if (this.check(TokenType.RPAREN)) { this.advance(); break; }
+      throw unsupported('USAGE de DCL-F mal formé', this.peek());
+    }
+    return usage;
   }
 
   // Un fichier doit avoir été déclaré. Pour une opération, le nom peut être un format
@@ -179,7 +205,12 @@ export class Parser {
     const opToken = this.advance();
     const operation = opToken.value.toLowerCase() as FileOperationNode['operation'];
     const opName = operation.toUpperCase();
-    const keyed = KEYED_OPERATIONS.has(operation);
+    let keyed = KEYED_OPERATIONS.has(operation);
+    // DELETE [clé] fichier : la clé est facultative
+    if (operation === 'delete') {
+      const next = this.peekNext();
+      keyed = !(this.check(TokenType.IDENTIFIER) && next?.type === TokenType.SEMICOLON);
+    }
 
     // Extenseur (E), (N)... : collé au code opération. Avec un blanc, c'est la liste de clé.
     // Convention du lexer : la colonne d'un mot est celle de sa fin, celle d'une parenthèse celle de son début ;
@@ -221,6 +252,12 @@ export class Parser {
     }
     this.advance();
     this.requireFile(fileToken.value, fileToken.line, false);
+    if (READ_OPERATIONS.has(operation)) {
+      const usage = this.fileUsage.get(fileToken.value.toUpperCase());
+      if (usage && !usage.input) {
+        throw new Error(`Fichier ${fileToken.value.toUpperCase()} ouvert en sortie seule : ${opName} impossible (ligne ${opToken.line})`);
+      }
+    }
 
     const node: FileOperationNode = { type: 'FileOperation', operation, file: fileToken.value, line: opToken.line };
     if (key) node.key = key;
@@ -934,7 +971,25 @@ export class Parser {
       return this.parseAssignmentOrCall();
     }
 
+    // UNLOCK(E) fichier : extenseur refusé comme pour les autres opérations de fichier
+    if (lower === 'unlock' && this.check(TokenType.LPAREN)) {
+      let text = '';
+      let i = this.pos + 1;
+      for (; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
+        text += this.tokens[i].value;
+      }
+      if (this.tokens[i]?.type === TokenType.RPAREN && this.tokens[i + 1]?.type === TokenType.IDENTIFIER) {
+        throw unsupported(`L'extenseur (${text.toUpperCase()}) de UNLOCK`, nameToken);
+      }
+    }
     const isNameUse = this.check(TokenType.EQUALS) || this.checkCompound() || this.check(TokenType.DOT) || this.check(TokenType.LPAREN);
+    // UNLOCK fichier : le fichier doit être déclaré
+    if (lower === 'unlock' && !isNameUse && !this.check(TokenType.SEMICOLON)) {
+      const fileToken = this.expectName();
+      this.expect(TokenType.SEMICOLON);
+      this.requireFile(fileToken.value, fileToken.line, true);
+      return { type: 'FileOperation', operation: 'unlock', file: fileToken.value, line: nameToken.line } as FileOperationNode;
+    }
     if (UNSUPPORTED_OPCODES.has(lower) && !isNameUse) {
       throw unsupported(`L'opération ${name.toUpperCase()}`, nameToken);
     }
@@ -1011,9 +1066,6 @@ export class Parser {
     const token = this.peek();
     if (FILE_OPERATION_TOKENS.includes(token.type)) {
       if (this.isFileKeywordNameUse()) return this.parseAssignmentOrCall();
-      if (WRITE_OPERATION_TOKENS.includes(token.type)) {
-        throw unsupported(`L'opération ${token.value.toUpperCase()} (incrément écriture)`, token);
-      }
       return this.parseFileOperation();
     }
     if (token.type === TokenType.DCL_F) {
