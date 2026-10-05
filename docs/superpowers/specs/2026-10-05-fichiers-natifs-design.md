@@ -159,26 +159,35 @@ explicitement** (« pas encore supporté ») plutôt que deviné.
 (implique `*INPUT` et `*UPDATE`) ; combinaisons usuelles (`usage(*input : *output)`,
 `usage(*update : *delete : *output)`).
 - Lecture (`READ`, `READP`, `READE`, `READPE`, `CHAIN`, `SETLL`, `SETGT`) sur un fichier sans
-  `*INPUT` (ni `*UPDATE`/`*DELETE`) → erreur d'analyse (comme à la compilation).
+  `*INPUT` (ni `*UPDATE`/`*DELETE`) → erreur d'analyse (comme à la compilation). Mot répété
+  (`usage(*update : *update)`) → erreur d'analyse « USAGE(*UPDATE) répété ».
 - `WRITE` sans `*OUTPUT`, `UPDATE` sans `*UPDATE`, `DELETE` sans `*DELETE` → erreur (comme à la
-  compilation ; contrôlée à l'exécution car le nom de format n'est connu qu'avec `tables.json`).
+  compilation ; contrôlée après la déclaration des fichiers, car le nom de format n'est connu qu'avec
+  `tables.json`, mais avant toute exécution, sur tout le programme, procédures et branches jamais
+  exécutées comprises ; de même le nom de format attendu par `WRITE`/`UPDATE` et le fichier inconnu).
 
 **Opérations**
-- `WRITE format` : ajoute un enregistrement avec les valeurs actuelles des zones ; ne change pas
+- `WRITE format` : ajoute un enregistrement avec les valeurs actuelles des zones (variables
+  globales : une variable locale de même nom dans une procédure ne les masque pas) ; ne change pas
   la position de lecture. Nommer le fichier au lieu du format → erreur (comme à la compilation).
 - `UPDATE format` : réécrit l'enregistrement **lu en dernier** (enregistrement courant).
 - `DELETE format` : supprime l'enregistrement courant ; `DELETE clé format` : supprime le premier
-  enregistrement de cette clé, `%FOUND` mis à jour (non trouvé → rien n'est supprimé).
+  enregistrement de cette clé, `%FOUND` mis à jour (non trouvé → rien n'est supprimé ; trouvé →
+  plus d'enregistrement courant, verrou libéré, position perdue). `DELETE` accepte le nom du fichier
+  ou du format.
 - `UPDATE` / `DELETE` sans enregistrement courant (pas de lecture réussie, ou après `UNLOCK`,
   `UPDATE`, `DELETE`, lecture en échec) → **statut 01221** (`RpgError`, `RNX1221`), interceptable.
-- `UNLOCK fichier` : libère l'enregistrement courant (plus d'enregistrement courant).
+- `UNLOCK fichier` : libère l'enregistrement courant (plus d'enregistrement courant) ; fichier sans
+  `*UPDATE` → « pas encore supporté ».
 - Après `UPDATE`, la position reste sur l'enregistrement ; après `DELETE`, le `READ` suivant lit
   l'enregistrement qui suivait.
 
 **Clés uniques** — option `"unique": true` dans `tables.json` (avec `keys`). `WRITE` ou `UPDATE`
 qui créerait un doublon de clé → **statut 01021** (`RNX1021`), rien n'est écrit. L'unicité est
 contrôlée sur les clés de la table, même si le `DCL-F` n'a pas `KEYED`. Sans `"unique"` : doublons
-permis.
+permis. En SQL, `INSERT`/`UPDATE` qui créerait un doublon → erreur SQL ordinaire (`SQLCOD` -803,
+`SQLSTATE` 23505), rien n'est modifié. Données de `tables.json` contenant déjà un doublon → erreur
+au `DCL-F` (« Fichier CLIENT : clé en double dans tables.json (NUMCLI = 1) »).
 
 **Verrous** — une lecture réussie sur un fichier `*UPDATE`/`*DELETE` verrouille l'enregistrement ;
 le verrou est libéré par la lecture suivante, `UPDATE`, `DELETE`, `UNLOCK`, `CLOSE` et la fin du
@@ -188,11 +197,17 @@ statut 01218). `UPDATE`/`DELETE` SQL d'un enregistrement verrouillé par un fich
 encore supporté ».
 
 **Données** — les écritures natives sont vues par le SQL et inversement. Valeurs écrites :
-nombre, texte sans blancs de fin, date/heure/timestamp en texte ISO, indicateur `'1'`/`'0'`.
+nombre, `CHAR` sans blancs de fin, `VARCHAR` tel quel (blancs de fin compris), date/heure/timestamp
+en texte ISO, indicateur `'1'`/`'0'`. Une variable hôte SQL `VARCHAR` garde aussi ses blancs de fin.
 
 **Refusés (« pas encore supporté »)**
 - lecture séquentielle (`READ`, `READP`, `READE`, `READPE`) quand la clé de l'enregistrement
-  courant a changé depuis sa lecture (par `UPDATE` natif ou SQL) ;
+  courant a changé depuis sa lecture (par `UPDATE` natif ou SQL), ou après un `DELETE` par clé
+  réussi ;
+- `UPDATE`/`DELETE` sans nouvelle lecture après `SETLL`, `SETGT`, `OPEN`, `DELETE` par clé réussi,
+  `WRITE` (avec un enregistrement courant : effet sur le verrou non vérifié) ou `UPDATE` en échec
+  01021 ;
+- `UNLOCK` d'un fichier sans `*UPDATE` ;
 - `%FIELDS`, `WRITE`/`UPDATE` depuis une DS, extenseur `(E)` (incrément 3) ;
 - `READ(N)` (lecture sans verrou).
 
