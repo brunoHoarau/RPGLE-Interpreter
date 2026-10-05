@@ -118,8 +118,19 @@ interface FileState {
   found: boolean;
   equal: boolean;
   usage: FileDeclarationNode['usage'];
-  table: TableDefinition;     // Pour deletedRows après une suppression native
+  table: TableDefinition;     // Table des données : deletedRows après une suppression native
+  variables: Map<string, string>; // Zone → variable du programme (PREFIX), en majuscules
 }
+
+// EXTDESC / EXTFILE : mêmes zones (noms et types écrits dans tables.json, ordre indifférent)
+function sameColumns(a: TableDefinition, b: TableDefinition): boolean {
+  const shape = (t: TableDefinition) => t.columns
+    .map(c => `${c.name.toUpperCase()} ${String(c.type).replace(/\s+/g, '').toUpperCase()}`).sort().join('|');
+  return shape(a) === shape(b);
+}
+
+// Statuts d'erreur de fichier (01000 à 01999) : les seuls interceptés par l'extenseur (E)
+const isFileStatus = (status: number) => status >= 1000 && status <= 1999;
 
 export class Interpreter {
   private runtime: Runtime;
@@ -135,6 +146,7 @@ export class Interpreter {
   private files = new Map<string, FileState>();          // Par nom de fichier et par nom de format, en majuscules
   private fileFields = new Map<string, { type: DataTypeNode; file: string }>(); // Zones des fichiers, en minuscules
   private lastIndicators = { eof: false, found: false, equal: false }; // %EOF, %FOUND, %EQUAL sans argument
+  private lastError = false; // %ERROR : dernière opération avec extenseur (E), indicateur global au programme
 
   constructor(context?: ExecutionContext, options: InterpreterOptions = {}) {
     this.context = context ?? emptyContext();
@@ -164,6 +176,7 @@ export class Interpreter {
     this.files.clear();
     this.fileFields.clear();
     this.lastIndicators = { eof: false, found: false, equal: false };
+    this.lastError = false;
 
     // Déclarer SQLCOD et SQLSTT par défaut
     this.runtime.declareVariable('SQLCOD', 0, { type: 'DataType', typeName: 'int', length: 10 });
@@ -318,51 +331,80 @@ export class Interpreter {
 
   private declareFile(node: FileDeclarationNode, parameters: ParameterNode[]): void {
     const name = node.name.toUpperCase();
-    const tableName = Object.keys(this.context.tables).find(n => n.toUpperCase() === name);
-    const table = tableName === undefined ? undefined : this.context.tables[tableName];
-    if (!table) throw new Error(`Fichier ${name} absent de context/tables.json`);
-    if (table.columns.some(c => c.type === 'AUTO')) {
-      throw new Error(`Fichier ${name} : décrivez ses zones dans "schema" de context/tables.json`);
+    // Table de description (EXTDESC, sinon le nom du fichier) : zones, types, clés, format, unicité.
+    // Table de données (EXTFILE, *EXTDESC : celle de la description) : lignes, verrous, révision.
+    // La bibliothèque d'EXTFILE / EXTDESC est retirée par l'analyse.
+    const descName = node.extdesc ?? name;
+    const dataName = node.extfile === '*EXTDESC' ? descName : (node.extfile ?? descName);
+    const findTable = (tableName: string): TableDefinition => {
+      const key = Object.keys(this.context.tables).find(n => n.toUpperCase() === tableName);
+      if (key === undefined) throw new Error(`Fichier ${tableName} absent de context/tables.json`);
+      return this.context.tables[key];
+    };
+    const description = findTable(descName);
+    const table = findTable(dataName);
+    if (description.columns.some(c => c.type === 'AUTO')) {
+      throw new Error(`Fichier ${descName} : décrivez ses zones dans "schema" de context/tables.json`);
     }
-    if (node.keyed && !(table.keys && table.keys.length > 0)) {
+    if (dataName !== descName && !sameColumns(description, table)) {
+      throw new Error(`Fichier ${name} : les zones de ${dataName} diffèrent de celles de ${descName}`);
+    }
+    if (node.keyed && !(description.keys && description.keys.length > 0)) {
       throw new Error(`Fichier ${name} déclaré KEYED sans "keys" dans context/tables.json`);
     }
-    const fields = table.columns.map(col => {
+    const fields = description.columns.map(col => {
       const type = parseFieldType(col.type);
       if (!type) throw new Error(`Fichier ${name} : type '${col.type}' de la zone ${col.name} inconnu`);
       return { name: col.name.toUpperCase(), type };
     });
-    const format = (table.format ?? name + 'F').toUpperCase();
+    let format = (description.format ?? descName + 'F').toUpperCase();
+    // RENAME : le premier argument doit être le format réel ; l'ancien nom n'est plus reconnu
+    if (node.rename) {
+      if (node.rename.from !== format) {
+        throw new Error(`Fichier ${name} : RENAME(${node.rename.from}) ne désigne pas le format ${format}`);
+      }
+      format = node.rename.to;
+    }
+    // PREFIX(texte : n) : les n premiers caractères du nom de zone sont remplacés par le texte
+    const variables = new Map<string, string>();
+    for (const field of fields) {
+      const count = node.prefix?.count ?? 0;
+      if (count > field.name.length) {
+        throw new NotSupportedError(`Fichier ${name} : PREFIX(${node.prefix!.text}:${count}) plus long que le nom de la zone ${field.name}`);
+      }
+      variables.set(field.name, node.prefix ? node.prefix.text + field.name.slice(count) : field.name);
+    }
     // Le moteur SQL remplace table.data à chaque DELETE : la source est relue à chaque opération
     // Seul le moteur SQL modifie les données pendant l'exécution : il incrémente table.revision
     // Les écritures natives font avancer la revision (changed) ; les verrous sont partagés par toutes les ouvertures
     table.locks ??= new WeakMap();
-    const file = new NativeFile(name, format, fields, node.keyed ? table.keys! : [], () => table.data,
+    const file = new NativeFile(name, format, fields, node.keyed ? description.keys! : [], () => table.data,
       { rowsDeleted: () => table.deletedRows === true, revision: () => table.revision ?? 0,
-        updatable: node.usage.update || node.usage.delete, uniqueKeys: table.unique ? table.keys : undefined,
+        updatable: node.usage.update || node.usage.delete, uniqueKeys: description.unique ? description.keys : undefined,
         locks: table.locks as WeakMap<object, NativeFile>, changed: () => { table.revision = (table.revision ?? 0) + 1; } });
     const duplicate = file.duplicateKey();
     if (duplicate) {
       const shown = Object.entries(duplicate).map(([zone, value]) => `${zone} = ${typeof value === 'string' ? `'${value}'` : String(value)}`);
       throw new Error(`Fichier ${name} : clé en double dans tables.json (${shown.join(', ')})`);
     }
-    const state: FileState = { file, open: !node.usropn, eof: false, found: false, equal: false, usage: node.usage, table };
+    const state: FileState = { file, open: !node.usropn, eof: false, found: false, equal: false, usage: node.usage, table, variables };
     this.files.set(name, state);
     this.files.set(format, state);
 
     for (const field of fields) {
-      const key = field.name.toLowerCase();
+      const variable = variables.get(field.name)!;
+      const key = variable.toLowerCase();
       const existing = this.fileFields.get(key);
       if (existing) {
         if (!sameDeclaredType(existing.type, field.type)) {
-          throw incompatibleTypes(`Zone ${field.name} du fichier ${name} ${describeType(field.type)} déjà déclarée par un autre fichier ${describeType(existing.type)}`);
+          throw incompatibleTypes(`Zone ${variable} du fichier ${name} ${describeType(field.type)} déjà déclarée par un autre fichier ${describeType(existing.type)}`);
         }
         continue;
       }
       const parameter = parameters.find(p => p.name.toLowerCase() === key);
-      if (parameter) this.refuseSameNameAsField(field.name, parameter.dataType, field.type, name, 'Paramètre');
+      if (parameter) this.refuseSameNameAsField(variable, parameter.dataType, field.type, name, 'Paramètre');
       this.fileFields.set(key, { type: field.type, file: name });
-      this.runtime.declareVariable(field.name, defaultValue(field.type), field.type);
+      this.runtime.declareVariable(variable, defaultValue(field.type), field.type);
     }
   }
 
@@ -372,7 +414,27 @@ export class Interpreter {
     return state;
   }
 
+  // Extenseur (E) : une erreur de fichier (RpgError 01xxx) de l'opération met %ERROR à *ON et %STATUS au statut,
+  // le programme continue ; une réussite met %ERROR à *OFF. Les refus « pas encore supporté », les erreurs de données
+  // et les erreurs d'expression traversent. Sans (E), %ERROR est inchangé.
   private executeFileOperation(node: FileOperationNode): void {
+    if (!node.extender?.error) {
+      this.performFileOperation(node);
+      return;
+    }
+    try {
+      this.performFileOperation(node);
+    } catch (error) {
+      if (!(error instanceof RpgError) || !isFileStatus(error.status)) throw error;
+      this.lastError = true;
+      this.runtime.status = error.status;
+      this.runtime.addOutput(`[JOBLOG] ${error.message} - interceptée par l'extenseur (E)`);
+      return;
+    }
+    this.lastError = false;
+  }
+
+  private performFileOperation(node: FileOperationNode): void {
     const state = this.fileState(node.file);
     const file = state.file;
     if (node.operation === 'open') {
@@ -395,23 +457,27 @@ export class Interpreter {
     if (!state.open) throw new RpgError(1211, `Fichier ${file.name} non ouvert (RNX1211)`);
 
     const key = (node.key ?? []).map(expr => this.evaluate(expr));
+    // READE / READPE sans clé : clé complète du dernier enregistrement lu
+    const equalKey = node.lastKey ? 'last' as const : key;
+    // Extenseur (N) : lecture sans verrou
+    const options = { noLock: node.extender?.noLock === true };
     let result: FileResult;
     switch (node.operation) {
-      case 'read': result = file.read(); break;
-      case 'readp': result = file.readp(); break;
-      case 'reade': result = file.reade(key); break;
-      case 'readpe': result = file.readpe(key); break;
+      case 'read': result = file.read(options); break;
+      case 'readp': result = file.readp(options); break;
+      case 'reade': result = file.reade(equalKey, options); break;
+      case 'readpe': result = file.readpe(equalKey, options); break;
       case 'chain':
         if (!file.keyed && key.length > 1) {
           throw incompatibleTypes(`CHAIN par numéro d'enregistrement avec une liste de ${key.length} valeurs sur le fichier sans clé ${file.name}`);
         }
-        result = file.keyed ? file.chain(key) : file.chainRrn(key[0]);
+        result = file.keyed ? file.chain(key, options) : file.chainRrn(key[0], options);
         break;
       case 'setll': result = file.setll(node.special ?? key); break;
       case 'setgt': result = file.setgt(node.special ?? key); break;
       default: throw new Error(`Opération ${node.operation} non supportée`);
     }
-    if (result.record) this.copyRecord(file, result.record);
+    if (result.record) this.copyRecord(state, result.record);
 
     switch (node.operation) {
       case 'read': case 'readp': case 'reade': case 'readpe':
@@ -486,14 +552,14 @@ export class Interpreter {
         file.unlock();
         return;
       case 'write': {
-        const result = file.write(this.recordValues(file));
+        const result = file.write(this.recordValues(state));
         if (result.failure === 'duplicate') {
           throw new RpgError(1021, `Clé en double dans le fichier ${file.name} (RNX1021)`);
         }
         return;
       }
       case 'update': {
-        const result = file.update(this.recordValues(file));
+        const result = file.update(this.recordValues(state));
         if (result.failure === 'noCurrent') throw noCurrent();
         if (result.failure === 'repositioned') throw blocked();
         if (result.failure === 'gone') throw refused("d'un enregistrement supprimé entre-temps");
@@ -526,10 +592,11 @@ export class Interpreter {
 
   // Valeurs des zones du fichier, lues dans les variables globales du programme
   // (une variable locale de même nom ne les masque pas) ; seul un CHAR perd ses blancs de remplissage
-  private recordValues(file: NativeFile): { [zone: string]: any } {
+  private recordValues(state: FileState): { [zone: string]: any } {
+    const file = state.file;
     const values: { [zone: string]: any } = {};
     for (const field of file.fields) {
-      const value = this.runtime.getGlobal(field.name);
+      const value = this.runtime.getGlobal(state.variables.get(field.name)!);
       if (typeof value === 'string' && field.type.typeName === 'char') values[field.name] = value.replace(/ +$/, '');
       else if (typeof value === 'boolean') values[field.name] = value ? '1' : '0';
       else if (isDateTime(value)) values[field.name] = String(value);
@@ -539,7 +606,8 @@ export class Interpreter {
   }
 
   // Copie les zones d'un enregistrement dans les variables du programme (chemin « données » : pas de checkAssignable)
-  private copyRecord(file: NativeFile, row: any): void {
+  private copyRecord(state: FileState, row: any): void {
+    const file = state.file;
     for (const field of file.fields) {
       const column = Object.keys(row).find(c => c.toUpperCase() === field.name);
       const raw = column === undefined ? undefined : row[column];
@@ -566,7 +634,7 @@ export class Interpreter {
       } else if (!fitsField(raw, field.type)) {
         throw tooBig();
       }
-      this.runtime.setGlobal(field.name, value);
+      this.runtime.setGlobal(state.variables.get(field.name)!, value);
     }
   }
 
@@ -1081,6 +1149,11 @@ export class Interpreter {
     if (expr.valueType === 'builtin') {
       const builtin = expr.value.name.toLowerCase();
       if (FILE_BUILTINS.has(builtin)) return this.fileBuiltin(expr.value.name, expr.value.args);
+      // %ERROR : résultat de la dernière opération avec extenseur (E), *OFF au départ
+      if (builtin === '%error') {
+        if (expr.value.args.length > 0) throw new Error(`%ERROR n'accepte pas d'argument`);
+        return this.lastError;
+      }
       const isChar = builtin === '%char';
       // Le 2e argument (*ISO) est un format, inutile à évaluer
       const args = (isChar ? expr.value.args.slice(0, 1) : expr.value.args).map((arg: ExpressionNode) => this.evaluate(arg));

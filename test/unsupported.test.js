@@ -312,9 +312,13 @@ test('%EOF() sans argument accepté, %OPEN() refusé clairement', () => {
   assert.throws(() => parse('dcl-f client; if %open(); endif;'), /%OPEN attend un nom de fichier \(ligne 1\)/);
 });
 
-test("extenseur de UNLOCK : refusé avec le message de l'extenseur", () => {
-  assert.throws(() => parse('dcl-f f usage(*update) keyed; unlock(e) f;'),
-    err => NOT_SUPPORTED.test(err.message) && /L'extenseur \(E\) de UNLOCK/.test(err.message));
+test("extenseur de UNLOCK : (E) accepté, les autres refusés avec le message de l'extenseur", () => {
+  const node = parse('dcl-f f usage(*update) keyed; unlock(e) f;').body.find(n => n.type === 'FileOperation');
+  assert.deepEqual(node.extender, { error: true, noLock: false });
+  for (const [src, shown] of [['unlock(n) f;', 'N'], ['unlock(en) f;', 'EN'], ['unlock(x) f;', 'X']]) {
+    assert.throws(() => parse('dcl-f f usage(*update) keyed; ' + src),
+      err => NOT_SUPPORTED.test(err.message) && new RegExp(`L'extenseur \\(${shown}\\) de UNLOCK`).test(err.message), src);
+  }
 });
 
 test('USAGE : mot répété refusé à l\'analyse', () => {

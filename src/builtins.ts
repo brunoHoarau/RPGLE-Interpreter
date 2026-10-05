@@ -97,7 +97,7 @@ function fileBuiltin(name: string): Builtin {
 
 export const BUILTINS: { [name: string]: Builtin } = {
   '%status': ctx => ctx.status,
-  // %ERROR dépend de la dernière opération à extenseur (E) : l'interpréteur la traitera
+  // %ERROR dépend de la dernière opération à extenseur (E) : l'interpréteur la traite lui-même
   '%error': fileBuiltin('%ERROR'),
   // %EOF, %FOUND, %EQUAL et %OPEN dépendent de l'état des fichiers : l'interpréteur les traite lui-même
   '%eof': fileBuiltin('%EOF'),

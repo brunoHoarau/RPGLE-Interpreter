@@ -1037,7 +1037,8 @@ export class Parser {
       return this.parseAssignmentOrCall();
     }
 
-    // UNLOCK(E) fichier : extenseur refusé comme pour les autres opérations de fichier
+    // UNLOCK(E) fichier : seul l'extenseur E est accepté (N ne vaut que pour les lectures)
+    let unlockExtender: FileOperationNode['extender'];
     if (lower === 'unlock' && this.check(TokenType.LPAREN)) {
       let text = '';
       let i = this.pos + 1;
@@ -1045,7 +1046,9 @@ export class Parser {
         text += this.tokens[i].value;
       }
       if (this.tokens[i]?.type === TokenType.RPAREN && this.tokens[i + 1]?.type === TokenType.IDENTIFIER) {
-        throw unsupported(`L'extenseur (${text.toUpperCase()}) de UNLOCK`, nameToken);
+        if (text.toLowerCase() !== 'e') throw unsupported(`L'extenseur (${text.toUpperCase()}) de UNLOCK`, nameToken);
+        unlockExtender = { error: true, noLock: false };
+        this.pos = i + 1;
       }
     }
     const isNameUse = this.check(TokenType.EQUALS) || this.checkCompound() || this.check(TokenType.DOT) || this.check(TokenType.LPAREN);
@@ -1054,7 +1057,9 @@ export class Parser {
       const fileToken = this.expectName();
       this.expect(TokenType.SEMICOLON);
       this.requireFile(fileToken.value, fileToken.line, true);
-      return { type: 'FileOperation', operation: 'unlock', file: fileToken.value, line: nameToken.line } as FileOperationNode;
+      const node: FileOperationNode = { type: 'FileOperation', operation: 'unlock', file: fileToken.value, line: nameToken.line };
+      if (unlockExtender) node.extender = unlockExtender;
+      return node;
     }
     if (UNSUPPORTED_OPCODES.has(lower) && !isNameUse) {
       throw unsupported(`L'opération ${name.toUpperCase()}`, nameToken);
