@@ -33,8 +33,6 @@ test('écriture : constructions non supportées refusées', () => {
     'dcl-f b usage(*update); read b; update bf %fields(nom);',
     'dcl-f b usage(*update); read b; update bf ds;',
     'dcl-f a usage(*output); write af ds;',
-    'dcl-f a usage(*output); write(e) af;',
-    'dcl-f b usage(*update); read(n) b;',
     'dcl-f a usage(*output : *xyz);',
   ]) {
     assert.throws(() => parse(src), NOT_SUPPORTED, src);
@@ -44,7 +42,6 @@ test('écriture : constructions non supportées refusées', () => {
 test('DCL-F : périphériques et mots-clés non supportés refusés', () => {
   for (const src of [
     'dcl-f ecran workstn;', 'dcl-f etat printer;', 'dcl-f f special;',
-    'dcl-f client prefix(c_);', 'dcl-f client rename(clientf:r);', "dcl-f client extfile('LIB/CLIENT');",
     'dcl-f client infds(ds);', 'dcl-f client qualified;', 'dcl-f client alias;', 'dcl-f client block(*no);',
     'dcl-proc p; dcl-f client; end-proc;',
   ]) {
@@ -54,8 +51,7 @@ test('DCL-F : périphériques et mots-clés non supportés refusés', () => {
 
 test('opérations de fichier non supportées refusées', () => {
   for (const src of [
-    'dcl-f client keyed; reade client;', 'dcl-f client keyed; readpe client;',
-    'dcl-f client keyed; chain %kds(k) client;', 'dcl-f client keyed; read(e) client;',
+    'dcl-f client keyed; chain %kds(k) client;',
     'dcl-f client keyed; readc client;', 'dcl-f client keyed; read client ds;',
   ]) {
     assert.throws(() => parse(src), NOT_SUPPORTED, src);
@@ -304,7 +300,7 @@ test('durée dont l\'argument peut avoir des décimales : refusée', () => {
 });
 
 test("extenseur d'opération de fichier : refusé, y compris collé à CHAIN", () => {
-  for (const src of ['chain(e) k f;', 'reade(n) k f;', 'setll(e) k f;', 'chain(n) client;']) {
+  for (const src of ['chain(h) k f;', 'setll(n) k f;', 'read(x) client;', 'write(n) f;']) {
     assert.throws(() => parse('dcl-f f keyed; dcl-f client keyed; dcl-s k int(5); ' + src),
       err => NOT_SUPPORTED.test(err.message) && /extenseur/i.test(err.message), src);
   }
@@ -325,4 +321,36 @@ test('USAGE : mot répété refusé à l\'analyse', () => {
   assert.throws(() => parse(`dcl-f a usage(*update : *update);`), /USAGE\(\*UPDATE\) répété/);
   assert.throws(() => parse(`dcl-f a usage(*input : *output : *input);`), /USAGE\(\*INPUT\) répété/);
   assert.doesNotThrow(() => parse(`dcl-f a usage(*input : *update);`));
+});
+
+test('3a : DCL-F RENAME, PREFIX, EXTFILE, EXTDESC acceptés à l\'analyse', () => {
+  assert.doesNotThrow(() => parse(`
+    dcl-f film rename(film:ffilm) keyed;
+    dcl-f client prefix(c_) keyed;
+    dcl-f cli2 prefix('X':2) extfile('MABIB/CLIENT') extdesc('CLIENT');
+    dcl-f cli3 extdesc('MABIB/CLIENT') extfile(*extdesc) usage(*update) keyed;
+    read ffilm;
+    read(e) client;
+    chain(n) 1 client;
+    chain(en) 1 cli3;
+    reade client;
+    readpe(ne) client;
+    update(e) cli3f;
+    if %error or %error();
+    endif;
+  `));
+});
+
+test('3a : refus', () => {
+  for (const src of [
+    'dcl-s nomvar char(10); dcl-f client extfile(nomvar);',
+    'dcl-f client keyed; read(x) client;',
+    'dcl-f client keyed; read(h) client;',
+    'callp(e) p();',
+    'dcl-proc p; end-proc; callp(e) p();',
+  ]) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
+  }
+  // RENAME avec un seul argument : erreur de compilation, pas une limite de l'interpréteur
+  assert.throws(() => parse('dcl-f client rename(clientf);'));
 });
