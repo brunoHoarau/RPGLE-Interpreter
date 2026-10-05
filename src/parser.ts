@@ -150,6 +150,10 @@ export class Parser {
         this.expect(TokenType.LPAREN);
         const text = this.advance();
         if (text.type !== TokenType.IDENTIFIER && text.type !== TokenType.STRING) throw unsupported('PREFIX de DCL-F mal formé', text);
+        // PREFIX('DS.') : zones placées dans une structure qualifiée
+        if (text.value.includes('.') || this.check(TokenType.DOT)) {
+          throw unsupported('PREFIX de DCL-F vers une structure qualifiée (avec un point)', text);
+        }
         prefix = { text: text.value.toUpperCase() };
         if (this.check(TokenType.COLON)) {
           this.advance();
@@ -175,6 +179,9 @@ export class Parser {
       } else {
         throw unsupported(`Le mot-clé ${word.value.toUpperCase()} de DCL-F`, word);
       }
+    }
+    if (extfile === '*EXTDESC' && extdesc === undefined) {
+      throw new Error(`EXTFILE(*EXTDESC) du fichier ${key} sans le mot-clé EXTDESC (ligne ${start.line})`);
     }
     this.expect(TokenType.SEMICOLON);
     this.fileNames.add(key);

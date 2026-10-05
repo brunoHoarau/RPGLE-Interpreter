@@ -358,3 +358,14 @@ test('3a : refus', () => {
   // RENAME avec un seul argument : erreur de compilation, pas une limite de l'interpréteur
   assert.throws(() => parse('dcl-f client rename(clientf);'));
 });
+
+test('3a : PREFIX de structure qualifiée refusé', () => {
+  assert.throws(() => parse(`dcl-f client prefix('DS.');`), NOT_SUPPORTED);
+  assert.throws(() => parse(`dcl-f client prefix('DS.' : 2);`), NOT_SUPPORTED);
+});
+
+test('3a : EXTFILE(*EXTDESC) sans EXTDESC refusé à l\'analyse', () => {
+  assert.throws(() => parse(`dcl-f client extfile(*extdesc);`),
+    err => !NOT_SUPPORTED.test(err.message) && /EXTFILE\(\*EXTDESC\).*EXTDESC/.test(err.message));
+  assert.doesNotThrow(() => parse(`dcl-f client extfile(*extdesc) extdesc('CLIENT');`));
+});

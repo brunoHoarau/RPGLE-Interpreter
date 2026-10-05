@@ -832,7 +832,8 @@ test('RENAME : WRITE sur le nouveau nom, ancien refusé avant exécution, premie
   const c = ctx3();
   run(`dcl-f client rename(clientf:rcli) usage(*output); numcli = 9; clnom = 'Neuf'; write rcli;`, c);
   assert.equal(c.tables.CLIENT.data.length, 3);
-  assert.throws(() => run(`dcl-f client rename(clientf:rcli) usage(*output); dsply 'avant'; write clientf;`, ctx3()), /CLIENTF/);
+  // Branche jamais exécutée : seul un contrôle avant exécution peut la refuser
+  assert.throws(() => run(`dcl-f client rename(clientf:rcli) usage(*output); if 1 = 0; write clientf; endif;`, ctx3()), /CLIENTF/);
   assert.throws(() => run(`dcl-f client rename(autre:rcli);`, ctx3()), /AUTRE.*format/i);
 });
 
@@ -970,4 +971,65 @@ test('%ERROR : indicateur global, le même dans les procédures', () => {
     end-proc;
   `, ctx3());
   assert.deepEqual(out, ['oui', 'remis']);
+});
+
+// --- Incrément 3a : corrections de relecture ---
+
+test('(E) : %STATUS remis à 0 au début de l\'opération', () => {
+  assert.deepEqual(run(`
+    dcl-f client usropn keyed;
+    chain(e) 1 client;
+    dsply %char(%status);
+    open client;
+    chain(e) 1 client;
+    dsply %char(%status);
+  `, ctx3()), ['1211', '0']);
+});
+
+test('format inconnu ou renommé : refusé avant exécution pour toute opération', () => {
+  for (const op of ['read clientf;', 'readp clientf;', 'reade 1 clientf;', 'readpe 1 clientf;', 'chain 1 clientf;',
+    'setll 1 clientf;', 'setgt 1 clientf;', 'open clientf;', 'close clientf;']) {
+    assert.throws(() => run(`dcl-f client rename(clientf:rcli) keyed usropn; if 1 = 0; ${op} endif; dsply 'ok';`, ctx3()),
+      /CLIENTF/, op);
+  }
+  assert.throws(() => run(`dcl-f client keyed; if 1 = 0; chain 1 inconnu; endif; dsply 'ok';`, ctx3()), /INCONNU/);
+  assert.deepEqual(run(`dcl-f client rename(clientf:rcli) keyed; if 1 = 0; read rcli; endif; dsply 'ok';`, ctx3()), ['ok']);
+});
+
+test('deux DCL-F avec le même nom de format : RENAME nécessaire', () => {
+  assert.throws(() => run(`dcl-f client usage(*output); dcl-f arch extdesc('CLIENT') extfile('ARCHIVE') usage(*output);`, ctx3()),
+    /CLIENTF.*RENAME/);
+  assert.throws(() => run(`dcl-f film; dcl-f client rename(clientf:film);`, ctx3()), /FILM.*RENAME/);
+  const c = ctx3();
+  run(`dcl-f client usage(*output);
+       dcl-f arch extdesc('CLIENT') extfile('ARCHIVE') rename(clientf:rarch) usage(*output);
+       numcli = 8; clnom = 'Archive'; write rarch;`, c);
+  assert.equal(c.tables.ARCHIVE.data.length, 2);
+  assert.equal(c.tables.CLIENT.data.length, 2);
+});
+
+test('PREFIX : deux zones du même fichier avec le même nom de variable refusées', () => {
+  const c = ctx3();
+  c.tables.DUO = { keys: ['ABC'], columns: [{ name: 'ABC', type: 'char(1)' }, { name: 'XBC', type: 'char(1)' }], data: [] };
+  assert.throws(() => run(`dcl-f duo prefix(y:1);`, c), /YBC.*ABC.*XBC/);
+});
+
+test('EXTFILE / EXTDESC : le message nomme la première zone différente et les deux types', () => {
+  const c = ctx3();
+  c.tables.ARCH2 = { columns: [{ name: 'NUMCLI', type: 'DECIMAL(7,0)' }, { name: 'CLNOM', type: 'char(10)' }], data: [] };
+  assert.throws(() => run(`dcl-f client extfile('ARCH2');`, c), err => /NUMCLI/.test(err.message)
+    && /DECIMAL\(7,0\)/.test(err.message) && /packed\(7:0\)/.test(err.message));
+  assert.throws(() => run(`dcl-f client extfile('AUTRE');`, ctx3()), /NUMCLI/);
+});
+
+test('(E) dans MONITOR : l\'erreur est traitée par (E), MONITOR non déclenché', () => {
+  assert.deepEqual(run(`
+    dcl-f client usropn keyed;
+    monitor;
+      chain(e) 1 client;
+      dsply 'apres';
+    on-error 01211;
+      dsply 'monitor';
+    endmon;
+  `, ctx3()), ['apres']);
 });

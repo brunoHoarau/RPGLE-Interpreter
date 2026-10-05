@@ -122,11 +122,21 @@ interface FileState {
   variables: Map<string, string>; // Zone → variable du programme (PREFIX), en majuscules
 }
 
-// EXTDESC / EXTFILE : mêmes zones (noms et types écrits dans tables.json, ordre indifférent)
-function sameColumns(a: TableDefinition, b: TableDefinition): boolean {
-  const shape = (t: TableDefinition) => t.columns
-    .map(c => `${c.name.toUpperCase()} ${String(c.type).replace(/\s+/g, '').toUpperCase()}`).sort().join('|');
-  return shape(a) === shape(b);
+// EXTDESC / EXTFILE : mêmes zones (noms et types écrits dans tables.json, ordre indifférent).
+// Renvoie la première différence (zone de la description, puis zone en trop des données), ou undefined.
+function columnDifference(desc: TableDefinition, descName: string, data: TableDefinition, dataName: string): string | undefined {
+  const typeOf = (t: TableDefinition, zone: string) => t.columns.find(c => c.name.toUpperCase() === zone)?.type;
+  const normalized = (type: string) => String(type).replace(/\s+/g, '').toUpperCase();
+  for (const column of desc.columns) {
+    const zone = column.name.toUpperCase();
+    const other = typeOf(data, zone);
+    if (other === undefined) return `zone ${zone} (${column.type}) absente de ${dataName}`;
+    if (normalized(column.type) !== normalized(other)) {
+      return `zone ${zone} : ${other} dans ${dataName}, ${column.type} dans ${descName} (types comparés tels qu'écrits dans tables.json)`;
+    }
+  }
+  const extra = data.columns.find(c => typeOf(desc, c.name.toUpperCase()) === undefined);
+  return extra ? `zone ${extra.name.toUpperCase()} (${extra.type}) absente de ${descName}` : undefined;
 }
 
 // Statuts d'erreur de fichier (01000 à 01999) : les seuls interceptés par l'extenseur (E)
@@ -346,8 +356,9 @@ export class Interpreter {
     if (description.columns.some(c => c.type === 'AUTO')) {
       throw new Error(`Fichier ${descName} : décrivez ses zones dans "schema" de context/tables.json`);
     }
-    if (dataName !== descName && !sameColumns(description, table)) {
-      throw new Error(`Fichier ${name} : les zones de ${dataName} diffèrent de celles de ${descName}`);
+    const difference = dataName === descName ? undefined : columnDifference(description, descName, table, dataName);
+    if (difference) {
+      throw new Error(`Fichier ${name} : les zones de ${dataName} diffèrent de celles de ${descName} (${difference})`);
     }
     if (node.keyed && !(description.keys && description.keys.length > 0)) {
       throw new Error(`Fichier ${name} déclaré KEYED sans "keys" dans context/tables.json`);
@@ -372,7 +383,18 @@ export class Interpreter {
       if (count > field.name.length) {
         throw new NotSupportedError(`Fichier ${name} : PREFIX(${node.prefix!.text}:${count}) plus long que le nom de la zone ${field.name}`);
       }
-      variables.set(field.name, node.prefix ? node.prefix.text + field.name.slice(count) : field.name);
+      const variable = node.prefix ? node.prefix.text + field.name.slice(count) : field.name;
+      const twin = [...variables].find(([, v]) => v === variable);
+      if (twin) throw new Error(`Fichier ${name} : PREFIX donne le même nom ${variable} aux zones ${twin[0]} et ${field.name}`);
+      variables.set(field.name, variable);
+    }
+    // Sur IBM i, les noms de fichiers et de formats d'un programme sont distincts : RENAME nécessaire
+    for (const used of new Set([name, format])) {
+      const other = this.files.get(used);
+      if (other) {
+        throw new Error(`Fichier ${name} : le nom ${used} est déjà utilisé par le fichier ${other.file.name}`
+          + (used === format ? ` (format ${format} : RENAME nécessaire)` : ''));
+      }
     }
     // Le moteur SQL remplace table.data à chaque DELETE : la source est relue à chaque opération
     // Seul le moteur SQL modifie les données pendant l'exécution : il incrémente table.revision
@@ -422,6 +444,8 @@ export class Interpreter {
       this.performFileOperation(node);
       return;
     }
+    // %STATUS est remis à 0 avant toute opération avec (E)
+    this.runtime.status = 0;
     try {
       this.performFileOperation(node);
     } catch (error) {
@@ -501,18 +525,21 @@ export class Interpreter {
     }
   }
 
-  // Contrôles du compilateur pour WRITE, UPDATE, DELETE, UNLOCK : fichier ou format connu, nom du format
-  // pour WRITE/UPDATE, USAGE suffisante. Faits sur tout le programme avant l'exécution (formats connus
-  // seulement avec tables.json), y compris dans les branches et procédures jamais exécutées.
+  // Contrôles du compilateur : toute opération de fichier (et l'argument de %EOF, %FOUND, %EQUAL, %OPEN)
+  // nomme un fichier ou un format connu (un format renommé par RENAME ne l'est plus) ; pour WRITE, UPDATE,
+  // DELETE, UNLOCK : nom du format pour WRITE/UPDATE, USAGE suffisante. Faits sur tout le programme avant
+  // l'exécution (formats connus seulement avec tables.json), y compris dans les branches et procédures jamais exécutées.
   private checkFileChanges(node: any): void {
     if (Array.isArray(node)) {
       for (const child of node) this.checkFileChanges(child);
       return;
     }
     if (node === null || typeof node !== 'object') return;
-    if (node.type === 'FileOperation' && ['write', 'update', 'delete', 'unlock'].includes(node.operation)) {
-      this.checkFileChange(node, this.fileState(node.file));
+    if (node.type === 'FileOperation') {
+      const state = this.fileState(node.file);
+      if (['write', 'update', 'delete', 'unlock'].includes(node.operation)) this.checkFileChange(node, state);
     }
+    if (node.type === 'Expression' && node.valueType === 'file') this.fileState(String(node.value));
     for (const value of Object.values(node)) {
       if (value !== null && typeof value === 'object') this.checkFileChanges(value);
     }
