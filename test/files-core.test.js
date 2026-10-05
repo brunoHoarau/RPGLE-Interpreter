@@ -373,3 +373,94 @@ test('clé caractère : seuls les espaces de fin sont ôtés, clé plus longue q
   const file = new f.NativeFile('T', 'TF', [{ name: 'CODE', type: t('char', 3) }], ['CODE'], [{ CODE: 'ABC' }]);
   assert.throws(() => file.chain(['ABCDEF']), NOT_SUPPORTED);
 });
+
+// --- Incrément 2 : écriture ---
+
+const WF = [{ name: 'NUMCLI', type: t('packed', 7, 0) }, { name: 'NOM', type: t('char', 10) }];
+const wrows = () => [{ NUMCLI: 1, NOM: 'A' }, { NUMCLI: 2, NOM: 'B' }, { NUMCLI: 3, NOM: 'C' }];
+const wopen = (rows, options = {}) => new f.NativeFile('CL', 'CLF', WF, ['NUMCLI'], rows, { updatable: true, ...options });
+
+test('WRITE ajoute sans déplacer la position', () => {
+  const rows = wrows();
+  const file = wopen(rows);
+  assert.equal(file.read().record.NOM, 'A');
+  assert.deepEqual(file.write({ NUMCLI: 0, NOM: 'Z' }), {});
+  assert.equal(rows.length, 4);
+  assert.deepEqual(rows[3], { NUMCLI: 0, NOM: 'Z' });
+  assert.equal(file.read().record.NOM, 'B');
+});
+
+test('UPDATE réécrit l\'enregistrement courant, une seule fois', () => {
+  const rows = wrows();
+  const file = wopen(rows);
+  assert.equal(file.update({ NUMCLI: 2, NOM: 'X' }).failure, 'noCurrent');
+  file.chain([2]);
+  assert.deepEqual(file.update({ NUMCLI: 2, NOM: 'X' }), {});
+  assert.equal(rows[1].NOM, 'X');
+  assert.equal(file.update({ NUMCLI: 2, NOM: 'Y' }).failure, 'noCurrent');
+  assert.equal(file.read().record.NOM, 'C');
+  file.read();
+  assert.equal(file.update({ NUMCLI: 3, NOM: 'Y' }).failure, 'noCurrent'); // lecture en échec (EOF)
+});
+
+test('DELETE courant puis READ ; DELETE par clé', () => {
+  const rows = wrows();
+  const file = wopen(rows);
+  file.read();
+  file.read();
+  assert.deepEqual(file.delete(), {});
+  assert.deepEqual(rows.map(r => r.NOM), ['A', 'C']);
+  assert.equal(file.delete().failure, 'noCurrent');
+  assert.equal(file.read().record.NOM, 'C');
+  assert.equal(file.deleteByKey([1]).found, true);
+  assert.equal(file.deleteByKey([9]).found, false);
+  assert.deepEqual(rows.map(r => r.NOM), ['C']);
+});
+
+test('UNLOCK retire l\'enregistrement courant', () => {
+  const file = wopen(wrows());
+  file.chain([1]);
+  file.unlock();
+  assert.equal(file.update({ NUMCLI: 1, NOM: 'X' }).failure, 'noCurrent');
+});
+
+test('clés uniques contrôlées même sans accès par clé', () => {
+  const rows = wrows();
+  const file = new f.NativeFile('CL', 'CLF', WF, [], rows, { updatable: true, uniqueKeys: ['NUMCLI'] });
+  assert.equal(file.write({ NUMCLI: 2, NOM: 'D' }).failure, 'duplicate');
+  assert.equal(rows.length, 3);
+  assert.equal(file.read().record.NOM, 'A');
+  assert.equal(file.update({ NUMCLI: 3, NOM: 'A' }).failure, 'duplicate');
+  assert.equal(rows[0].NUMCLI, 1);
+  assert.deepEqual(file.update({ NUMCLI: 1, NOM: 'AA' }), {});
+  assert.deepEqual(file.write({ NUMCLI: 4, NOM: 'D' }), {});
+  assert.equal(rows.length, 4);
+});
+
+test('verrous : une autre ouverture ne lit pas pour mise à jour un enregistrement tenu', () => {
+  const rows = wrows();
+  const locks = new WeakMap();
+  const a = wopen(rows, { locks });
+  const b = wopen(rows, { locks });
+  a.chain([2]);
+  assert.throws(() => b.chain([2]), NOT_SUPPORTED);
+  assert.equal(b.chain([1]).record.NOM, 'A');
+  a.unlock();
+  assert.equal(b.chain([2]).record.NOM, 'B');
+  const lecture = new f.NativeFile('CL', 'CLF', WF, ['NUMCLI'], rows, { locks });
+  assert.equal(lecture.chain([2]).record.NOM, 'B');
+  b.release();
+  assert.equal(a.chain([2]).found, true);
+});
+
+test('clé de l\'enregistrement courant modifiée : lecture séquentielle refusée', () => {
+  const rows = wrows();
+  const file = wopen(rows);
+  file.read();
+  file.update({ NUMCLI: 7, NOM: 'A' });
+  assert.throws(() => file.read(), NOT_SUPPORTED);
+  file.setll('start');
+  assert.equal(file.read().record.NOM, 'B');
+  rows[1].NUMCLI = 9; // comme un UPDATE SQL de la clé
+  assert.throws(() => file.read(), NOT_SUPPORTED);
+});

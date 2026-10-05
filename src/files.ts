@@ -124,19 +124,31 @@ export class NativeFile {
   private recomputed = false;
   private sorted: { source: any[]; length: number; revision: number | undefined; items: Item[] } | undefined;
   private generation = 0;
+  // Dernier enregistrement rendu (la position reste sur lui) et sa clé d'accès au moment de la lecture
+  private last: Item | undefined;
+  // Enregistrement courant (UPDATE, DELETE) : dernière lecture réussie, ni mise à jour ni supprimée ni déverrouillée
+  private current: object | undefined;
+  // Enregistrement verrouillé par ce fichier dans le registre partagé
+  private held: object | undefined;
+  private locks: WeakMap<object, NativeFile>;
 
   // source : tableau, ou fonction le renvoyant (relue à chaque opération : le moteur SQL peut remplacer le tableau)
   // options.rowsDeleted : des lignes ont-elles été supprimées avant la déclaration du fichier (numéros d'enregistrement décalés) ?
   // options.revision : numéro de version des données (change à chaque modification) ; sans lui, toutes les lignes
   // sont revérifiées à chaque opération
+  // options.updatable : fichier ouvert en mise à jour (les lectures réussies verrouillent l'enregistrement)
+  // options.uniqueKeys : zones de la clé unique de la table, contrôlées à l'écriture même sans accès par clé
+  // options.locks : registre des verrous, partagé par toutes les ouvertures d'une même table
   constructor(readonly name: string, readonly format: string, readonly fields: FieldDefinition[],
               readonly keys: string[], private source: any[] | (() => any[]),
-              private options: { rowsDeleted?: () => boolean; revision?: () => number } = {}) {
-    for (const key of keys) {
+              private options: { rowsDeleted?: () => boolean; revision?: () => number; updatable?: boolean;
+                                 uniqueKeys?: string[]; locks?: WeakMap<object, NativeFile> } = {}) {
+    for (const key of [...keys, ...(options.uniqueKeys ?? [])]) {
       if (!fields.some(f => f.name === key)) {
         throw new Error(`Zone clé ${key} absente des zones du fichier ${name}`);
       }
     }
+    this.locks = options.locks ?? new WeakMap();
     for (const row of this.observe()) {
       this.seen.add(row);
       this.sequenceOf(row);
@@ -158,18 +170,22 @@ export class NativeFile {
 
   // OPEN : retour au début ; les lignes déjà vues restent connues (un enregistrement supprimé garde son numéro)
   reset(): void {
+    this.release();
     this.cursor = { side: 'before', at: 'start' };
     this.eofReached = undefined;
+    this.last = undefined;
   }
 
   read(): FileResult {
     this.checkPosition();
+    this.checkCurrentKey();
     if (this.eofReached === 'read') {
       throw new NotSupportedError(`READ de ${this.name} après la fin de fichier (comportement IBM i non vérifié)`);
     }
     this.eofReached = undefined;
     const item = this.next();
     if (!item) {
+      this.drop();
       this.cursor = { side: 'after', at: 'end' };
       this.eofReached = 'read';
       return { found: false, eof: true, equal: false };
@@ -179,12 +195,14 @@ export class NativeFile {
 
   readp(): FileResult {
     this.checkPosition();
+    this.checkCurrentKey();
     if (this.eofReached === 'readp') {
       throw new NotSupportedError(`READP de ${this.name} après le début de fichier (comportement IBM i non vérifié)`);
     }
     this.eofReached = undefined;
     const item = this.previous();
     if (!item) {
+      this.drop();
       this.cursor = { side: 'before', at: 'start' };
       this.eofReached = 'readp';
       return { found: false, eof: true, equal: false };
@@ -195,6 +213,7 @@ export class NativeFile {
   reade(key: any[]): FileResult {
     const wanted = this.searchKey(key);
     this.checkPosition();
+    this.checkCurrentKey();
     this.eofReached = undefined;
     const item = this.next();
     if (!item || this.compare(item.key, wanted) !== 0) return this.mismatch();
@@ -204,6 +223,7 @@ export class NativeFile {
   readpe(key: any[]): FileResult {
     const wanted = this.searchKey(key);
     this.checkPosition();
+    this.checkCurrentKey();
     this.eofReached = undefined;
     const item = this.previous();
     if (!item || this.compare(item.key, wanted) !== 0) return this.mismatch();
@@ -215,6 +235,7 @@ export class NativeFile {
     this.eofReached = undefined;
     const item = this.ordered().find(it => this.compare(it.key, wanted) === 0);
     if (!item) {
+      this.drop();
       this.cursor = { side: 'lost' };
       return { found: false, eof: false, equal: false };
     }
@@ -238,6 +259,7 @@ export class NativeFile {
     this.eofReached = undefined;
     const row = rows[n - 1];
     if (!row) {
+      this.drop();
       this.cursor = { side: 'lost' };
       return { found: false, eof: false, equal: false };
     }
@@ -270,16 +292,132 @@ export class NativeFile {
     return { found: items.some(it => this.compare(it.key, wanted) > 0), eof: false, equal: false };
   }
 
+  // WRITE : nouvel enregistrement en fin de table ; ni la position ni l'enregistrement courant ne changent
+  write(values: { [zone: string]: any }): { failure?: 'duplicate' } {
+    const rows = this.observe();
+    if (this.duplicates(rows, values, undefined)) return { failure: 'duplicate' };
+    rows.push({ ...values });
+    this.sorted = undefined;
+    return {};
+  }
+
+  // UPDATE : réécrit l'enregistrement courant, qui cesse de l'être (verrou libéré, position inchangée)
+  update(values: { [zone: string]: any }): { failure?: 'noCurrent' | 'duplicate' } {
+    const row: any = this.current;
+    if (!row) return { failure: 'noCurrent' };
+    if (this.duplicates(this.observe(), values, row)) return { failure: 'duplicate' };
+    for (const [zone, value] of Object.entries(values)) row[this.columnOf(row, zone) ?? zone] = value;
+    this.sorted = undefined;
+    this.drop();
+    return {};
+  }
+
+  // DELETE sans clé : supprime l'enregistrement courant (le READ suivant lit celui qui le suivait)
+  delete(): { failure?: 'noCurrent' } {
+    const row = this.current;
+    if (!row) return { failure: 'noCurrent' };
+    const rows = this.observe();
+    const index = rows.indexOf(row);
+    if (index >= 0) rows.splice(index, 1);
+    this.sorted = undefined;
+    this.drop();
+    return {};
+  }
+
+  // DELETE par clé : premier enregistrement de cette clé ; position et enregistrement courant inchangés
+  deleteByKey(key: any[]): { found: boolean } {
+    const wanted = this.searchKey(key);
+    const item = this.ordered().find(it => this.compare(it.key, wanted) === 0);
+    if (!item) return { found: false };
+    this.checkLock(item.row);
+    const rows = this.rows;
+    rows.splice(rows.indexOf(item.row), 1);
+    this.sorted = undefined;
+    if (item.row === this.current) this.drop();
+    return { found: true };
+  }
+
+  // UNLOCK : plus d'enregistrement courant, verrou libéré
+  unlock(): void {
+    this.drop();
+  }
+
+  // Fermeture, fin de programme : libère les verrous tenus par ce fichier
+  release(): void {
+    this.drop();
+  }
+
   // --- Interne ---
 
-  // Lecture réussie : le fichier est positionné sur l'enregistrement lu
+  // Lecture réussie : le fichier est positionné sur l'enregistrement lu, qui devient l'enregistrement courant
   private readOn(item: Item): FileResult {
+    this.take(item.row);
     this.cursor = { side: 'on', at: item.key };
+    this.last = item;
     return { record: item.row, found: true, eof: false, equal: false };
+  }
+
+  // Fichier en mise à jour : verrouille l'enregistrement (refusé s'il est tenu par une autre ouverture)
+  private take(row: object): void {
+    if (this.options.updatable) {
+      this.checkLock(row);
+      if (this.held !== undefined && this.held !== row) this.unlockHeld();
+      this.locks.set(row, this);
+      this.held = row;
+    }
+    this.current = row;
+  }
+
+  private checkLock(row: object): void {
+    const owner = this.locks.get(row);
+    if (owner !== undefined && owner !== this) {
+      throw new NotSupportedError(`Enregistrement du fichier ${this.name} verrouillé par un autre programme (attente de verrou non simulée)`);
+    }
+  }
+
+  // Plus d'enregistrement courant, verrou libéré
+  private drop(): void {
+    this.current = undefined;
+    this.unlockHeld();
+  }
+
+  private unlockHeld(): void {
+    if (this.held !== undefined && this.locks.get(this.held) === this) this.locks.delete(this.held);
+    this.held = undefined;
+  }
+
+  // Lecture séquentielle depuis un enregistrement dont la clé a changé depuis sa lecture : position IBM i non vérifiée
+  private checkCurrentKey(): void {
+    const last = this.last;
+    if (this.cursor.side !== 'on' || last === undefined) return;
+    if (this.compare(this.entryOf(last.row).key, last.key) === 0) return;   // clé en cache : contrôle rapide
+    if (!this.rows.includes(last.row)) return;
+    throw new NotSupportedError(`Lecture séquentielle de ${this.name} après modification de la clé de l'enregistrement courant (position IBM i non vérifiée)`);
+  }
+
+  // Colonne d'une ligne correspondant à une zone (casse ignorée)
+  private columnOf(row: any, zone: string): string | undefined {
+    return Object.keys(row).find(c => c.toUpperCase() === zone.toUpperCase());
+  }
+
+  // Une autre ligne a-t-elle les mêmes valeurs sur les zones de la clé unique ?
+  private duplicates(rows: any[], values: { [zone: string]: any }, except: any): boolean {
+    const unique = this.options.uniqueKeys;
+    if (!unique || unique.length === 0) return false;
+    const valueOf = (row: any, zone: string) => {
+      const column = this.columnOf(row, zone);
+      return column === undefined ? undefined : row[column];
+    };
+    const wanted = unique.map(zone => {
+      const column = this.columnOf(values, zone);
+      return this.dataKey(zone, column !== undefined ? values[column] : except !== undefined ? valueOf(except, zone) : undefined);
+    });
+    return rows.some(row => row !== except && unique.every((zone, i) => this.dataKey(zone, valueOf(row, zone)) === wanted[i]));
   }
 
   // READE/READPE sans correspondance : %EOF, position IBM i non vérifiée
   private mismatch(): FileResult {
+    this.drop();
     this.cursor = { side: 'lost' };
     return { found: false, eof: true, equal: false };
   }
