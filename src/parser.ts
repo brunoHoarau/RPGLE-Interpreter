@@ -122,15 +122,11 @@ export class Parser {
       if (lower === 'disk') {
         // périphérique par défaut ; DISK(*EXT) est équivalent
         if (this.check(TokenType.LPAREN)) {
-          let text = '';
-          let i = this.pos + 1;
-          for (; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
-            text += this.tokens[i].value;
-          }
-          if (text.toLowerCase() !== '*ext' || this.tokens[i]?.type !== TokenType.RPAREN) {
+          const { text, end } = this.parenText();
+          if (text.toLowerCase() !== '*ext' || this.tokens[end]?.type !== TokenType.RPAREN) {
             throw unsupported(`DISK(${text.toUpperCase()}) de DCL-F`, word);
           }
-          this.pos = i + 1;
+          this.pos = end + 1;
         }
       } else if (lower === 'keyed') {
         keyed = true;
@@ -267,19 +263,15 @@ export class Parser {
     const paren = this.peek();
     if (paren.type === TokenType.LPAREN &&
         (!keyed || (paren.line === opToken.line && paren.column === opToken.column))) {
-      let text = '';
-      let i = this.pos + 1;
-      for (; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
-        text += this.tokens[i].value;
-      }
+      const { text, end } = this.parenText();
       // E et N, dans n'importe quel ordre, une fois chacune ; N seulement sur les lectures
       const letters = text.toLowerCase();
-      const valid = this.tokens[i]?.type === TokenType.RPAREN && letters.length > 0 && /^[en]+$/.test(letters) &&
+      const valid = this.tokens[end]?.type === TokenType.RPAREN && letters.length > 0 && /^[en]+$/.test(letters) &&
         new Set(letters).size === letters.length &&
         (!letters.includes('n') || (READ_OPERATIONS.has(operation) && operation !== 'setll' && operation !== 'setgt'));
       if (!valid) throw unsupported(`L'extenseur (${text.toUpperCase()}) de ${opName}`, opToken);
       extender = { error: letters.includes('e'), noLock: letters.includes('n') };
-      this.pos = i + 1;
+      this.pos = end + 1;
       // DELETE [clé] fichier : la présence d'une clé se juge après l'extenseur
       if (operation === 'delete') keyed = !(this.check(TokenType.IDENTIFIER) && this.peekNext()?.type === TokenType.SEMICOLON);
     }
@@ -1026,11 +1018,7 @@ export class Parser {
     // CALLP [(E)] proc(...) : CALLP est facultatif en free form
     if (lower === 'callp' && (this.isName() || this.check(TokenType.LPAREN))) {
       if (this.check(TokenType.LPAREN)) {
-        let text = '';
-        for (let i = this.pos + 1; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
-          text += this.tokens[i].value;
-        }
-        throw unsupported(`L'extenseur (${text.toUpperCase()}) de CALLP`, nameToken);
+        throw unsupported(`L'extenseur (${this.parenText().text.toUpperCase()}) de CALLP`, nameToken);
       }
       return this.parseAssignmentOrCall();
     }
@@ -1047,15 +1035,11 @@ export class Parser {
     // UNLOCK(E) fichier : seul l'extenseur E est accepté (N ne vaut que pour les lectures)
     let unlockExtender: FileOperationNode['extender'];
     if (lower === 'unlock' && this.check(TokenType.LPAREN)) {
-      let text = '';
-      let i = this.pos + 1;
-      for (; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
-        text += this.tokens[i].value;
-      }
-      if (this.tokens[i]?.type === TokenType.RPAREN && this.tokens[i + 1]?.type === TokenType.IDENTIFIER) {
+      const { text, end } = this.parenText();
+      if (this.tokens[end]?.type === TokenType.RPAREN && this.tokens[end + 1]?.type === TokenType.IDENTIFIER) {
         if (text.toLowerCase() !== 'e') throw unsupported(`L'extenseur (${text.toUpperCase()}) de UNLOCK`, nameToken);
         unlockExtender = { error: true, noLock: false };
-        this.pos = i + 1;
+        this.pos = end + 1;
       }
     }
     const isNameUse = this.check(TokenType.EQUALS) || this.checkCompound() || this.check(TokenType.DOT) || this.check(TokenType.LPAREN);
@@ -1453,6 +1437,17 @@ export class Parser {
 
   private isAtEnd(): boolean {
     return this.peek().type === TokenType.EOF;
+  }
+
+  // Parenthèse ouvrante au jeton courant : texte des jetons jusqu'à la parenthèse fermante (ou ';', fin) exclue,
+  // et indice du jeton qui l'arrête (RPAREN si bien formé). Ne consomme rien.
+  private parenText(): { text: string; end: number } {
+    let text = '';
+    let end = this.pos + 1;
+    for (; this.tokens[end] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[end].type); end++) {
+      text += this.tokens[end].value;
+    }
+    return { text, end };
   }
 
   private parseDsply(): ASTNode {
