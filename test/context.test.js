@@ -103,3 +103,10 @@ test('tables.json : keys et format mal formés refusés', () => {
   const badFormat2 = folderWith({ 'tables.json': '{ "T": { "schema": { "a": "INT" }, "format": 5, "data": [] } }' });
   assert.throws(() => loadContextFromFolder(badFormat2), /"format" doit être un nom/);
 });
+
+test('tables.json : option unique', () => {
+  const ok = folderWith({ 'tables.json': '{ "T": { "schema": { "a": "int(10)" }, "keys": ["a"], "unique": true, "data": [] } }' });
+  assert.equal(loadContextFromFolder(ok).tables.T.unique, true);
+  const bad = folderWith({ 'tables.json': '{ "T": { "schema": { "a": "int(10)" }, "keys": ["a"], "unique": "oui", "data": [] } }' });
+  assert.throws(() => loadContextFromFolder(bad), /"unique" doit être vrai ou faux/);
+});

@@ -10,6 +10,7 @@ export interface TableDefinition {
   data: any[];
   keys?: string[];   // Clés du fichier logique/physique, en majuscules
   format?: string;   // Nom du format d'enregistrement, en majuscules
+  unique?: boolean;  // Clé unique : un WRITE avec une clé déjà présente est refusé
   deletedRows?: boolean; // Positionné par un DELETE SQL : les numéros d'enregistrement ne sont plus fiables
   revision?: number;     // Incrémenté par chaque INSERT, UPDATE ou DELETE SQL (cache des fichiers natifs)
 }
@@ -101,6 +102,12 @@ function normalizeTables(raw: any, sourcePath: string): { [name: string]: TableD
           throw new Error(`Table '${tableName}' de ${sourcePath} : "format" doit être un nom`);
         }
         definition.format = table.format.toUpperCase();
+      }
+      if (table.unique !== undefined) {
+        if (typeof table.unique !== 'boolean') {
+          throw new Error(`Table '${tableName}' de ${sourcePath} : "unique" doit être vrai ou faux`);
+        }
+        definition.unique = table.unique;
       }
       result[tableName.toUpperCase()] = definition;
     } else if (Array.isArray(table)) {

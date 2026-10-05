@@ -8,16 +8,42 @@ const NOT_SUPPORTED = /pas encore support/i;
 
 // --- Opérations ---
 
-test('WRITE, UPDATE, DELETE sont refusés', () => {
-  for (const op of ['write fmt;', 'update fmt;', 'delete fmt;']) {
-    assert.throws(() => parse(op), NOT_SUPPORTED, op);
+test('USAGE : combinaisons acceptées à l\'analyse', () => {
+  assert.doesNotThrow(() => parse(`
+    dcl-f a usage(*output);
+    dcl-f b usage(*update);
+    dcl-f c usage(*update : *delete : *output) keyed;
+    dcl-f d usage(*input : *output);
+    dcl-f e usage(*delete);
+    write af;
+    read b; update bf; unlock b;
+    chain 1 c; delete cf; delete (1) cf; delete 2 cf; write cf;
+    read e; delete ef;
+  `));
+});
+
+test('lecture sur un fichier en sortie seule : erreur d\'analyse', () => {
+  assert.throws(() => parse(`dcl-f a usage(*output); read a;`), /A.*sortie/i);
+  assert.throws(() => parse(`dcl-f a usage(*output) keyed; chain 1 a;`), /A.*sortie/i);
+  assert.throws(() => parse(`dcl-f a usage(*output); unlock zz;`), /ZZ.*non déclaré/i);
+});
+
+test('écriture : constructions non supportées refusées', () => {
+  for (const src of [
+    'dcl-f b usage(*update); read b; update bf %fields(nom);',
+    'dcl-f b usage(*update); read b; update bf ds;',
+    'dcl-f a usage(*output); write af ds;',
+    'dcl-f a usage(*output); write(e) af;',
+    'dcl-f b usage(*update); read(n) b;',
+    'dcl-f a usage(*output : *xyz);',
+  ]) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
   }
 });
 
 test('DCL-F : périphériques et mots-clés non supportés refusés', () => {
   for (const src of [
     'dcl-f ecran workstn;', 'dcl-f etat printer;', 'dcl-f f special;',
-    'dcl-f client usage(*update);', 'dcl-f client usage(*input:*output);',
     'dcl-f client prefix(c_);', 'dcl-f client rename(clientf:r);', "dcl-f client extfile('LIB/CLIENT');",
     'dcl-f client infds(ds);', 'dcl-f client qualified;', 'dcl-f client alias;', 'dcl-f client block(*no);',
     'dcl-proc p; dcl-f client; end-proc;',
@@ -30,7 +56,6 @@ test('opérations de fichier non supportées refusées', () => {
   for (const src of [
     'dcl-f client keyed; reade client;', 'dcl-f client keyed; readpe client;',
     'dcl-f client keyed; chain %kds(k) client;', 'dcl-f client keyed; read(e) client;',
-    'dcl-f client keyed; write clientf;', 'dcl-f client keyed; update clientf;', 'dcl-f client keyed; delete clientf;',
     'dcl-f client keyed; readc client;', 'dcl-f client keyed; read client ds;',
   ]) {
     assert.throws(() => parse(src), NOT_SUPPORTED, src);

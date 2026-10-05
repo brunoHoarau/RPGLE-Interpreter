@@ -282,12 +282,13 @@ export interface FileDeclarationNode {
   name: string;      // nom tel qu'écrit
   keyed: boolean;
   usropn: boolean;
+  usage: { input: boolean; output: boolean; update: boolean; delete: boolean };
   line: number;
 }
 
 export interface FileOperationNode {
   type: 'FileOperation';
-  operation: 'read' | 'readp' | 'reade' | 'readpe' | 'chain' | 'setll' | 'setgt' | 'open' | 'close';
+  operation: 'read' | 'readp' | 'reade' | 'readpe' | 'chain' | 'setll' | 'setgt' | 'open' | 'close' | 'write' | 'update' | 'delete' | 'unlock';
   file: string;                // nom de fichier ou de format, tel qu'écrit
   key?: ExpressionNode[];      // liste de valeurs de clé
   special?: 'start' | 'end';   // *START / *LOVAL, *END / *HIVAL
