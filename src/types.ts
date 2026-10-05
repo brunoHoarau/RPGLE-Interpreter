@@ -283,6 +283,10 @@ export interface FileDeclarationNode {
   keyed: boolean;
   usropn: boolean;
   usage: { input: boolean; output: boolean; update: boolean; delete: boolean };
+  rename?: { from: string; to: string };           // RENAME(format:nouveau), majuscules
+  prefix?: { text: string; count?: number };       // PREFIX(texte[:n]), texte en majuscules sans apostrophes
+  extfile?: string;                                // EXTFILE : nom de table en majuscules, bibliothèque retirée, ou '*EXTDESC'
+  extdesc?: string;                                // EXTDESC : idem
   line: number;
 }
 
@@ -292,6 +296,8 @@ export interface FileOperationNode {
   file: string;                // nom de fichier ou de format, tel qu'écrit
   key?: ExpressionNode[];      // liste de valeurs de clé
   special?: 'start' | 'end';   // *START / *LOVAL, *END / *HIVAL
+  lastKey?: boolean;           // READE / READPE sans clé : clé du dernier enregistrement lu
+  extender?: { error: boolean; noLock: boolean }; // extenseurs (E) et (N)
   line: number;
 }
 

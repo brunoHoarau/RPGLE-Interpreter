@@ -592,3 +592,78 @@ test('duplicateKey : première clé unique en double dans les données', () => {
   assert.deepEqual(file.duplicateKey(), { NUMCLI: 1 });
   assert.equal(new f.NativeFile('CL', 'CLF', WF, [], wrows(), { uniqueKeys: ['NUMCLI'] }).duplicateKey(), undefined);
 });
+
+// --- Incrément 3a ---
+
+test('READE sans clé : clé complète du dernier enregistrement lu', () => {
+  const F3 = [{ name: 'NUMCLI', type: t('packed', 7, 0) }, { name: 'LIB', type: t('char', 5) }];
+  const rows = [{ NUMCLI: 1, LIB: 'a' }, { NUMCLI: 1, LIB: 'b' }, { NUMCLI: 2, LIB: 'c' }];
+  const file = new f.NativeFile('CDE', 'CDEF', F3, ['NUMCLI'], rows);
+  assert.throws(() => file.reade('last'), NOT_SUPPORTED);
+  assert.equal(file.chain([1]).record.LIB, 'a');
+  assert.equal(file.reade('last').record.LIB, 'b');
+  assert.equal(file.reade('last').eof, true);
+  file.setll('end');
+  assert.equal(file.readp().record.LIB, 'c');
+  assert.equal(file.readpe('last').eof, true);
+});
+
+test('lecture sans verrou : pas d\'enregistrement courant, pas de verrou', () => {
+  const rows = wrows();
+  const locks = new WeakMap();
+  const a = wopen(rows, { locks });
+  const b = wopen(rows, { locks });
+  assert.equal(a.chain([2], { noLock: true }).record.NOM, 'B');
+  assert.equal(a.update({ NUMCLI: 2, NOM: 'X' }).failure, 'noCurrent');
+  assert.equal(b.chain([2]).record.NOM, 'B');
+  assert.equal(a.read({ noLock: true }).record.NOM, 'C');
+  assert.equal(a.reade('last', { noLock: true }).eof, true);
+});
+
+test('READE/READPE sans clé : refusé sur fichier sans clé, après SETLL/SETGT, DELETE ou lecture en échec', () => {
+  const nokey = new f.NativeFile('SK', 'SKF', WF, [], wrows());
+  nokey.read();
+  assert.throws(() => nokey.reade('last'), NOT_SUPPORTED);
+  for (const reposition of [x => x.setll([5]), x => x.setll('start'), x => x.setll('end'), x => x.setgt([1])]) {
+    const file = wopen(wrows());
+    file.chain([1]);
+    reposition(file);
+    assert.throws(() => file.reade('last'), NOT_SUPPORTED);
+    assert.throws(() => file.readpe('last'), NOT_SUPPORTED);
+  }
+  const d = wopen(wrows());
+  d.chain([1]);
+  assert.deepEqual(d.delete(), {});
+  assert.throws(() => d.reade('last'), NOT_SUPPORTED);
+  const k = wopen(wrows());
+  k.chain([1]);
+  k.deleteByKey([2]);
+  assert.throws(() => k.reade('last'), NOT_SUPPORTED);
+  const m = wopen(wrows());
+  m.chain([1]);
+  assert.equal(m.chain([9]).found, false);
+  assert.throws(() => m.reade('last'), NOT_SUPPORTED);
+  const e = wopen(wrows());
+  e.setll([3]);
+  assert.equal(e.read().record.NOM, 'C');
+  assert.equal(e.read().eof, true);
+  assert.throws(() => e.reade('last'), NOT_SUPPORTED);
+});
+
+test('lecture sans verrou : libère le verrou précédent ; readp, readpe, chainRrn', () => {
+  const rows = wrows();
+  const locks = new WeakMap();
+  const a = wopen(rows, { locks });
+  const b = wopen(rows, { locks });
+  a.chain([2]);
+  assert.throws(() => b.chain([2]), NOT_SUPPORTED);
+  assert.equal(a.chain([3], { noLock: true }).record.NOM, 'C');
+  assert.equal(b.chain([2]).record.NOM, 'B');
+  assert.equal(a.readp({ noLock: true }).record.NOM, 'B');
+  assert.equal(a.update({ NUMCLI: 2, NOM: 'X' }).failure, 'noCurrent');
+  assert.equal(a.readpe('last', { noLock: true }).eof, true);
+  assert.equal(a.update({ NUMCLI: 2, NOM: 'X' }).failure, 'noCurrent');
+  const n = new f.NativeFile('SK', 'SKF', WF, [], rows, { updatable: true, locks });
+  assert.equal(n.chainRrn(1, { noLock: true }).record.NOM, 'A');
+  assert.equal(n.update({ NUMCLI: 1, NOM: 'X' }).failure, 'noCurrent');
+});

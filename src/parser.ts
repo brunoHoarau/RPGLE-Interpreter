@@ -40,7 +40,7 @@ const INDICATOR = /^\*in(lr|\d\d)$/;
 const SUPPORTED_SPECIAL_VALUES = new Set(['*on', '*off', '*zero', '*zeros', '*blank', '*blanks']);
 
 // Fonctions valides sans parenthèses
-const NO_ARGUMENT_BUILTINS = new Set(['%date', '%time', '%timestamp', '%status']);
+const NO_ARGUMENT_BUILTINS = new Set(['%date', '%time', '%timestamp', '%status', '%error']);
 const FORMAT_BUILTINS = new Set(['%char', '%date', '%time', '%timestamp']);
 
 // Position (0 = 1er argument) de l'unité de date (*DAYS, *M...) dans %DIFF et %SUBDT
@@ -112,21 +112,21 @@ export class Parser {
     let keyed = false;
     let usropn = false;
     let usage: FileDeclarationNode['usage'] | undefined;
+    let rename: FileDeclarationNode['rename'];
+    let prefix: FileDeclarationNode['prefix'];
+    let extfile: string | undefined;
+    let extdesc: string | undefined;
     while (!this.check(TokenType.SEMICOLON) && !this.isAtEnd()) {
       const word = this.advance();
       const lower = word.value.toLowerCase();
       if (lower === 'disk') {
         // périphérique par défaut ; DISK(*EXT) est équivalent
         if (this.check(TokenType.LPAREN)) {
-          let text = '';
-          let i = this.pos + 1;
-          for (; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
-            text += this.tokens[i].value;
-          }
-          if (text.toLowerCase() !== '*ext' || this.tokens[i]?.type !== TokenType.RPAREN) {
+          const { text, end } = this.parenText();
+          if (text.toLowerCase() !== '*ext' || this.tokens[end]?.type !== TokenType.RPAREN) {
             throw unsupported(`DISK(${text.toUpperCase()}) de DCL-F`, word);
           }
-          this.pos = i + 1;
+          this.pos = end + 1;
         }
       } else if (lower === 'keyed') {
         keyed = true;
@@ -134,17 +134,71 @@ export class Parser {
         usropn = true;
       } else if (lower === 'usage') {
         usage = this.parseUsage(word);
+      } else if (lower === 'rename') {
+        this.expect(TokenType.LPAREN);
+        const from = this.expectName();
+        if (!this.check(TokenType.COLON)) throw new Error(`RENAME attend deux noms : format et nouveau nom (ligne ${word.line})`);
+        this.advance();
+        const to = this.expectName();
+        this.expect(TokenType.RPAREN);
+        rename = { from: from.value.toUpperCase(), to: to.value.toUpperCase() };
+      } else if (lower === 'prefix') {
+        this.expect(TokenType.LPAREN);
+        const text = this.advance();
+        if (text.type !== TokenType.IDENTIFIER && text.type !== TokenType.STRING) throw unsupported('PREFIX de DCL-F mal formé', text);
+        // PREFIX('DS.') : zones placées dans une structure qualifiée
+        if (text.value.includes('.') || this.check(TokenType.DOT)) {
+          throw unsupported('PREFIX de DCL-F vers une structure qualifiée (avec un point)', text);
+        }
+        prefix = { text: text.value.toUpperCase() };
+        if (this.check(TokenType.COLON)) {
+          this.advance();
+          const count = this.advance();
+          if (count.type !== TokenType.NUMBER || !/^[0-9]+$/.test(count.value)) throw unsupported('PREFIX de DCL-F mal formé', count);
+          prefix.count = parseInt(count.value);
+        }
+        this.expect(TokenType.RPAREN);
+      } else if (lower === 'extfile' || lower === 'extdesc') {
+        this.expect(TokenType.LPAREN);
+        const value = this.advance();
+        const isExtdescValue = value.type === TokenType.SPECIAL_VALUE && value.value.toLowerCase() === '*extdesc';
+        if (value.type !== TokenType.STRING && !(lower === 'extfile' && isExtdescValue)) {
+          throw unsupported(`${lower.toUpperCase()}(variable)`, value);
+        }
+        if (!this.check(TokenType.RPAREN)) throw unsupported(`${lower.toUpperCase()} de DCL-F mal formé`, this.peek());
+        this.advance();
+        // 'BIBLIOTHEQUE/TABLE' : seule la table compte. Entre apostrophes, le nom est sensible à la casse :
+        // 'client' ne désigne pas l'objet CLIENT sur IBM i (les noms de tables.json sont en majuscules)
+        const literal = value.value.trim();
+        const parts = literal.split('/');
+        if (!isExtdescValue && (parts.length > 2 || parts.some(part => part === ''))) {
+          throw new Error(`${lower.toUpperCase()}('${literal}') du fichier ${key} : nom de fichier mal formé (ligne ${value.line})`);
+        }
+        if (!isExtdescValue && /[a-z]/.test(literal)) {
+          throw new Error(`${lower.toUpperCase()}('${literal}') du fichier ${key} : entre apostrophes, le nom est sensible à la casse `
+            + `et les noms d'objets IBM i sont en majuscules : écrivez '${literal.toUpperCase()}' (ligne ${value.line})`);
+        }
+        const name = isExtdescValue ? '*EXTDESC' : parts[parts.length - 1];
+        if (lower === 'extfile') extfile = name; else extdesc = name;
       } else if (lower === 'workstn' || lower === 'printer' || lower === 'special') {
         throw unsupported(`DCL-F ${lower.toUpperCase()}`, word);
       } else {
         throw unsupported(`Le mot-clé ${word.value.toUpperCase()} de DCL-F`, word);
       }
     }
+    if (extfile === '*EXTDESC' && extdesc === undefined) {
+      throw new Error(`EXTFILE(*EXTDESC) du fichier ${key} sans le mot-clé EXTDESC (ligne ${start.line})`);
+    }
     this.expect(TokenType.SEMICOLON);
     this.fileNames.add(key);
     const finalUsage = usage ?? { input: true, output: false, update: false, delete: false };
     this.fileUsage.set(key, finalUsage);
-    return { type: 'FileDeclaration', name: nameToken.value, keyed, usropn, usage: finalUsage, line: start.line };
+    const node: FileDeclarationNode = { type: 'FileDeclaration', name: nameToken.value, keyed, usropn, usage: finalUsage, line: start.line };
+    if (rename) node.rename = rename;
+    if (prefix) node.prefix = prefix;
+    if (extfile !== undefined) node.extfile = extfile;
+    if (extdesc !== undefined) node.extdesc = extdesc;
+    return node;
   }
 
   // USAGE(*INPUT : *OUTPUT : *UPDATE : *DELETE) ; *UPDATE implique *INPUT, *DELETE implique *INPUT et *UPDATE
@@ -215,14 +269,27 @@ export class Parser {
     // Extenseur (E), (N)... : collé au code opération. Avec un blanc, c'est la liste de clé.
     // Convention du lexer : la colonne d'un mot est celle de sa fin, celle d'une parenthèse celle de son début ;
     // une parenthèse collée au mot a donc la même colonne que lui.
+    let extender: FileOperationNode['extender'];
     const paren = this.peek();
     if (paren.type === TokenType.LPAREN &&
         (!keyed || (paren.line === opToken.line && paren.column === opToken.column))) {
-      let text = '';
-      for (let i = this.pos + 1; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
-        text += this.tokens[i].value;
-      }
-      throw unsupported(`L'extenseur (${text.toUpperCase()}) de ${opName}`, opToken);
+      const { text, end } = this.parenText();
+      // E et N, dans n'importe quel ordre, une fois chacune ; N seulement sur les lectures
+      const letters = text.toLowerCase();
+      const valid = this.tokens[end]?.type === TokenType.RPAREN && letters.length > 0 && /^[en]+$/.test(letters) &&
+        new Set(letters).size === letters.length &&
+        (!letters.includes('n') || (READ_OPERATIONS.has(operation) && operation !== 'setll' && operation !== 'setgt'));
+      if (!valid) throw unsupported(`L'extenseur (${text.toUpperCase()}) de ${opName}`, opToken);
+      extender = { error: letters.includes('e'), noLock: letters.includes('n') };
+      this.pos = end + 1;
+      // DELETE [clé] fichier : la présence d'une clé se juge après l'extenseur
+      if (operation === 'delete') keyed = !(this.check(TokenType.IDENTIFIER) && this.peekNext()?.type === TokenType.SEMICOLON);
+    }
+    // READE / READPE sans clé : clé du dernier enregistrement lu
+    let lastKey = false;
+    if ((operation === 'reade' || operation === 'readpe') && this.check(TokenType.IDENTIFIER) && this.peekNext()?.type === TokenType.SEMICOLON) {
+      keyed = false;
+      lastKey = true;
     }
 
     let key: ExpressionNode[] | undefined;
@@ -262,6 +329,8 @@ export class Parser {
     const node: FileOperationNode = { type: 'FileOperation', operation, file: fileToken.value, line: opToken.line };
     if (key) node.key = key;
     if (special) node.special = special;
+    if (lastKey) node.lastKey = true;
+    if (extender) node.extender = extender;
     return node;
   }
 
@@ -958,7 +1027,9 @@ export class Parser {
 
     // CALLP [(E)] proc(...) : CALLP est facultatif en free form
     if (lower === 'callp' && (this.isName() || this.check(TokenType.LPAREN))) {
-      if (this.check(TokenType.LPAREN)) this.skipParenthesized();
+      if (this.check(TokenType.LPAREN)) {
+        throw unsupported(`L'extenseur (${this.parenText().text.toUpperCase()}) de CALLP`, nameToken);
+      }
       return this.parseAssignmentOrCall();
     }
 
@@ -971,15 +1042,14 @@ export class Parser {
       return this.parseAssignmentOrCall();
     }
 
-    // UNLOCK(E) fichier : extenseur refusé comme pour les autres opérations de fichier
+    // UNLOCK(E) fichier : seul l'extenseur E est accepté (N ne vaut que pour les lectures)
+    let unlockExtender: FileOperationNode['extender'];
     if (lower === 'unlock' && this.check(TokenType.LPAREN)) {
-      let text = '';
-      let i = this.pos + 1;
-      for (; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
-        text += this.tokens[i].value;
-      }
-      if (this.tokens[i]?.type === TokenType.RPAREN && this.tokens[i + 1]?.type === TokenType.IDENTIFIER) {
-        throw unsupported(`L'extenseur (${text.toUpperCase()}) de UNLOCK`, nameToken);
+      const { text, end } = this.parenText();
+      if (this.tokens[end]?.type === TokenType.RPAREN && this.tokens[end + 1]?.type === TokenType.IDENTIFIER) {
+        if (text.toLowerCase() !== 'e') throw unsupported(`L'extenseur (${text.toUpperCase()}) de UNLOCK`, nameToken);
+        unlockExtender = { error: true, noLock: false };
+        this.pos = end + 1;
       }
     }
     const isNameUse = this.check(TokenType.EQUALS) || this.checkCompound() || this.check(TokenType.DOT) || this.check(TokenType.LPAREN);
@@ -988,7 +1058,9 @@ export class Parser {
       const fileToken = this.expectName();
       this.expect(TokenType.SEMICOLON);
       this.requireFile(fileToken.value, fileToken.line, true);
-      return { type: 'FileOperation', operation: 'unlock', file: fileToken.value, line: nameToken.line } as FileOperationNode;
+      const node: FileOperationNode = { type: 'FileOperation', operation: 'unlock', file: fileToken.value, line: nameToken.line };
+      if (unlockExtender) node.extender = unlockExtender;
+      return node;
     }
     if (UNSUPPORTED_OPCODES.has(lower) && !isNameUse) {
       throw unsupported(`L'opération ${name.toUpperCase()}`, nameToken);
@@ -1375,6 +1447,17 @@ export class Parser {
 
   private isAtEnd(): boolean {
     return this.peek().type === TokenType.EOF;
+  }
+
+  // Parenthèse ouvrante au jeton courant : texte des jetons jusqu'à la parenthèse fermante (ou ';', fin) exclue,
+  // et indice du jeton qui l'arrête (RPAREN si bien formé). Ne consomme rien.
+  private parenText(): { text: string; end: number } {
+    let text = '';
+    let end = this.pos + 1;
+    for (; this.tokens[end] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[end].type); end++) {
+      text += this.tokens[end].value;
+    }
+    return { text, end };
   }
 
   private parseDsply(): ASTNode {

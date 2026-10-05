@@ -109,12 +109,6 @@ test('%STATUS sans parenthèses', () => {
   assert.deepEqual(out, ['statut 102']);
 });
 
-test('%ERROR reste refusé', () => {
-  for (const src of ['if %error; endif;']) {
-    assert.throws(() => parse(src), NOT_SUPPORTED, src);
-  }
-});
-
 test('variables, champs et paramètres nommés comme un type', () => {
   const out = run(`
     dcl-s zoned zoned(4:0);

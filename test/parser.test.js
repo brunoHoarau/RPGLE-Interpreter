@@ -83,3 +83,20 @@ test('write, update, delete, unlock restent utilisables comme noms', () => {
   const ast = parse(`dcl-s write int(5); dcl-s update int(5); write = 1; update += 2; delete = write; unlock = 3;`);
   assert.equal(ast.body.filter(n => n.type === 'Assignment').length, 4);
 });
+
+test('3a : AST des mots-clés de DCL-F, des extenseurs et de READE sans clé', () => {
+  const ast = parse(`
+    dcl-f cli2 prefix('X':2) extfile('MABIB/CLIENT') extdesc('CLIENT');
+    dcl-f cli3 rename(a:b) keyed;
+    reade cli3;
+    chain(en) 1 cli3;
+  `);
+  assert.deepEqual(ast.files[0].prefix, { text: 'X', count: 2 });
+  assert.equal(ast.files[0].extfile, 'CLIENT');
+  assert.equal(ast.files[0].extdesc, 'CLIENT');
+  assert.deepEqual(ast.files[1].rename, { from: 'A', to: 'B' });
+  const ops = ast.body.filter(n => n.type === 'FileOperation');
+  assert.equal(ops[0].lastKey, true);
+  assert.equal(ops[0].key, undefined);
+  assert.deepEqual(ops[1].extender, { error: true, noLock: true });
+});
