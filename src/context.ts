@@ -12,7 +12,8 @@ export interface TableDefinition {
   format?: string;   // Nom du format d'enregistrement, en majuscules
   unique?: boolean;  // Clé unique : un WRITE avec une clé déjà présente est refusé
   deletedRows?: boolean; // Positionné par un DELETE SQL : les numéros d'enregistrement ne sont plus fiables
-  revision?: number;     // Incrémenté par chaque INSERT, UPDATE ou DELETE SQL (cache des fichiers natifs)
+  revision?: number;     // Incrémenté par chaque INSERT, UPDATE ou DELETE (SQL ou natif : cache des fichiers natifs)
+  locks?: WeakMap<object, unknown>; // Enregistrements verrouillés par une lecture native en mise à jour (créé à la première ouverture)
 }
 
 // Bouchon d'un programme ou d'une procédure externe (context/programs.json).

@@ -226,6 +226,9 @@ export class SQLEngine {
       return { col, value: this.compileValue(eq[1], known) };
     });
     this.checkDuplicates(assignments.map(a => a.col));
+    if (targets.some(row => table.locks?.has(row))) {
+      throw new NotSupportedError("UPDATE SQL d'un enregistrement verrouillé par une lecture native");
+    }
     for (const row of targets) {
       // Toutes les expressions lisent la ligne avant mise à jour
       const before = { ...row };
@@ -244,10 +247,13 @@ export class SQLEngine {
 
     const table = this.getTable(match[1]);
     const before = table.data.length;
+    const locked = () => new NotSupportedError("DELETE SQL d'un enregistrement verrouillé par une lecture native");
     if (match[2]) {
       const matches = this.compileWhere(match[2], table, hostVars);
+      if (table.data.some((row: any) => table.locks?.has(row) && matches(row))) throw locked();
       table.data = table.data.filter((row: any) => !matches(row));
     } else {
+      if (table.data.some((row: any) => table.locks?.has(row))) throw locked();
       table.data = [];
     }
     if (table.data.length < before) table.deletedRows = true;

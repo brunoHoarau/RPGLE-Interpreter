@@ -967,6 +967,17 @@ export class Parser {
       return this.parseAssignmentOrCall();
     }
 
+    // UNLOCK(E) fichier : extenseur refusé comme pour les autres opérations de fichier
+    if (lower === 'unlock' && this.check(TokenType.LPAREN)) {
+      let text = '';
+      let i = this.pos + 1;
+      for (; this.tokens[i] && ![TokenType.RPAREN, TokenType.SEMICOLON, TokenType.EOF].includes(this.tokens[i].type); i++) {
+        text += this.tokens[i].value;
+      }
+      if (this.tokens[i]?.type === TokenType.RPAREN && this.tokens[i + 1]?.type === TokenType.IDENTIFIER) {
+        throw unsupported(`L'extenseur (${text.toUpperCase()}) de UNLOCK`, nameToken);
+      }
+    }
     const isNameUse = this.check(TokenType.EQUALS) || this.checkCompound() || this.check(TokenType.DOT) || this.check(TokenType.LPAREN);
     // UNLOCK fichier : le fichier doit être déclaré
     if (lower === 'unlock' && !isNameUse && !this.check(TokenType.SEMICOLON)) {
