@@ -147,3 +147,79 @@ lecture sont les siennes.
   `SETLL`/`READE` sur clé partielle, `READP` depuis `*END`, `USROPN` + 01211/01215, donnée
   partagée avec le SQL, programme appelé.
 - `test/unsupported.test.js` : chaque refus.
+
+## Incrément 2 — Écriture
+
+Validé le 2026-10-05. Sans AS400 pour vérifier, tout point incertain est **refusé
+explicitement** (« pas encore supporté ») plutôt que deviné.
+
+### Comportement attendu (vu du programme RPG)
+
+**`USAGE`** — `*INPUT` (défaut) ; `*OUTPUT` ; `*UPDATE` (implique `*INPUT`) ; `*DELETE`
+(implique `*INPUT` et `*UPDATE`) ; combinaisons usuelles (`usage(*input : *output)`,
+`usage(*update : *delete : *output)`).
+- Lecture (`READ`, `READP`, `READE`, `READPE`, `CHAIN`, `SETLL`, `SETGT`) sur un fichier sans
+  `*INPUT` (ni `*UPDATE`/`*DELETE`) → erreur d'analyse (comme à la compilation).
+- `WRITE` sans `*OUTPUT`, `UPDATE` sans `*UPDATE`, `DELETE` sans `*DELETE` → erreur (comme à la
+  compilation ; contrôlée à l'exécution car le nom de format n'est connu qu'avec `tables.json`).
+
+**Opérations**
+- `WRITE format` : ajoute un enregistrement avec les valeurs actuelles des zones ; ne change pas
+  la position de lecture. Nommer le fichier au lieu du format → erreur (comme à la compilation).
+- `UPDATE format` : réécrit l'enregistrement **lu en dernier** (enregistrement courant).
+- `DELETE format` : supprime l'enregistrement courant ; `DELETE clé format` : supprime le premier
+  enregistrement de cette clé, `%FOUND` mis à jour (non trouvé → rien n'est supprimé).
+- `UPDATE` / `DELETE` sans enregistrement courant (pas de lecture réussie, ou après `UNLOCK`,
+  `UPDATE`, `DELETE`, lecture en échec) → **statut 01221** (`RpgError`, `RNX1221`), interceptable.
+- `UNLOCK fichier` : libère l'enregistrement courant (plus d'enregistrement courant).
+- Après `UPDATE`, la position reste sur l'enregistrement ; après `DELETE`, le `READ` suivant lit
+  l'enregistrement qui suivait.
+
+**Clés uniques** — option `"unique": true` dans `tables.json` (avec `keys`). `WRITE` ou `UPDATE`
+qui créerait un doublon de clé → **statut 01021** (`RNX1021`), rien n'est écrit. L'unicité est
+contrôlée sur les clés de la table, même si le `DCL-F` n'a pas `KEYED`. Sans `"unique"` : doublons
+permis.
+
+**Verrous** — une lecture réussie sur un fichier `*UPDATE`/`*DELETE` verrouille l'enregistrement ;
+le verrou est libéré par la lecture suivante, `UPDATE`, `DELETE`, `UNLOCK`, `CLOSE` et la fin du
+programme. Lecture pour mise à jour d'un enregistrement verrouillé par une autre ouverture du
+fichier (autre programme du même travail) → « pas encore supporté » (sur IBM i : attente puis
+statut 01218). `UPDATE`/`DELETE` SQL d'un enregistrement verrouillé par un fichier natif → « pas
+encore supporté ».
+
+**Données** — les écritures natives sont vues par le SQL et inversement. Valeurs écrites :
+nombre, texte sans blancs de fin, date/heure/timestamp en texte ISO, indicateur `'1'`/`'0'`.
+
+**Refusés (« pas encore supporté »)**
+- lecture séquentielle (`READ`, `READP`, `READE`, `READPE`) quand la clé de l'enregistrement
+  courant a changé depuis sa lecture (par `UPDATE` natif ou SQL) ;
+- `%FIELDS`, `WRITE`/`UPDATE` depuis une DS, extenseur `(E)` (incrément 3) ;
+- `READ(N)` (lecture sans verrou).
+
+### Architecture
+
+**`src/files.ts` (`NativeFile`)**
+- `write(record)`, `update(record)`, `delete()`, `deleteByKey(key)`, `unlock()` → résultat ou
+  motif d'échec (`'noCurrent'`, `'duplicate'`, `'locked'`), sans erreur RPG.
+- Enregistrement courant mémorisé avec la clé lue ; clé changée avant la lecture séquentielle
+  suivante → `NotSupportedError`.
+- Unicité contrôlée avec les clés de la table (paramètre distinct des clés d'accès `KEYED`).
+- Registre de verrous partagé par table (quel fichier ouvert tient chaque enregistrement).
+
+**Branchements**
+
+| Fichier | Changement |
+|---------|------------|
+| `context.ts` | option `"unique"` (booléen) |
+| `parser.ts`, `types.ts` | `USAGE` complète et implications, `WRITE`, `UPDATE`, `DELETE [clé]`, `UNLOCK` ; lecture sur fichier sans entrée → erreur d'analyse |
+| `interpreter.ts` | enregistrement construit depuis les zones (conversion RPG → données), contrôle format/`USAGE` à l'exécution, statuts 01221 et 01021, verrous libérés à `CLOSE` et en fin de programme |
+| `sql-engine.ts` | `UPDATE`/`DELETE` d'un enregistrement verrouillé → `NotSupportedError` ; révision et suppressions comptées comme pour le SQL |
+| `readme.md` | section « Fichiers natifs » et limites |
+
+### Tests (TDD)
+- `test/files-core.test.js` : écriture, mise à jour, suppression (courante et par clé), unicité,
+  verrous, clé modifiée sous le curseur.
+- `test/files.test.js` : boucle `READ`/`UPDATE`, `WRITE` puis relecture, `DELETE` par clé,
+  01021 et 01221 interceptés, SQL voyant les écritures natives, deux programmes et un
+  enregistrement verrouillé.
+- `test/unsupported.test.js` : chaque refus.
