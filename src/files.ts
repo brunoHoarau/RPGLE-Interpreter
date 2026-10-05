@@ -380,6 +380,7 @@ export class NativeFile {
     this.sorted = undefined;
     this.options.changed?.();
     this.drop();
+    this.lastKey = undefined;
     return {};
   }
 
@@ -398,6 +399,7 @@ export class NativeFile {
     this.sorted = undefined;
     this.options.changed?.();
     this.drop();
+    this.lastKey = undefined;
     this.blockedBy = 'DELETE par clé';
     this.cursor = { side: 'lost' };
     this.eofReached = undefined;
@@ -459,6 +461,7 @@ export class NativeFile {
   private reposition(operation: string): void {
     const had = this.current !== undefined || this.blockedBy !== undefined;
     this.drop();
+    this.lastKey = undefined;   // READE/READPE sans clé après un positionnement : non vérifié
     if (had) this.blockedBy = operation;
   }
 
@@ -512,16 +515,19 @@ export class NativeFile {
     return rows.some(row => row !== except && unique.every((zone, i) => this.dataKey(zone, valueOf(row, zone)) === wanted[i]));
   }
 
-  // READE/READPE sans correspondance : %EOF, position IBM i non vérifiée
   // Clé de READE/READPE : explicite, ou clé complète du dernier enregistrement rendu
   private wantedKey(key: any[] | 'last'): any[] {
     if (key !== 'last') return this.searchKey(key);
+    if (!this.keyed) {
+      throw new NotSupportedError(`READE/READPE sans clé sur le fichier sans clé ${this.name}`);
+    }
     if (this.lastKey === undefined) {
       throw new NotSupportedError(`READE/READPE sans clé de ${this.name} sans lecture préalable (comportement IBM i non vérifié)`);
     }
     return this.lastKey;
   }
 
+  // READE/READPE sans correspondance : %EOF, position IBM i non vérifiée
   private mismatch(): FileResult {
     this.drop();
     this.lastKey = undefined;
