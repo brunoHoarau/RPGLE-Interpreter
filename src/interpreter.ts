@@ -369,15 +369,26 @@ export class Interpreter {
         throw new Error(`Fichier ${name} : ordre des zones différent (${order(table)} dans ${dataName}, ${order(description)} `
           + `dans ${descName}) : vérification de niveau CPF4131 à l'ouverture sur IBM i`);
       }
-      const keys = (t: TableDefinition) => (t.keys ?? []).map(k => k.toUpperCase()).join(', ');
-      if (keys(description) !== keys(table)) {
-        throw new Error(`Fichier ${name} : clés différentes (${keys(table) || 'aucune'} dans ${dataName}, `
-          + `${keys(description) || 'aucune'} dans ${descName})`);
+      // Nom du format : il fait partie de l'identificateur de niveau (CPF4131 à l'ouverture)
+      const formatOf = (t: TableDefinition, tableName: string) => (t.format ?? tableName + 'F').toUpperCase();
+      if (formatOf(description, descName) !== formatOf(table, dataName)) {
+        throw new Error(`Fichier ${name} : nom de format différent (${formatOf(table, dataName)} dans ${dataName}, `
+          + `${formatOf(description, descName)} dans ${descName}) : vérification de niveau CPF4131 à l'ouverture sur IBM i`);
       }
-      if (!!description.unique !== !!table.unique) {
-        const unique = (t: TableDefinition) => t.unique ? 'unique' : 'non unique';
-        throw new Error(`Fichier ${name} : unicité des clés différente (${unique(table)} dans ${dataName}, `
-          + `${unique(description)} dans ${descName})`);
+      // Clés et unicité ne font pas partie du niveau : IBM i ouvre le chemin d'accès de la table de données.
+      // Sans KEYED, elles viennent de la table de données ; avec KEYED, le programme est compilé sur les clés
+      // d'EXTDESC et exécuté sur celles d'EXTFILE : non simulé.
+      if (node.keyed) {
+        const keys = (t: TableDefinition) => (t.keys ?? []).map(k => k.toUpperCase()).join(', ');
+        if (keys(description) !== keys(table)) {
+          throw new NotSupportedError(`Fichier ${name} KEYED : clés différentes (${keys(table) || 'aucune'} dans ${dataName}, `
+            + `${keys(description) || 'aucune'} dans ${descName})`);
+        }
+        if (!!description.unique !== !!table.unique) {
+          const unique = (t: TableDefinition) => t.unique ? 'unique' : 'non unique';
+          throw new NotSupportedError(`Fichier ${name} KEYED : unicité des clés différente (${unique(table)} dans ${dataName}, `
+            + `${unique(description)} dans ${descName})`);
+        }
       }
     }
     if (node.keyed && !(table.keys && table.keys.length > 0)) {
@@ -457,8 +468,8 @@ export class Interpreter {
     }
   }
 
-  // RENAME : le nouveau nom de format ne doit pas être déjà un nom du programme. Fichiers et formats sont contrôlés
-  // à la déclaration ; ici les zones de tous les fichiers (après PREFIX), les paramètres et les déclarations globales
+  // Le nom de format de chaque DCL-F (renommé ou non) ne doit pas être déjà un nom du programme. Fichiers et formats
+  // sont contrôlés à la déclaration ; ici les zones de tous les fichiers (après PREFIX), les paramètres et les déclarations globales
   // (variables, constantes, structures de données et sous-zones d'une structure non qualifiée).
   private checkRenamedFormats(ast: ProgramNode, parameters: ParameterNode[]): void {
     const names = new Map<string, string>();
@@ -474,13 +485,13 @@ export class Interpreter {
       }
     }
     for (const declaration of ast.files ?? []) {
-      if (!declaration.rename) continue;
-      const format = declaration.rename.to;
+      const format = this.fileState(declaration.name).file.format;
       const field = this.fileFields.get(format.toLowerCase());
       const what = field ? `zone du fichier ${field.file}` : names.get(format);
       if (what) {
-        throw new Error(`Fichier ${declaration.name.toUpperCase()} : RENAME(${declaration.rename.from}:${format}) : `
-          + `le nom ${format} est déjà utilisé (${what})`);
+        const rename = declaration.rename ? `RENAME(${declaration.rename.from}:${format}) : ` : '';
+        throw new Error(`Fichier ${declaration.name.toUpperCase()} : ${rename}le nom du format ${format} est déjà utilisé (${what})`
+          + (declaration.rename ? '' : ' : RENAME nécessaire'));
       }
     }
   }

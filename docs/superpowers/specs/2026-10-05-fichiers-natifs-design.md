@@ -255,9 +255,10 @@ Validé le 2026-10-05.
 (`READ`, `WRITE`, `UPDATE`, `DELETE`, contrôle avant exécution) ; l'ancien nom n'est plus reconnu.
 Le premier argument doit être le format réel (`tables.json`, défaut `<FICHIER>F`), sinon erreur.
 Un format qui porte le nom de son fichier (sans `RENAME`, ou `RENAME` vers le nom du fichier) est une
-erreur au `DCL-F` (« RENAME nécessaire »), comme pour le compilateur. Le nouveau nom ne doit pas être
-déjà utilisé (fichier, format, zone d'un fichier après `PREFIX`, paramètre, variable, constante,
-structure de données ou sous-zone d'une structure non qualifiée), sinon erreur.
+erreur au `DCL-F` (« RENAME nécessaire »), comme pour le compilateur. Le nom de format de chaque
+`DCL-F` (renommé ou non) ne doit pas être déjà utilisé (fichier, format, zone d'un fichier après
+`PREFIX`, paramètre, variable, constante, structure de données ou sous-zone d'une structure non
+qualifiée), sinon erreur.
 
 **`PREFIX(p)` / `PREFIX('p')` / `PREFIX(p : n)`** — chaque zone devient la variable préfixée
 (`NOM` → `C_NOM`) ; avec `n`, les `n` premiers caractères du nom sont remplacés (`CLNOM`,
@@ -270,9 +271,11 @@ un nom RPG valide (`PREFIX('9')` → `9NUMCLI`) → erreur.
 types, format) de la table `NOM`. Table de données : celle d'`EXTFILE`, celle d'`EXTDESC` avec
 `EXTFILE(*EXTDESC)`, sinon celle du nom du `DCL-F` (même avec `EXTDESC`) ; absente de `tables.json`
 → erreur « absent de context/tables.json ». Lignes, verrous, clés et unicité viennent de la table de
-données. Quand les deux tables diffèrent : zones différentes (noms ou types), ordre des zones
-différent (vérification de niveau, CPF4131), `keys` (noms et ordre) ou `unique` différents → erreur
-au `DCL-F` nommant la différence. `EXTFILE(*EXTDESC)` accepté avec `EXTDESC`.
+données. Quand les deux tables diffèrent : zones différentes (noms ou types), ordre des zones ou nom
+de format (`format ?? <TABLE>F`) différents (vérification de niveau, CPF4131) → erreur au `DCL-F`
+nommant la différence. Avec `KEYED`, `keys` (noms et ordre) ou `unique` différents → « pas encore
+supporté » (clés hors du niveau : compilé sur EXTDESC, exécuté sur EXTFILE, non simulé) ; sans
+`KEYED`, pas de comparaison (clés et unicité de la table de données). `EXTFILE(*EXTDESC)` accepté avec `EXTDESC`.
 `EXTFILE(variable)` → « pas encore supporté ». Le littéral est sensible à la casse sur IBM i : un nom
 contenant des minuscules → erreur d'analyse (les noms de `tables.json` sont en majuscules) ; nom vide
 ou mal formé (`'BIB/'`, `'/NOM'`, `'A/B/C'`) → erreur d'analyse.

@@ -1041,7 +1041,7 @@ const COLS3 = () => [{ name: 'NUMCLI', type: 'packed(7:0)' }, { name: 'CLNOM', t
 test('EXTDESC sans EXTFILE : lignes lues et écrites dans la table du nom du fichier', () => {
   const withArch = () => {
     const c = ctx3();
-    c.tables.ARCH = { keys: ['NUMCLI'], unique: true, columns: COLS3(), data: [{ NUMCLI: 5, CLNOM: 'Arch' }] };
+    c.tables.ARCH = { format: 'CLIENTF', keys: ['NUMCLI'], unique: true, columns: COLS3(), data: [{ NUMCLI: 5, CLNOM: 'Arch' }] };
     return c;
   };
   assert.deepEqual(run(`dcl-f arch extdesc('CLIENT') rename(clientf:ra) keyed; read arch; dsply clnom;`, withArch()), ['Arch']);
@@ -1055,15 +1055,24 @@ test('EXTDESC sans EXTFILE : lignes lues et écrites dans la table du nom du fic
   assert.throws(() => run(`dcl-f arch extdesc('CLIENT') rename(clientf:ra) keyed;`, ctx3()), /ARCH absent/);
 });
 
-test('EXTDESC / EXTFILE : clés, unicité et ordre des zones identiques exigés', () => {
+test('EXTDESC / EXTFILE : ordre des zones exigé ; clés et unicité comparées seulement avec KEYED', () => {
   const c = ctx3();
-  c.tables.NONUNI = { keys: ['NUMCLI'], columns: COLS3(), data: [{ NUMCLI: 1, CLNOM: 'a' }, { NUMCLI: 1, CLNOM: 'b' }] };
-  c.tables.PARNOM = { keys: ['CLNOM'], unique: true, columns: COLS3(), data: [] };
-  c.tables.INVERSE = { keys: ['NUMCLI'], unique: true, columns: COLS3().reverse(), data: [] };
+  c.tables.NONUNI = { format: 'CLIENTF', keys: ['NUMCLI'], columns: COLS3(), data: [{ NUMCLI: 1, CLNOM: 'a' }, { NUMCLI: 1, CLNOM: 'b' }] };
+  c.tables.PARNOM = { format: 'CLIENTF', keys: ['CLNOM'], unique: true, columns: COLS3(), data: [{ NUMCLI: 2, CLNOM: 'b' }, { NUMCLI: 1, CLNOM: 'a' }] };
+  c.tables.INVERSE = { format: 'CLIENTF', keys: ['NUMCLI'], unique: true, columns: COLS3().reverse(), data: [] };
   const plain = re => err => !NOT_SUPPORTED.test(err.message) && re.test(err.message);
-  assert.throws(() => run(`dcl-f client extfile('NONUNI') keyed;`, c), plain(/unicit.*NONUNI/i));
-  assert.throws(() => run(`dcl-f client extfile('PARNOM') keyed;`, c), plain(/cl[ée]s.*CLNOM/i));
-  assert.throws(() => run(`dcl-f client extfile('PARNOM');`, c), plain(/cl[ée]s.*CLNOM/i));
+  // KEYED : chemin d'accès compilé sur EXTDESC, exécuté sur EXTFILE : non simulé
+  assert.throws(() => run(`dcl-f client extfile('NONUNI') keyed;`, c), err => NOT_SUPPORTED.test(err.message) && /unicit.*NONUNI/i.test(err.message));
+  assert.throws(() => run(`dcl-f client extfile('PARNOM') keyed;`, c), err => NOT_SUPPORTED.test(err.message) && /cl[ée]s.*CLNOM/i.test(err.message));
+  // Sans KEYED : clés et unicité de la table de données, pas de contrôle
+  assert.deepEqual(run(`dcl-f client extfile('PARNOM'); read client; dsply clnom;`, c), ['b']);
+  const w = ctx3();
+  w.tables.NONUNI = { format: 'CLIENTF', keys: ['NUMCLI'], columns: COLS3(), data: [{ NUMCLI: 1, CLNOM: 'a' }] };
+  w.tables.UNI = { format: 'CLIENTF', keys: ['NUMCLI'], unique: true, columns: COLS3(), data: [{ NUMCLI: 1, CLNOM: 'a' }] };
+  run(`dcl-f arch extdesc('CLIENT') extfile('NONUNI') rename(clientf:ra) usage(*output); numcli = 1; write ra;`, w);
+  assert.equal(w.tables.NONUNI.data.length, 2);
+  assert.deepEqual(run(`dcl-f arch extdesc('ARCHIVE') extfile('UNI') rename(clientf:ra) usage(*output);
+    numcli = 1; write(e) ra; dsply %char(%status);`, w), ['1021']);
   assert.throws(() => run(`dcl-f client extfile('INVERSE');`, c), plain(/ordre des zones.*CPF4131/i));
 });
 
@@ -1076,7 +1085,7 @@ test('format portant le nom du fichier : RENAME nécessaire', () => {
   assert.throws(() => run(`dcl-f film keyed;`, ctx3()), /FILM.*RENAME n[ée]cessaire/);
   assert.throws(() => run(`dcl-f client rename(clientf:client);`, ctx3()), /CLIENT.*RENAME n[ée]cessaire/);
   const c = ctx3();
-  c.tables.CLIENTF = { keys: ['NUMCLI'], unique: true, columns: COLS3(), data: [] };
+  c.tables.CLIENTF = { format: 'CLIENTF', keys: ['NUMCLI'], unique: true, columns: COLS3(), data: [] };
   assert.throws(() => run(`dcl-f clientf extdesc('CLIENT');`, c), /CLIENTF.*RENAME n[ée]cessaire/);
 });
 
@@ -1141,4 +1150,20 @@ test('EXTFILE / EXTDESC : nom en minuscules, vide ou mal formé refusé à l\'an
     assert.throws(() => parse(source), err => !NOT_SUPPORTED.test(err.message) && /nom/i.test(err.message), source);
   }
   assert.doesNotThrow(() => parse(`dcl-f client extfile('*LIBL/CLIENT');`));
+});
+
+test('EXTDESC / EXTFILE : noms de format différents refusés (vérification de niveau)', () => {
+  const c = ctx3();
+  c.tables.ARCH = { keys: ['NUMCLI'], unique: true, columns: COLS3(), data: [] };
+  assert.throws(() => run(`dcl-f arch extdesc('CLIENT') rename(clientf:ra);`, c),
+    err => !NOT_SUPPORTED.test(err.message) && /format.*ARCHF.*CLIENTF.*CPF4131/i.test(err.message));
+});
+
+test('format non renommé portant le nom d\'une variable, constante, structure ou zone : refusé', () => {
+  assert.throws(() => run(`dcl-f client; dcl-s clientf char(1);`, ctx3()), /CLIENTF/);
+  assert.throws(() => run(`dcl-f client; dcl-c clientf 1;`, ctx3()), /CLIENTF/);
+  assert.throws(() => run(`dcl-f client; dcl-ds clientf; a char(1); end-ds;`, ctx3()), /CLIENTF/);
+  const c = ctx3();
+  c.tables.AUTRE = { keys: ['CLIENTF'], columns: [{ name: 'CLIENTF', type: 'int(10)' }], data: [] };
+  assert.throws(() => run(`dcl-f client; dcl-f autre;`, c), /CLIENTF.*zone/);
 });
