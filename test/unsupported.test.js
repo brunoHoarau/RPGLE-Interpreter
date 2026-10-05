@@ -320,3 +320,9 @@ test("extenseur de UNLOCK : refusé avec le message de l'extenseur", () => {
   assert.throws(() => parse('dcl-f f usage(*update) keyed; unlock(e) f;'),
     err => NOT_SUPPORTED.test(err.message) && /L'extenseur \(E\) de UNLOCK/.test(err.message));
 });
+
+test('USAGE : mot répété refusé à l\'analyse', () => {
+  assert.throws(() => parse(`dcl-f a usage(*update : *update);`), /USAGE\(\*UPDATE\) répété/);
+  assert.throws(() => parse(`dcl-f a usage(*input : *output : *input);`), /USAGE\(\*INPUT\) répété/);
+  assert.doesNotThrow(() => parse(`dcl-f a usage(*input : *update);`));
+});

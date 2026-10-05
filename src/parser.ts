@@ -152,9 +152,13 @@ export class Parser {
     const usage = { input: false, output: false, update: false, delete: false };
     if (!this.check(TokenType.LPAREN)) throw unsupported('USAGE de DCL-F sans valeur', word);
     this.advance();
+    const given = new Set<string>();
     for (;;) {
       const value = this.advance();
       const name = value.value.toLowerCase();
+      // Mot répété : refusé par le compilateur
+      if (given.has(name)) throw new Error(`USAGE(${value.value.toUpperCase()}) répété (ligne ${value.line})`);
+      given.add(name);
       if (name === '*input') usage.input = true;
       else if (name === '*output') usage.output = true;
       else if (name === '*update') { usage.update = true; usage.input = true; }

@@ -125,6 +125,11 @@ export class Runtime {
     this.globals.variables.set(key, coerce(value, this.globals.types.get(key), name));
   }
 
+  // Valeur d'une variable globale, même depuis une procédure qui a une variable locale de même nom (zones des fichiers)
+  getGlobal(name: string): any {
+    return this.globals.variables.get(name.toLowerCase());
+  }
+
   getField(dsName: string, field: string): any {
     const ds = this.getVariable(dsName);
     const key = field.toLowerCase();
@@ -223,6 +228,7 @@ export class Runtime {
         if (parts) this.setField(parts[0], parts[1], value);
         else this.setVariable(name, value);
       },
+      type: name => this.getType(name),
     };
   }
 

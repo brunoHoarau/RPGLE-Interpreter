@@ -432,6 +432,9 @@ test('clés uniques contrôlées même sans accès par clé', () => {
   assert.equal(file.read().record.NOM, 'A');
   assert.equal(file.update({ NUMCLI: 3, NOM: 'A' }).failure, 'duplicate');
   assert.equal(rows[0].NUMCLI, 1);
+  assert.equal(file.update({ NUMCLI: 1, NOM: 'AA' }).failure, 'repositioned'); // après un échec 01021 : relecture exigée
+  file.setll('start');
+  assert.equal(file.read().record.NOM, 'A');
   assert.deepEqual(file.update({ NUMCLI: 1, NOM: 'AA' }), {});
   assert.deepEqual(file.write({ NUMCLI: 4, NOM: 'D' }), {});
   assert.equal(rows.length, 4);
@@ -547,4 +550,45 @@ test('DELETE par clé partielle : refusé', () => {
   assert.equal(rows.length, 3);
   assert.equal(file.deleteByKey([1, 'A']).found, true);
   assert.equal(rows.length, 2);
+});
+
+test('DELETE par clé réussi : plus d\'enregistrement courant, position perdue', () => {
+  const rows = wrows();
+  const locks = new WeakMap();
+  const file = wopen(rows, { locks });
+  file.chain([1]);
+  assert.equal(file.deleteByKey([2]).found, true);
+  assert.equal(file.update({ NUMCLI: 1, NOM: 'X' }).failure, 'repositioned');
+  assert.equal(file.delete().failure, 'repositioned');
+  assert.throws(() => file.read(), NOT_SUPPORTED);
+  const other = wopen(rows, { locks });
+  assert.equal(other.chain([1]).record.NOM, 'A'); // verrou libéré
+  other.unlock();
+  file.setll('start');
+  assert.equal(file.read().record.NOM, 'A');
+});
+
+test('WRITE ou UPDATE en double avec un enregistrement courant : UPDATE/DELETE refusés sans relecture', () => {
+  const rows = wrows();
+  const file = new f.NativeFile('CL', 'CLF', WF, ['NUMCLI'], rows, { updatable: true, uniqueKeys: ['NUMCLI'] });
+  file.chain([1]);
+  assert.deepEqual(file.write({ NUMCLI: 4, NOM: 'D' }), {});
+  assert.equal(file.update({ NUMCLI: 1, NOM: 'X' }).failure, 'repositioned');
+  assert.equal(file.delete().failure, 'repositioned');
+  file.chain([1]);
+  assert.equal(file.update({ NUMCLI: 2, NOM: 'X' }).failure, 'duplicate');
+  assert.equal(file.update({ NUMCLI: 1, NOM: 'X' }).failure, 'repositioned');
+  file.chain([1]);
+  assert.deepEqual(file.update({ NUMCLI: 1, NOM: 'X' }), {});
+  // Sans enregistrement courant, WRITE ne change rien
+  assert.deepEqual(file.write({ NUMCLI: 5, NOM: 'E' }), {});
+  assert.equal(file.update({ NUMCLI: 1, NOM: 'Y' }).failure, 'noCurrent');
+});
+
+test('duplicateKey : première clé unique en double dans les données', () => {
+  const rows = wrows();
+  rows[2].NUMCLI = 1;
+  const file = new f.NativeFile('CL', 'CLF', WF, [], rows, { uniqueKeys: ['NUMCLI'] });
+  assert.deepEqual(file.duplicateKey(), { NUMCLI: 1 });
+  assert.equal(new f.NativeFile('CL', 'CLF', WF, [], wrows(), { uniqueKeys: ['NUMCLI'] }).duplicateKey(), undefined);
 });
