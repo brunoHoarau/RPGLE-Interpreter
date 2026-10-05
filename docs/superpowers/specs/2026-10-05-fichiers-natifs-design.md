@@ -254,17 +254,28 @@ Validé le 2026-10-05.
 **`RENAME(format_externe : nouveau)`** — le programme utilise le nouveau nom de format
 (`READ`, `WRITE`, `UPDATE`, `DELETE`, contrôle avant exécution) ; l'ancien nom n'est plus reconnu.
 Le premier argument doit être le format réel (`tables.json`, défaut `<FICHIER>F`), sinon erreur.
+Un format qui porte le nom de son fichier (sans `RENAME`, ou `RENAME` vers le nom du fichier) est une
+erreur au `DCL-F` (« RENAME nécessaire »), comme pour le compilateur. Le nouveau nom ne doit pas être
+déjà utilisé (fichier, format, zone d'un fichier après `PREFIX`, paramètre, variable, constante,
+structure de données ou sous-zone d'une structure non qualifiée), sinon erreur.
 
 **`PREFIX(p)` / `PREFIX('p')` / `PREFIX(p : n)`** — chaque zone devient la variable préfixée
 (`NOM` → `C_NOM`) ; avec `n`, les `n` premiers caractères du nom sont remplacés (`CLNOM`,
 `PREFIX(C_:2)` → `C_NOM`). Lectures, écritures et clés de données passent par ces noms.
-`n` supérieur à la longueur d'un nom de zone → « pas encore supporté ».
+`n` supérieur à la longueur d'un nom de zone → « pas encore supporté ». Un nom obtenu qui n'est pas
+un nom RPG valide (`PREFIX('9')` → `9NUMCLI`) → erreur.
 
 **`EXTFILE` / `EXTDESC`** — `EXTFILE('BIB/NOM')` ou `EXTFILE('NOM')` : données de la table `NOM`
-(bibliothèque ignorée, documenté) ; `EXTDESC('BIB/NOM')` : description (zones, types, clés,
-format, unicité) de la table `NOM`. Avec les deux : description d'`EXTDESC`, données d'`EXTFILE` ;
-zones différentes (noms ou types) → erreur claire. `EXTFILE(*EXTDESC)` accepté.
-`EXTFILE(variable)` → « pas encore supporté ».
+(bibliothèque ignorée, documenté) ; `EXTDESC('BIB/NOM')` : description de compilation (zones,
+types, format) de la table `NOM`. Table de données : celle d'`EXTFILE`, celle d'`EXTDESC` avec
+`EXTFILE(*EXTDESC)`, sinon celle du nom du `DCL-F` (même avec `EXTDESC`) ; absente de `tables.json`
+→ erreur « absent de context/tables.json ». Lignes, verrous, clés et unicité viennent de la table de
+données. Quand les deux tables diffèrent : zones différentes (noms ou types), ordre des zones
+différent (vérification de niveau, CPF4131), `keys` (noms et ordre) ou `unique` différents → erreur
+au `DCL-F` nommant la différence. `EXTFILE(*EXTDESC)` accepté avec `EXTDESC`.
+`EXTFILE(variable)` → « pas encore supporté ». Le littéral est sensible à la casse sur IBM i : un nom
+contenant des minuscules → erreur d'analyse (les noms de `tables.json` sont en majuscules) ; nom vide
+ou mal formé (`'BIB/'`, `'/NOM'`, `'A/B/C'`) → erreur d'analyse.
 
 **`READE` / `READPE` sans clé** — comparaison avec la clé complète du dernier enregistrement lu.
 Sans lecture préalable réussie → « pas encore supporté ».
@@ -277,8 +288,10 @@ verrou ; pas d'enregistrement courant (un `UPDATE`/`DELETE` sans relecture → s
 (`(EN)`, `(NE)`) : une erreur RPG de fichier (`RpgError` : 01211, 01215, 01221, 01021) ne lève
 pas d'exception ; `%ERROR` = `*ON` et `%STATUS` = statut, le programme continue. Une opération
 avec `(E)` qui réussit met `%ERROR` à `*OFF`. Les opérations sans `(E)` ne changent pas `%ERROR`.
-Les refus « pas encore supporté » et les erreurs de données traversent `(E)`. Autres extenseurs
-et `(E)` hors fichiers : inchangés (refusés là où ils l'étaient).
+Les refus « pas encore supporté » et les erreurs de données traversent `(E)`, ainsi que les erreurs
+levées pendant l'évaluation des opérandes (clé, rang), évalués avant l'opération. `DSPLY(E)` remet
+`%ERROR` à `*OFF` et `%STATUS` à 0. Autres extenseurs et `(E)` hors fichiers : inchangés (refusés là
+où ils l'étaient). `OPEN`/`CLOSE` avec un nom de format → erreur avant l'exécution.
 
 ### Incrément 3a — architecture
 

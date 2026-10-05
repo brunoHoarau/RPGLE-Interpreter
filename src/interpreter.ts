@@ -214,6 +214,7 @@ export class Interpreter {
 
     // Fichiers : avant les autres déclarations, leurs zones sont des variables globales
     for (const declaration of ast.files ?? []) this.declareFile(declaration, parameters);
+    this.checkRenamedFormats(ast, parameters);
     if ((ast.files ?? []).length > 0) this.checkFileChanges(ast.body);
 
     // Première passe : déclarer variables, constantes, procédures
@@ -341,11 +342,12 @@ export class Interpreter {
 
   private declareFile(node: FileDeclarationNode, parameters: ParameterNode[]): void {
     const name = node.name.toUpperCase();
-    // Table de description (EXTDESC, sinon le nom du fichier) : zones, types, clés, format, unicité.
-    // Table de données (EXTFILE, *EXTDESC : celle de la description) : lignes, verrous, révision.
-    // La bibliothèque d'EXTFILE / EXTDESC est retirée par l'analyse.
+    // Table de description (EXTDESC, sinon le nom du fichier) : zones, types, format (compilation).
+    // Table de données (EXTFILE, *EXTDESC : celle de la description, sinon le nom du fichier) : lignes, verrous,
+    // révision, clés et unicité (chemin d'accès du fichier ouvert). Si les deux diffèrent, zones (ordre compris),
+    // clés et unicité doivent être identiques. La bibliothèque d'EXTFILE / EXTDESC est retirée par l'analyse.
     const descName = node.extdesc ?? name;
-    const dataName = node.extfile === '*EXTDESC' ? descName : (node.extfile ?? descName);
+    const dataName = node.extfile === '*EXTDESC' ? descName : (node.extfile ?? name);
     const findTable = (tableName: string): TableDefinition => {
       const key = Object.keys(this.context.tables).find(n => n.toUpperCase() === tableName);
       if (key === undefined) throw new Error(`Fichier ${tableName} absent de context/tables.json`);
@@ -356,11 +358,29 @@ export class Interpreter {
     if (description.columns.some(c => c.type === 'AUTO')) {
       throw new Error(`Fichier ${descName} : décrivez ses zones dans "schema" de context/tables.json`);
     }
-    const difference = dataName === descName ? undefined : columnDifference(description, descName, table, dataName);
-    if (difference) {
-      throw new Error(`Fichier ${name} : les zones de ${dataName} diffèrent de celles de ${descName} (${difference})`);
+    if (dataName !== descName) {
+      const difference = columnDifference(description, descName, table, dataName);
+      if (difference) {
+        throw new Error(`Fichier ${name} : les zones de ${dataName} diffèrent de celles de ${descName} (${difference})`);
+      }
+      // Ordre des zones : il change l'identificateur de niveau du format (CPF4131 à l'ouverture)
+      const order = (t: TableDefinition) => t.columns.map(c => c.name.toUpperCase()).join(', ');
+      if (order(description) !== order(table)) {
+        throw new Error(`Fichier ${name} : ordre des zones différent (${order(table)} dans ${dataName}, ${order(description)} `
+          + `dans ${descName}) : vérification de niveau CPF4131 à l'ouverture sur IBM i`);
+      }
+      const keys = (t: TableDefinition) => (t.keys ?? []).map(k => k.toUpperCase()).join(', ');
+      if (keys(description) !== keys(table)) {
+        throw new Error(`Fichier ${name} : clés différentes (${keys(table) || 'aucune'} dans ${dataName}, `
+          + `${keys(description) || 'aucune'} dans ${descName})`);
+      }
+      if (!!description.unique !== !!table.unique) {
+        const unique = (t: TableDefinition) => t.unique ? 'unique' : 'non unique';
+        throw new Error(`Fichier ${name} : unicité des clés différente (${unique(table)} dans ${dataName}, `
+          + `${unique(description)} dans ${descName})`);
+      }
     }
-    if (node.keyed && !(description.keys && description.keys.length > 0)) {
+    if (node.keyed && !(table.keys && table.keys.length > 0)) {
       throw new Error(`Fichier ${name} déclaré KEYED sans "keys" dans context/tables.json`);
     }
     const fields = description.columns.map(col => {
@@ -376,6 +396,10 @@ export class Interpreter {
       }
       format = node.rename.to;
     }
+    // Le compilateur exige un nom de format différent du nom du fichier
+    if (format === name) {
+      throw new Error(`Fichier ${name} : le format porte le nom du fichier (${format}) : RENAME nécessaire`);
+    }
     // PREFIX(texte : n) : les n premiers caractères du nom de zone sont remplacés par le texte
     const variables = new Map<string, string>();
     for (const field of fields) {
@@ -384,6 +408,9 @@ export class Interpreter {
         throw new NotSupportedError(`Fichier ${name} : PREFIX(${node.prefix!.text}:${count}) plus long que le nom de la zone ${field.name}`);
       }
       const variable = node.prefix ? node.prefix.text + field.name.slice(count) : field.name;
+      if (node.prefix && !/^[A-Z_$#@][A-Z0-9_$#@]*$/.test(variable)) {
+        throw new Error(`Fichier ${name} : PREFIX donne à la zone ${field.name} le nom ${variable}, qui n'est pas un nom RPG valide`);
+      }
       const twin = [...variables].find(([, v]) => v === variable);
       if (twin) throw new Error(`Fichier ${name} : PREFIX donne le même nom ${variable} aux zones ${twin[0]} et ${field.name}`);
       variables.set(field.name, variable);
@@ -400,9 +427,9 @@ export class Interpreter {
     // Seul le moteur SQL modifie les données pendant l'exécution : il incrémente table.revision
     // Les écritures natives font avancer la revision (changed) ; les verrous sont partagés par toutes les ouvertures
     table.locks ??= new WeakMap();
-    const file = new NativeFile(name, format, fields, node.keyed ? description.keys! : [], () => table.data,
+    const file = new NativeFile(name, format, fields, node.keyed ? table.keys! : [], () => table.data,
       { rowsDeleted: () => table.deletedRows === true, revision: () => table.revision ?? 0,
-        updatable: node.usage.update || node.usage.delete, uniqueKeys: description.unique ? description.keys : undefined,
+        updatable: node.usage.update || node.usage.delete, uniqueKeys: table.unique ? table.keys : undefined,
         locks: table.locks as WeakMap<object, NativeFile>, changed: () => { table.revision = (table.revision ?? 0) + 1; } });
     const duplicate = file.duplicateKey();
     if (duplicate) {
@@ -430,6 +457,34 @@ export class Interpreter {
     }
   }
 
+  // RENAME : le nouveau nom de format ne doit pas être déjà un nom du programme. Fichiers et formats sont contrôlés
+  // à la déclaration ; ici les zones de tous les fichiers (après PREFIX), les paramètres et les déclarations globales
+  // (variables, constantes, structures de données et sous-zones d'une structure non qualifiée).
+  private checkRenamedFormats(ast: ProgramNode, parameters: ParameterNode[]): void {
+    const names = new Map<string, string>();
+    for (const p of parameters) names.set(p.name.toUpperCase(), 'paramètre');
+    for (const node of ast.body as any[]) {
+      if (node.type === 'VariableDeclaration') names.set(String(node.name).toUpperCase(), 'variable');
+      else if (node.type === 'ConstantDeclaration') names.set(String(node.name).toUpperCase(), 'constante');
+      else if (node.type === 'DataStructure') {
+        names.set(String(node.name).toUpperCase(), 'structure de données');
+        if (!node.isQualified) {
+          for (const field of node.fields ?? []) names.set(String(field.name).toUpperCase(), `sous-zone de la structure ${String(node.name).toUpperCase()}`);
+        }
+      }
+    }
+    for (const declaration of ast.files ?? []) {
+      if (!declaration.rename) continue;
+      const format = declaration.rename.to;
+      const field = this.fileFields.get(format.toLowerCase());
+      const what = field ? `zone du fichier ${field.file}` : names.get(format);
+      if (what) {
+        throw new Error(`Fichier ${declaration.name.toUpperCase()} : RENAME(${declaration.rename.from}:${format}) : `
+          + `le nom ${format} est déjà utilisé (${what})`);
+      }
+    }
+  }
+
   private fileState(name: string): FileState {
     const state = this.files.get(name.toUpperCase());
     if (!state) throw new Error(`Fichier ou format ${name.toUpperCase()} inconnu`);
@@ -439,15 +494,18 @@ export class Interpreter {
   // Extenseur (E) : une erreur de fichier (RpgError 01xxx) de l'opération met %ERROR à *ON et %STATUS au statut,
   // le programme continue ; une réussite met %ERROR à *OFF. Les refus « pas encore supporté », les erreurs de données
   // et les erreurs d'expression traversent. Sans (E), %ERROR est inchangé.
+  // Les opérandes (clé, numéro d'enregistrement) sont évalués avant : (E) n'intercepte que les erreurs
+  // de l'opération elle-même, pas celles d'une procédure appelée dans la clé.
   private executeFileOperation(node: FileOperationNode): void {
+    const key = (node.key ?? []).map(expr => this.evaluate(expr));
     if (!node.extender?.error) {
-      this.performFileOperation(node);
+      this.performFileOperation(node, key);
       return;
     }
     // %STATUS est remis à 0 avant toute opération avec (E)
     this.runtime.status = 0;
     try {
-      this.performFileOperation(node);
+      this.performFileOperation(node, key);
     } catch (error) {
       if (!(error instanceof RpgError) || !isFileStatus(error.status)) throw error;
       this.lastError = true;
@@ -458,7 +516,7 @@ export class Interpreter {
     this.lastError = false;
   }
 
-  private performFileOperation(node: FileOperationNode): void {
+  private performFileOperation(node: FileOperationNode, key: any[]): void {
     const state = this.fileState(node.file);
     const file = state.file;
     if (node.operation === 'open') {
@@ -475,12 +533,11 @@ export class Interpreter {
       return;
     }
     if (node.operation === 'write' || node.operation === 'update' || node.operation === 'delete' || node.operation === 'unlock') {
-      this.executeFileChange(node, state);
+      this.executeFileChange(node, state, key);
       return;
     }
     if (!state.open) throw new RpgError(1211, `Fichier ${file.name} non ouvert (RNX1211)`);
 
-    const key = (node.key ?? []).map(expr => this.evaluate(expr));
     // READE / READPE sans clé : clé complète du dernier enregistrement lu
     const equalKey = node.lastKey ? 'last' as const : key;
     // Extenseur (N) : lecture sans verrou
@@ -526,7 +583,8 @@ export class Interpreter {
   }
 
   // Contrôles du compilateur : toute opération de fichier (et l'argument de %EOF, %FOUND, %EQUAL, %OPEN)
-  // nomme un fichier ou un format connu (un format renommé par RENAME ne l'est plus) ; pour WRITE, UPDATE,
+  // nomme un fichier ou un format connu (un format renommé par RENAME ne l'est plus) ; OPEN et CLOSE nomment
+  // le fichier ; pour WRITE, UPDATE,
   // DELETE, UNLOCK : nom du format pour WRITE/UPDATE, USAGE suffisante. Faits sur tout le programme avant
   // l'exécution (formats connus seulement avec tables.json), y compris dans les branches et procédures jamais exécutées.
   private checkFileChanges(node: any): void {
@@ -538,6 +596,10 @@ export class Interpreter {
     if (node.type === 'FileOperation') {
       const state = this.fileState(node.file);
       if (['write', 'update', 'delete', 'unlock'].includes(node.operation)) this.checkFileChange(node, state);
+      // OPEN et CLOSE : nom du fichier, pas du format
+      if ((node.operation === 'open' || node.operation === 'close') && String(node.file).toUpperCase() !== state.file.name) {
+        throw new Error(`${node.operation.toUpperCase()} attend le nom du fichier ${state.file.name}, pas le format ${state.file.format}`);
+      }
     }
     if (node.type === 'Expression' && node.valueType === 'file') this.fileState(String(node.value));
     for (const value of Object.values(node)) {
@@ -561,7 +623,7 @@ export class Interpreter {
   }
 
   // WRITE, UPDATE, DELETE, UNLOCK
-  private executeFileChange(node: FileOperationNode, state: FileState): void {
+  private executeFileChange(node: FileOperationNode, state: FileState, key: any[]): void {
     const file = state.file;
     const op = node.operation.toUpperCase();
     this.checkFileChange(node, state);
@@ -597,7 +659,7 @@ export class Interpreter {
       }
       case 'delete': {
         if (node.key) {
-          const found = file.deleteByKey(node.key.map(expr => this.evaluate(expr))).found;
+          const found = file.deleteByKey(key).found;
           state.found = this.lastIndicators.found = found;
           if (found) this.markDeleted(state);
           return;
@@ -1047,6 +1109,11 @@ export class Interpreter {
   }
 
   private executeDsply(node: any): void {
+    // DSPLY(E) : comme une opération de fichier avec (E), %ERROR à *OFF et %STATUS à 0 au départ
+    if (node.hasErrorExtender) {
+      this.runtime.status = 0;
+      this.lastError = false;
+    }
     let msg = '';
     if (node.message) {
       // Les blancs de fin d'un char sont invisibles à l'écran
@@ -1061,9 +1128,7 @@ export class Interpreter {
       const queue = String(this.evaluate(node.queue)).trim();
       if (queue !== '' && !/^\*blanks?$/i.test(queue)) queueInfo = ` (File: ${queue})`;
     }
-    const extenderInfo = node.hasErrorExtender ? ' [Gestion d\'erreur active]' : '';
-
-    this.runtime.addOutput(`[DSPLY${extenderInfo}] ${msg}${queueInfo}`);
+    this.runtime.addOutput(`[DSPLY] ${msg}${queueInfo}`);
 
     if (node.responseVar) {
       // La réponse simulée est un caractère : les autres types de variable ne sont pas pris en charge

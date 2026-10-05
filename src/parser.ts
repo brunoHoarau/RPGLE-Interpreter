@@ -167,8 +167,18 @@ export class Parser {
         }
         if (!this.check(TokenType.RPAREN)) throw unsupported(`${lower.toUpperCase()} de DCL-F mal formé`, this.peek());
         this.advance();
-        // 'BIBLIOTHEQUE/TABLE' : seule la table compte
-        const name = isExtdescValue ? '*EXTDESC' : value.value.trim().toUpperCase().split('/').pop()!;
+        // 'BIBLIOTHEQUE/TABLE' : seule la table compte. Entre apostrophes, le nom est sensible à la casse :
+        // 'client' ne désigne pas l'objet CLIENT sur IBM i (les noms de tables.json sont en majuscules)
+        const literal = value.value.trim();
+        const parts = literal.split('/');
+        if (!isExtdescValue && (parts.length > 2 || parts.some(part => part === ''))) {
+          throw new Error(`${lower.toUpperCase()}('${literal}') du fichier ${key} : nom de fichier mal formé (ligne ${value.line})`);
+        }
+        if (!isExtdescValue && /[a-z]/.test(literal)) {
+          throw new Error(`${lower.toUpperCase()}('${literal}') du fichier ${key} : entre apostrophes, le nom est sensible à la casse `
+            + `et les noms d'objets IBM i sont en majuscules : écrivez '${literal.toUpperCase()}' (ligne ${value.line})`);
+        }
+        const name = isExtdescValue ? '*EXTDESC' : parts[parts.length - 1];
         if (lower === 'extfile') extfile = name; else extdesc = name;
       } else if (lower === 'workstn' || lower === 'printer' || lower === 'special') {
         throw unsupported(`DCL-F ${lower.toUpperCase()}`, word);
