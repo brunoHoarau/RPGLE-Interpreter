@@ -464,3 +464,87 @@ test('clé de l\'enregistrement courant modifiée : lecture séquentielle refus�
   rows[1].NUMCLI = 9; // comme un UPDATE SQL de la clé
   assert.throws(() => file.read(), NOT_SUPPORTED);
 });
+
+test('écritures : les autres ouvertures de la table voient les changements (revision)', () => {
+  const rows = wrows();
+  let counter = 0;
+  const options = { locks: new WeakMap(), revision: () => counter, changed: () => counter++ };
+  const a = wopen(rows, options);
+  const b = wopen(rows, options);
+  assert.equal(b.read().record.NOM, 'A');
+  b.unlock();
+  a.chain([3]);
+  assert.deepEqual(a.update({ NUMCLI: 0, NOM: 'C' }), {});
+  b.setll('start');
+  assert.equal(b.read().record.NOM, 'C');
+  b.unlock();
+  a.chain([2]);
+  assert.deepEqual(a.delete(), {});
+  assert.deepEqual(a.write({ NUMCLI: 5, NOM: 'E' }), {});
+  assert.equal(rows.length, 3);
+  b.setll('end');
+  assert.equal(b.readp().record.NOM, 'E');
+  assert.equal(b.readp().record.NOM, 'A');
+  assert.equal(counter, 3);
+});
+
+test('UPDATE/DELETE après SETLL, SETGT ou réouverture sans nouvelle lecture : refusés', () => {
+  const rows = wrows();
+  const locks = new WeakMap();
+  const file = wopen(rows, { locks });
+  file.chain([2]);
+  file.setll([3]);
+  assert.equal(file.update({ NUMCLI: 2, NOM: 'X' }).failure, 'repositioned');
+  assert.equal(file.delete().failure, 'repositioned');
+  assert.equal(rows[1].NOM, 'B');
+  const other = wopen(rows, { locks });
+  assert.equal(other.chain([2]).record.NOM, 'B'); // verrou libéré par le SETLL
+  other.unlock();
+  file.chain([2]);
+  file.setgt([2]);
+  assert.equal(file.delete().failure, 'repositioned');
+  assert.equal(file.read().record.NOM, 'C');
+  assert.deepEqual(file.update({ NUMCLI: 3, NOM: 'Y' }), {});
+  assert.equal(file.update({ NUMCLI: 3, NOM: 'Z' }).failure, 'noCurrent');
+  file.chain([1]);
+  file.reset();
+  assert.equal(file.update({ NUMCLI: 1, NOM: 'X' }).failure, 'repositioned');
+  assert.equal(rows[0].NOM, 'A');
+});
+
+test('WRITE refuse une clé invalide sans modifier la table', () => {
+  const rows = wrows();
+  const file = wopen(rows);
+  assert.throws(() => file.write({ NUMCLI: 'abc', NOM: 'Z' }), /Donnée invalide/);
+  assert.throws(() => file.write({ NUMCLI: 12345678, NOM: 'Z' }), /Donnée invalide/);
+  assert.throws(() => file.write({ NOM: 'Z' }), /Donnée invalide/);
+  assert.equal(rows.length, 3);
+  assert.equal(file.read().record.NOM, 'A');
+});
+
+test('UPDATE/DELETE d\'un enregistrement retiré de la table : refusés', () => {
+  let rows = wrows();
+  const file = wopen(() => rows);
+  const b = file.chain([2]).record;
+  rows = rows.filter(r => r !== b); // DELETE SQL : nouveau tableau
+  assert.equal(file.update({ NUMCLI: 2, NOM: 'X' }).failure, 'gone');
+  assert.equal(b.NOM, 'B');
+  assert.equal(file.delete().failure, 'noCurrent');
+  file.chain([1]);
+  rows = rows.slice(); // nouveau tableau, mêmes lignes
+  assert.deepEqual(file.update({ NUMCLI: 1, NOM: 'X' }), {});
+  assert.equal(rows[0].NOM, 'X');
+  file.chain([3]);
+  rows = [rows[0]];
+  assert.equal(file.delete().failure, 'gone');
+  assert.deepEqual(rows.map(r => r.NOM), ['X']);
+});
+
+test('DELETE par clé partielle : refusé', () => {
+  const rows = wrows();
+  const file = new f.NativeFile('CL', 'CLF', WF, ['NUMCLI', 'NOM'], rows, { updatable: true });
+  assert.throws(() => file.deleteByKey([1]), NOT_SUPPORTED);
+  assert.equal(rows.length, 3);
+  assert.equal(file.deleteByKey([1, 'A']).found, true);
+  assert.equal(rows.length, 2);
+});

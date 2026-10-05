@@ -128,6 +128,8 @@ export class NativeFile {
   private last: Item | undefined;
   // Enregistrement courant (UPDATE, DELETE) : dernière lecture réussie, ni mise à jour ni supprimée ni déverrouillée
   private current: object | undefined;
+  // Repositionnement (SETLL, SETGT, OPEN) depuis la dernière lecture : UPDATE/DELETE au comportement IBM i non vérifié
+  private repositioned = false;
   // Enregistrement verrouillé par ce fichier dans le registre partagé
   private held: object | undefined;
   private locks: WeakMap<object, NativeFile>;
@@ -139,10 +141,12 @@ export class NativeFile {
   // options.updatable : fichier ouvert en mise à jour (les lectures réussies verrouillent l'enregistrement)
   // options.uniqueKeys : zones de la clé unique de la table, contrôlées à l'écriture même sans accès par clé
   // options.locks : registre des verrous, partagé par toutes les ouvertures d'une même table
+  // options.changed : appelé après chaque WRITE, UPDATE ou DELETE réussi (fait avancer la revision des autres ouvertures)
   constructor(readonly name: string, readonly format: string, readonly fields: FieldDefinition[],
               readonly keys: string[], private source: any[] | (() => any[]),
               private options: { rowsDeleted?: () => boolean; revision?: () => number; updatable?: boolean;
-                                 uniqueKeys?: string[]; locks?: WeakMap<object, NativeFile> } = {}) {
+                                 uniqueKeys?: string[]; locks?: WeakMap<object, NativeFile>;
+                                 changed?: () => void } = {}) {
     for (const key of [...keys, ...(options.uniqueKeys ?? [])]) {
       if (!fields.some(f => f.name === key)) {
         throw new Error(`Zone clé ${key} absente des zones du fichier ${name}`);
@@ -170,7 +174,7 @@ export class NativeFile {
 
   // OPEN : retour au début ; les lignes déjà vues restent connues (un enregistrement supprimé garde son numéro)
   reset(): void {
-    this.release();
+    this.reposition();
     this.cursor = { side: 'before', at: 'start' };
     this.eofReached = undefined;
     this.last = undefined;
@@ -269,11 +273,13 @@ export class NativeFile {
   setll(key: any[] | FileSpecial): FileResult {
     if (key === 'start' || key === 'end') {
       this.eofReached = undefined;
+      this.reposition();
       this.cursor = key === 'start' ? { side: 'before', at: 'start' } : { side: 'after', at: 'end' };
       return { found: key === 'start' && this.rows.length > 0, eof: false, equal: false };
     }
     const wanted = this.searchKey(key);
     this.eofReached = undefined;
+    this.reposition();
     const items = this.ordered();
     this.cursor = { side: 'before', at: wanted };
     return {
@@ -287,52 +293,83 @@ export class NativeFile {
     if (key === 'start' || key === 'end') return this.setll(key);
     const wanted = this.searchKey(key);
     this.eofReached = undefined;
+    this.reposition();
     const items = this.ordered();
     this.cursor = { side: 'after', at: wanted };
     return { found: items.some(it => this.compare(it.key, wanted) > 0), eof: false, equal: false };
   }
 
   // WRITE : nouvel enregistrement en fin de table ; ni la position ni l'enregistrement courant ne changent
+  // (clés contrôlées avant l'ajout : une donnée invalide lève l'erreur sans modifier la table)
   write(values: { [zone: string]: any }): { failure?: 'duplicate' } {
     const rows = this.observe();
+    const row = { ...values };
+    for (const key of this.keys) this.dataKey(key, this.valueOf(row, key));
     if (this.duplicates(rows, values, undefined)) return { failure: 'duplicate' };
-    rows.push({ ...values });
+    rows.push(row);
     this.sorted = undefined;
+    this.options.changed?.();
     return {};
   }
 
   // UPDATE : réécrit l'enregistrement courant, qui cesse de l'être (verrou libéré, position inchangée)
-  update(values: { [zone: string]: any }): { failure?: 'noCurrent' | 'duplicate' } {
+  update(values: { [zone: string]: any }): { failure?: 'noCurrent' | 'repositioned' | 'gone' | 'duplicate' } {
     const row: any = this.current;
-    if (!row) return { failure: 'noCurrent' };
-    if (this.duplicates(this.observe(), values, row)) return { failure: 'duplicate' };
-    for (const [zone, value] of Object.entries(values)) row[this.columnOf(row, zone) ?? zone] = value;
-    this.sorted = undefined;
+    if (!row) return { failure: this.repositioned ? 'repositioned' : 'noCurrent' };
+    const rows = this.observe();
+    if (!rows.includes(row)) {
+      this.drop();
+      return { failure: 'gone' };
+    }
+    const column = (zone: string) => this.columnOf(row, zone) ?? zone;
+    const updated = (key: string) => {
+      const given = this.columnOf(values, key);
+      return given === undefined ? this.valueOf(row, key) : values[given];
+    };
+    for (const key of this.keys) this.dataKey(key, updated(key));
+    if (this.duplicates(rows, values, row)) return { failure: 'duplicate' };
+    const keyChanged = this.keys.some(key => updated(key) !== this.valueOf(row, key));
+    const revision = this.options.revision?.();
+    const fresh = this.sorted !== undefined && revision !== undefined && this.sorted.revision === revision;
+    for (const [zone, value] of Object.entries(values)) row[column(zone)] = value;
+    this.options.changed?.();
+    // Ordre de ce fichier inchangé si ses zones clés le sont : le tri reste valable à la nouvelle revision
+    if (keyChanged) this.sorted = undefined;
+    else if (fresh) this.sorted!.revision = this.options.revision?.();
     this.drop();
     return {};
   }
 
   // DELETE sans clé : supprime l'enregistrement courant (le READ suivant lit celui qui le suivait)
-  delete(): { failure?: 'noCurrent' } {
+  delete(): { failure?: 'noCurrent' | 'repositioned' | 'gone' } {
     const row = this.current;
-    if (!row) return { failure: 'noCurrent' };
+    if (!row) return { failure: this.repositioned ? 'repositioned' : 'noCurrent' };
     const rows = this.observe();
     const index = rows.indexOf(row);
-    if (index >= 0) rows.splice(index, 1);
+    if (index < 0) {
+      this.drop();
+      return { failure: 'gone' };
+    }
+    rows.splice(index, 1);
     this.sorted = undefined;
+    this.options.changed?.();
     this.drop();
     return {};
   }
 
-  // DELETE par clé : premier enregistrement de cette clé ; position et enregistrement courant inchangés
+  // DELETE par clé complète : premier enregistrement de cette clé ; position et enregistrement courant inchangés
   deleteByKey(key: any[]): { found: boolean } {
     const wanted = this.searchKey(key);
+    if (key.length < this.keys.length) {
+      throw new NotSupportedError(`DELETE de ${this.name} par clé partielle (enregistrement supprimé par IBM i non vérifié)`);
+    }
     const item = this.ordered().find(it => this.compare(it.key, wanted) === 0);
     if (!item) return { found: false };
     this.checkLock(item.row);
-    const rows = this.rows;
+    const rows = this.observe();
     rows.splice(rows.indexOf(item.row), 1);
     this.sorted = undefined;
+    this.options.changed?.();
     if (item.row === this.current) this.drop();
     return { found: true };
   }
@@ -366,6 +403,14 @@ export class NativeFile {
       this.held = row;
     }
     this.current = row;
+    this.repositioned = false;
+  }
+
+  // SETLL, SETGT, OPEN : verrou libéré ; un enregistrement courant ne peut plus être mis à jour ni supprimé
+  private reposition(): void {
+    const had = this.current !== undefined || this.repositioned;
+    this.drop();
+    this.repositioned = had;
   }
 
   private checkLock(row: object): void {
@@ -378,6 +423,7 @@ export class NativeFile {
   // Plus d'enregistrement courant, verrou libéré
   private drop(): void {
     this.current = undefined;
+    this.repositioned = false;
     this.unlockHeld();
   }
 
@@ -400,14 +446,16 @@ export class NativeFile {
     return Object.keys(row).find(c => c.toUpperCase() === zone.toUpperCase());
   }
 
+  private valueOf(row: any, zone: string): any {
+    const column = this.columnOf(row, zone);
+    return column === undefined ? undefined : row[column];
+  }
+
   // Une autre ligne a-t-elle les mêmes valeurs sur les zones de la clé unique ?
   private duplicates(rows: any[], values: { [zone: string]: any }, except: any): boolean {
     const unique = this.options.uniqueKeys;
     if (!unique || unique.length === 0) return false;
-    const valueOf = (row: any, zone: string) => {
-      const column = this.columnOf(row, zone);
-      return column === undefined ? undefined : row[column];
-    };
+    const valueOf = (row: any, zone: string) => this.valueOf(row, zone);
     const wanted = unique.map(zone => {
       const column = this.columnOf(values, zone);
       return this.dataKey(zone, column !== undefined ? values[column] : except !== undefined ? valueOf(except, zone) : undefined);
