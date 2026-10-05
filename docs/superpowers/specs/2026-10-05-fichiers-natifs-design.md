@@ -238,3 +238,59 @@ en texte ISO, indicateur `'1'`/`'0'`. Une variable hôte SQL `VARCHAR` garde aus
   01021 et 01221 interceptés, SQL voyant les écritures natives, deux programmes et un
   enregistrement verrouillé.
 - `test/unsupported.test.js` : chaque refus.
+
+## Incrément 3 — Compléments (découpé)
+
+| # | Sous-incrément | Contenu |
+|---|----------------|---------|
+| 3a | Noms et options simples | `RENAME`, `PREFIX`, `EXTFILE`/`EXTDESC`, `READE`/`READPE` sans clé, extenseurs `(N)` et `(E)` + `%ERROR` — détaillé ci-dessous |
+| 3b | Structures liées aux fichiers | `LIKEREC`, `EXTNAME`, lecture dans une DS, `WRITE`/`UPDATE` depuis une DS, `%KDS`, `%FIELDS` |
+| 3c | Le reste | fichiers logiques, `INFDS`, `DCL-F` local, `QUALIFIED`/`LIKEFILE`/`TEMPLATE` |
+
+### Incrément 3a — comportement attendu
+
+Validé le 2026-10-05.
+
+**`RENAME(format_externe : nouveau)`** — le programme utilise le nouveau nom de format
+(`READ`, `WRITE`, `UPDATE`, `DELETE`, contrôle avant exécution) ; l'ancien nom n'est plus reconnu.
+Le premier argument doit être le format réel (`tables.json`, défaut `<FICHIER>F`), sinon erreur.
+
+**`PREFIX(p)` / `PREFIX('p')` / `PREFIX(p : n)`** — chaque zone devient la variable préfixée
+(`NOM` → `C_NOM`) ; avec `n`, les `n` premiers caractères du nom sont remplacés (`CLNOM`,
+`PREFIX(C_:2)` → `C_NOM`). Lectures, écritures et clés de données passent par ces noms.
+`n` supérieur à la longueur d'un nom de zone → « pas encore supporté ».
+
+**`EXTFILE` / `EXTDESC`** — `EXTFILE('BIB/NOM')` ou `EXTFILE('NOM')` : données de la table `NOM`
+(bibliothèque ignorée, documenté) ; `EXTDESC('BIB/NOM')` : description (zones, types, clés,
+format, unicité) de la table `NOM`. Avec les deux : description d'`EXTDESC`, données d'`EXTFILE` ;
+zones différentes (noms ou types) → erreur claire. `EXTFILE(*EXTDESC)` accepté.
+`EXTFILE(variable)` → « pas encore supporté ».
+
+**`READE` / `READPE` sans clé** — comparaison avec la clé complète du dernier enregistrement lu.
+Sans lecture préalable réussie → « pas encore supporté ».
+
+**Extenseur `(N)`** sur les lectures (`READ`, `READP`, `READE`, `READPE`, `CHAIN`) : lecture sans
+verrou ; pas d'enregistrement courant (un `UPDATE`/`DELETE` sans relecture → statut 01221).
+
+**Extenseur `(E)` et `%ERROR`** — sur toute opération de fichier (`READ`…, `CHAIN`, `SETLL`,
+`SETGT`, `WRITE`, `UPDATE`, `DELETE`, `UNLOCK`, `OPEN`, `CLOSE`), combinable avec `N`
+(`(EN)`, `(NE)`) : une erreur RPG de fichier (`RpgError` : 01211, 01215, 01221, 01021) ne lève
+pas d'exception ; `%ERROR` = `*ON` et `%STATUS` = statut, le programme continue. Une opération
+avec `(E)` qui réussit met `%ERROR` à `*OFF`. Les opérations sans `(E)` ne changent pas `%ERROR`.
+Les refus « pas encore supporté » et les erreurs de données traversent `(E)`. Autres extenseurs
+et `(E)` hors fichiers : inchangés (refusés là où ils l'étaient).
+
+### Incrément 3a — architecture
+
+| Fichier | Changement |
+|---------|------------|
+| `parser.ts`, `types.ts` | `FileDeclarationNode` : `rename`, `prefix { text, count? }`, `extfile` (texte ou `*EXTDESC`), `extdesc` ; `FileOperationNode.extender { error, noLock }` ; `READE`/`READPE` sans clé ; `%ERROR` |
+| `files.ts` | `reade`/`readpe` avec la clé du dernier enregistrement lu ; option de lecture sans verrou |
+| `interpreter.ts` | tables de description et de données, contrôle des zones, format renommé, correspondance zone → variable préfixée, enveloppe `(E)` (`%ERROR`, `%STATUS`) |
+| `readme.md` | mots-clés, extenseurs, refus |
+
+### Incrément 3a — tests (TDD)
+`test/files.test.js` : `dcl-f film rename(film:ffilm)`, `PREFIX` en lecture et écriture,
+`EXTFILE`/`EXTDESC`, boucle `READE` sans clé, `READ(N)` puis `UPDATE` (01221), `CHAIN(E)` sur
+fichier fermé (`%ERROR`, `%STATUS` 1211), `WRITE(E)` d'un doublon ; `test/files-core.test.js`
+pour le module ; `test/unsupported.test.js` pour chaque refus.
