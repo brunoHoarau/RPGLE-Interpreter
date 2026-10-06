@@ -1,6 +1,6 @@
-# RPGLE Interpreter - Roadmap 2024-2025
+# RPGLE Interpreter - Roadmap 2026-2027
 
-> *Dernière mise à jour : 2024*
+> *Dernière mise à jour : 2026*
 > *Statut : En cours de développement*
 
 ---
@@ -255,11 +255,11 @@ Les contributions sont les bienvenues ! Pour contribuer :
 
 | Version | Date | Changements |
 |---------|------|-------------|
-| 1.0.0 | 2024 | Version initiale (ce document) |
+| 1.0.0 | 2026 | Version initiale (ce document) |
 
 ---
 
-## 🎉 Feuille de Route à Long Terme (2025+)
+## 🎉 Feuille de Route à Long Terme (2026+)
 
 - **Intégration avec IBM i** : Synchronisation bidirectionnelle avec des systèmes réels
 - **Support RPG III** : Compatibilité descendante
