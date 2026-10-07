@@ -1,10 +1,11 @@
 import { TokenType, ASTNode, DataTypeNode, ParameterNode } from '../types';
-import { ParserState } from './state';
+import { ParserState, newSubScope } from './state';
 import { unsupported } from './constants';
 import { parseVariableDeclaration, parseConstantDeclaration, rememberDateTime } from './declarations/variables';
 import { parseDataType } from './declarations/keywords';
 import { parseDataStructure } from './declarations/data-structure';
 import { parseStatement } from './statements/statement';
+import { isOpcode, parseSubroutine, checkAfterSubroutines, finishSubScope } from './subroutines';
 
 export function parseProcedure(p: ParserState): ASTNode {
   p.expect(TokenType.DCL_PROC);
@@ -16,8 +17,15 @@ export function parseProcedure(p: ParserState): ASTNode {
   const body: ASTNode[] = [];
   const outerNames = new Set(p.dateTimeNames);
   const outerReadOnly = new Map(p.readOnlyNames);
+  const outerSubScope = p.subScope;
+  p.subScope = newSubScope(true);
 
   while (!p.check(TokenType.END_PROC) && !p.isAtEnd()) {
+    if (isOpcode(p, 'begsr')) {
+      body.push(parseSubroutine(p));
+      continue;
+    }
+    checkAfterSubroutines(p, []);
     if (p.check(TokenType.DCL_PI)) {
       ({ returnType, parameters } = parseProcedureInterface(p));
     } else if (p.check(TokenType.DCL_S)) {
@@ -35,6 +43,8 @@ export function parseProcedure(p: ParserState): ASTNode {
     }
   }
 
+  finishSubScope(p);
+  p.subScope = outerSubScope;
   p.expect(TokenType.END_PROC);
   p.dateTimeNames = outerNames; // Les noms locaux disparaissent avec la procédure
   p.readOnlyNames = outerReadOnly;

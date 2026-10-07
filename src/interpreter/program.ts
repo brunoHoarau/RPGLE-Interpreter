@@ -9,7 +9,8 @@ import { executeAssignment, executeDsply, executeSQL } from './statements';
 import { executeIf, executeSelect, executeLoop, executeReturn, executeMonitor } from './control-flow';
 import { executeProcedureCall } from './calls';
 import { InterpreterState } from './state';
-import { LeaveSignal, IterSignal, ReturnSignal } from './signals';
+import { LeaveSignal, IterSignal, ReturnSignal, LeaveSrSignal } from './signals';
+import { splitSubroutines, executeSubroutine } from './subroutines';
 
 // Exécute un programme avec ses paramètres d'entrée ; renvoie leurs valeurs finales
 export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): any[] {
@@ -68,8 +69,11 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
   }
 
   // Deuxième passe : exécuter le code (les verrous de ce programme sont libérés à sa fin)
+  const { mainline, subs } = splitSubroutines(ast.body);
+  s.subroutines.push(subs);
   try {
-    for (const node of ast.body) {
+    if (subs.has('*inzsr')) executeSubroutine(s, '*inzsr');
+    for (const node of mainline) {
       if (node.type !== 'VariableDeclaration' &&
           node.type !== 'ConstantDeclaration' &&
           node.type !== 'DataStructure' &&
@@ -82,6 +86,7 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
     if (e instanceof IterSignal) throw new Error('ITER en dehors d\'une boucle');
     if (!(e instanceof ReturnSignal)) throw e;
   } finally {
+    s.subroutines.pop();
     for (const state of s.files.values()) state.file.release();
   }
 
@@ -126,6 +131,10 @@ export function executeNode(s: InterpreterState, node: ASTNode): any {
       // Prototype local à une procédure
       s.prototypes.set(node.name.toLowerCase(), node);
       return;
+    case 'Exsr':
+      return executeSubroutine(s, (node as any).name);
+    case 'Leavesr':
+      throw new LeaveSrSignal();
     case 'Leave':
       throw new LeaveSignal();
     case 'Iter':

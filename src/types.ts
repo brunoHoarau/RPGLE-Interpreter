@@ -151,6 +151,9 @@ export type ASTNode =
   | FileOperationNode
   | LeaveNode
   | IterNode
+  | SubroutineNode
+  | ExsrNode
+  | LeavesrNode
   | DsplyNode;
 
 export interface ProgramNode {
@@ -307,6 +310,23 @@ export interface LeaveNode {
 
 export interface IterNode {
   type: 'Iter';
+}
+
+// BEGSR nom; ... ENDSR; : sous-routine, partageant les variables de sa portée (programme ou procédure)
+export interface SubroutineNode {
+  type: 'Subroutine';
+  name: string;
+  body: ASTNode[];
+}
+
+export interface ExsrNode {
+  type: 'Exsr';
+  name: string;
+  line: number;
+}
+
+export interface LeavesrNode {
+  type: 'Leavesr';
 }
 
 export interface DsplyNode {
