@@ -7,7 +7,8 @@ import { parseExpression } from '../expressions/operators';
 
 // IBM i refuse à la compilation d'affecter une constante ou un paramètre CONST
 export function checkWritable(p: ParserState, name: string, line: number): void {
-  const kind = p.readOnlyNames.get(name.toLowerCase());
+  // d.x : la sous-zone d'un paramètre DS CONST est en lecture seule comme le paramètre
+  const kind = p.readOnlyNames.get(name.toLowerCase()) ?? p.readOnlyNames.get(name.split('.')[0].toLowerCase());
   if (kind) {
     throw new Error(`${name} est ${kind} : affectation refusée par le compilateur IBM i (ligne ${line})`);
   }

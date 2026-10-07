@@ -10,12 +10,13 @@ import { runProgram, executeBlock } from './program';
 import { assignTo } from './statements';
 import { DEFAULT_MAX_CALL_DEPTH, InterpreterState } from './state';
 import { splitSubroutines } from './subroutines';
+import { DsArgument, checkDsParameters, copyBackDs, declareDsParameter, dsArgument } from './ds-params';
 import { LeaveSignal, IterSignal, ReturnSignal } from './signals';
 
 // Appelle une procédure utilisateur, sinon une procédure du runtime.
 // Les arguments restent des expressions : un paramètre passé par référence
 // (ni CONST ni VALUE) dont l'argument est une variable est recopié chez l'appelant.
-// Paramètre LIKEDS / LIKEREC : analysé mais pas encore exécutable
+// Procédure externe avec paramètre LIKEDS / LIKEREC : pas encore exécutable
 function refuseDsParameters(name: string, params: ParameterNode[]): void {
   const param = params.find(p => p.dataType.typeName === 'ds');
   if (param) throw new NotSupportedError(`Paramètre structure de données ${param.name.toUpperCase()} (${param.dataType.like?.kind.toUpperCase()}) de ${name}`);
@@ -31,14 +32,16 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
   }
 
   const params = proc.parameters;
-  refuseDsParameters(proc.name, params);
+  checkDsParameters(proc.name, params);
   checkArgumentCount(s, proc.name, params, argExprs.length);
   checkReferenceArguments(s, params, argExprs);
   if (s.runtime.callDepth >= s.maxCallDepth) {
     throw new Error(`Profondeur de récursion maximale (${s.maxCallDepth}) atteinte dans ${proc.name}`);
   }
 
-  const args = argExprs.map((arg, i) => valueFor(s, arg, params[i].dataType, params[i].name));
+  // Paramètres DS : disposition et valeurs lues chez l'appelant, avant l'ouverture du cadre
+  const dsArgs: (DsArgument | undefined)[] = argExprs.map((arg, i) => params[i].dataType.typeName === 'ds' ? dsArgument(s, params[i], arg) : undefined);
+  const args = argExprs.map((arg, i) => dsArgs[i] ? undefined : valueFor(s, arg, params[i].dataType, params[i].name));
   const byReference = params.map((p, i) =>
     i < argExprs.length && !p.isConst && !p.byValue && argExprs[i].valueType === 'identifier');
 
@@ -50,7 +53,8 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
   s.returnTypes.push(proc.returnType);
   try {
     params.forEach((p, i) => {
-      s.runtime.declareVariable(p.name, args[i], p.dataType);
+      if (dsArgs[i]) declareDsParameter(s, p, dsArgs[i]!);
+      else s.runtime.declareVariable(p.name, args[i], p.dataType);
       if (p.isConst) s.runtime.markReadOnly(p.name);
     });
     try {
@@ -62,7 +66,7 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
       returnValue = coerce(e.value, proc.returnType, proc.name);
     }
     params.forEach((p, i) => {
-      if (byReference[i]) outValues[i] = s.runtime.getVariable(p.name);
+      if (byReference[i]) outValues[i] = dsArgs[i] ? { ...s.runtime.getVariable(p.name) } : s.runtime.getVariable(p.name);
     });
   } finally {
     s.subroutines.pop();
@@ -71,7 +75,9 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
   }
 
   byReference.forEach((isRef, i) => {
-    if (isRef) assignTo(s, argExprs[i].value, outValues[i]);
+    if (!isRef) return;
+    if (dsArgs[i]) copyBackDs(s, dsArgs[i]!, outValues[i]);
+    else assignTo(s, argExprs[i].value, outValues[i]);
   });
   return returnValue;
 }

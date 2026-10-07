@@ -1324,3 +1324,64 @@ test('DS EXTNAME et LIKEDS : *LOVAL sur une zone date', () => {
     dsply %char(c2.cree: *iso);
   `, context()), ['9999-12-31']);
 });
+
+test('paramètre LIKEREC CONST : argument de même format et même usage accepté, sous-zones lisibles', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    cli.nom = 'Zoe';
+    lire(cli);
+    dcl-proc lire;
+      dcl-pi *n;
+        p likerec(clientf) const;
+      end-pi;
+      dsply %trim(p.nom);
+    end-proc;
+  `, context()), ['Zoe']);
+});
+
+test('paramètre LIKEREC par référence : les modifications reviennent, une DS LIKEDS de la source est acceptée', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    dcl-ds c2 likeds(cli);
+    maj(c2);
+    dsply %trim(c2.nom);
+    dcl-proc maj;
+      dcl-pi *n;
+        p likerec(clientf);
+      end-pi;
+      p.nom = 'Rendu';
+    end-proc;
+  `, context()), ['Rendu']);
+});
+
+test('paramètre LIKEREC : usage différent sans filiation (refus par référence, pas encore supporté en CONST)', () => {
+  const src = mode => `
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf : *all);
+    lire(cli);
+    dcl-proc lire;
+      dcl-pi *n;
+        p likerec(clientf)${mode};
+      end-pi;
+    end-proc;
+  `;
+  assert.throws(() => run(src(''), context()), INCOMPATIBLE);
+  assert.throws(() => run(src(' const'), context()), NOT_SUPPORTED);
+});
+
+test('paramètre LIKEREC : DS sans lien avec le format : sans filiation', () => {
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds x qualified;
+      a char(1);
+    end-ds;
+    lire(x);
+    dcl-proc lire;
+      dcl-pi *n;
+        p likerec(clientf) const;
+      end-pi;
+    end-proc;
+  `, context()), NOT_SUPPORTED);
+});

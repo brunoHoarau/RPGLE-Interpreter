@@ -120,3 +120,16 @@ test('le résolveur trouve un source .rpgle ou .sqlrpgle sans tenir compte de la
 test('le résolveur d\'un dossier inexistant ne trouve rien', () => {
   assert.equal(folderProgramResolver(path.join(os.tmpdir(), 'rpgle-absent-' + Date.now()))('X'), undefined);
 });
+
+test('dcl-pi du programme appelé avec paramètre DS : pas encore supporté', () => {
+  assert.throws(() => run(`${CALLER} appele(e: s);`, undefined, sources({ APPELE: `
+    dcl-ds m qualified;
+      a char(5);
+    end-ds;
+    dcl-pi *n;
+      p likeds(m);
+      out packed(7:2);
+    end-pi;
+    return;
+  ` })), /pas encore supporté/i);
+});

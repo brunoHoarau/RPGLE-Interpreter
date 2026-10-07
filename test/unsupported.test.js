@@ -417,14 +417,13 @@ test('3a : EXTFILE(*EXTDESC) sans EXTDESC refusé à l\'analyse', () => {
 
 // --- Garde-fous d'exécution : analysé mais pas encore exécutable ---
 
-test('exécution : DS résultat, %KDS, %FIELDS et paramètres DS sont refusés tant que non exécutés', () => {
+test('exécution : DS résultat, %KDS, %FIELDS et paramètre DS de programme externe sont refusés tant que non exécutés', () => {
   const context = { programs: {}, tables: { CLIENT: { format: 'CLIENTF', keys: ['ID'], columns: [{ name: 'ID', type: 'packed(5:0)' }, { name: 'NOM', type: 'char(5)' }], data: [{ ID: 1, NOM: 'abc' }] } } };
   for (const src of [
     'dcl-f client keyed;\ndcl-ds d likerec(clientf);\nread client d;',
     'dcl-f client keyed;\ndcl-ds k qualified;\n a int(5);\nend-ds;\nchain %kds(k) client;',
     'dcl-f client usage(*update);\nread client;\nupdate clientf %fields(nom);',
     'dcl-ds m qualified;\n a char(5);\nend-ds;\ndcl-pr p extpgm(\'P\');\n c likeds(m) const;\nend-pr;\np(m);',
-    'dcl-ds m qualified;\n a char(5);\nend-ds;\ndcl-proc p;\n dcl-pi *n;\n  c likeds(m) const;\n end-pi;\nend-proc;\np(m);',
   ]) {
     assert.throws(() => run(src, context), NOT_SUPPORTED, src);
   }
