@@ -1693,3 +1693,25 @@ test('bout en bout : lecture dans une DS LIKEREC, procédure à paramètre LIKER
   `, ctx);
   assert.deepEqual(out, ['Comedie', 'Film B', '4500', '0', '|']);
 });
+
+const CHAIN_DANS_PARAM = (option, corps = 'chain 1 client d;\n    dsply d.nom;') => `
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    dcl-proc p;
+      dcl-pi *n;
+        d likeds(cli) ${option};
+      end-pi;
+      ${corps}
+    end-proc;
+    p(cli);
+  `;
+
+test('DS résultat d une lecture : paramètre CONST refusé à l analyse', () => {
+  assert.throws(() => run(CHAIN_DANS_PARAM('const'), context()), /d est un paramètre CONST/i);
+  assert.throws(() => run(CHAIN_DANS_PARAM('const', 'read client d;'), context()), /paramètre CONST/i);
+});
+
+test('DS résultat d une lecture : paramètre VALUE accepté (copie locale)', () => {
+  const out = run(CHAIN_DANS_PARAM('value'), context());
+  assert.equal(out.length, 1);
+});

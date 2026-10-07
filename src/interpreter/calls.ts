@@ -10,6 +10,7 @@ import { runProgram, executeBlock } from './program';
 import { assignTo } from './statements';
 import { DEFAULT_MAX_CALL_DEPTH, InterpreterState } from './state';
 import { splitSubroutines } from './subroutines';
+import { checkAliasedArguments } from './alias-check';
 import { DsArgument, checkDsParameters, copyBackDs, declareDsParameter, dsArgument } from './ds-params';
 import { LeaveSignal, IterSignal, ReturnSignal } from './signals';
 
@@ -35,6 +36,7 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
   checkDsParameters(proc.name, params);
   checkArgumentCount(s, proc.name, params, argExprs.length);
   checkReferenceArguments(s, params, argExprs);
+  checkAliasedArguments(proc.name, params, argExprs);
   if (s.runtime.callDepth >= s.maxCallDepth) {
     throw new Error(`Profondeur de récursion maximale (${s.maxCallDepth}) atteinte dans ${proc.name}`);
   }

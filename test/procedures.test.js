@@ -588,3 +588,37 @@ test('paramètre LIKEDS *NOPASS : pas encore supporté', () => {
     end-proc;
   `), /pas encore supporté/i);
 });
+
+const DEUX_PARAMS = (decl1, decl2, args, corps) => `${DS_MODELE}
+    dcl-s x int(10);
+    dcl-ds a likeds(modele);
+    maj(${args});
+    dcl-proc maj;
+      dcl-pi *n;
+        ${decl1};
+        ${decl2};
+      end-pi;
+      ${corps}
+    end-proc;
+  `;
+
+test('même DS passée deux fois par référence : pas encore supporté', () => {
+  assert.throws(() => run(DEUX_PARAMS('p likeds(modele)', 'q likeds(modele)', 'a : a', "p.nom = 'A';\n dsply q.nom;")), /deux fois par référence.*pas encore supporté/i);
+});
+
+test('même scalaire passé deux fois par référence : pas encore supporté', () => {
+  assert.throws(() => run(DEUX_PARAMS('p int(10)', 'q int(10)', 'x : x', 'p = 5;\n dsply %char(q);')), /deux fois par référence.*pas encore supporté/i);
+});
+
+test('une DS et sa sous-zone passées par référence : pas encore supporté', () => {
+  assert.throws(() => run(DEUX_PARAMS('p likeds(modele)', 'q char(5)', 'a : a.nom', "p.nom = 'A';\n dsply q;")), /deux fois par référence/i);
+});
+
+test('même variable par référence et CONST : pas encore supporté', () => {
+  assert.throws(() => run(DEUX_PARAMS('p int(10)', 'q int(10) const', 'x : x', 'p = 5;\n dsply %char(q);')), /deux fois par référence/i);
+});
+
+test('même variable par référence et VALUE, ou deux fois CONST : accepté', () => {
+  assert.deepEqual(run(DEUX_PARAMS('p int(10)', 'q int(10) value', 'x : x', 'p = 5;\n dsply %char(q);')), ['0']);
+  assert.deepEqual(run(DEUX_PARAMS('p int(10) const', 'q int(10) const', 'x : x', 'dsply %char(p + q);')), ['0']);
+});

@@ -330,5 +330,6 @@ Limites connues de 3b :
 - les contrôles DS / opération (origine, usage) sont faits au moment de l'opération, pas avant l'exécution du programme ;
 - `*LOVAL` / `*HIVAL` sur une sous-zone date d'une DS `EXTNAME` non qualifiée est refusé à l'analyse ;
 - les paramètres DS sont passés par copie / recopie : une exception qui sort de la procédure ne renvoie pas les modifications ;
+- le passage par référence est simulé par copie à l'entrée / recopie au retour : une procédure qui modifie directement une variable globale également passée par référence voit la recopie au retour l'emporter (non détecté) ; une même variable (ou une DS et sa sous-zone) passée à deux paramètres par référence, ou par référence et en CONST, est refusée (« pas encore supporté ») ;
 - `CONST` / `VALUE` avec une DS sans filiation : « pas encore supporté » ;
 - `DIM` sur une DS : « pas encore supporté ».

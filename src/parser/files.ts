@@ -1,7 +1,7 @@
 import { Token, TokenType, FileDeclarationNode, FileOperationNode, ExpressionNode } from '../types';
 import { ParserState } from './state';
 import { READ_OPERATIONS, KEYED_OPERATIONS, unsupported, COMPOUND_OPERATORS } from './constants';
-import { parseCallArguments } from './statements/assignment';
+import { parseCallArguments, checkWritable } from './statements/assignment';
 import { parseExpression } from './expressions/operators';
 
 // Opérations qui acceptent une structure de données résultat (read f ds, write fmt ds...)
@@ -226,7 +226,10 @@ export function parseFileOperation(p: ParserState): FileOperationNode {
       if (!RESULT_DS_OPERATIONS.has(operation)) {
         throw unsupported(`${opName} avec un opérande de plus (structure de données résultat)`, p.peek());
       }
+      const dsToken = p.peek();
       resultDs = parseDsOperand(p);
+      // La lecture écrit dans la DS résultat : même refus qu'une affectation (WRITE / UPDATE la lisent seulement)
+      if (operation !== 'write' && operation !== 'update') checkWritable(p, resultDs, dsToken.line);
     }
     if (isBuiltinAt(p, '%fields')) {
       if (operation !== 'update') throw new Error(`%FIELDS n'est permis qu'avec UPDATE, pas avec ${opName} (ligne ${p.peek().line})`);
