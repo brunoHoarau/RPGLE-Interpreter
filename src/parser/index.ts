@@ -5,6 +5,7 @@ import { parseDataStructure } from './declarations/data-structure';
 import { parseProcedure, parseProcedureInterface, parsePrototype } from './procedures';
 import { parseFileDeclaration } from './files';
 import { parseStatement } from './statements/statement';
+import { isOpcode, parseSubroutine, checkAfterSubroutines, finishSubScope } from './subroutines';
 
 export class Parser {
   private state: ParserState;
@@ -20,6 +21,11 @@ export class Parser {
     let parameters: ParameterNode[] | undefined;
 
     while (!p.isAtEnd()) {
+      if (isOpcode(p, 'begsr')) {
+        body.push(parseSubroutine(p));
+        continue;
+      }
+      checkAfterSubroutines(p, [TokenType.DCL_PROC, TokenType.DCL_PR]);
       if (p.check(TokenType.CTL_OPT)) {
         body.push(parseControlOptions(p));
       } else if (p.check(TokenType.DCL_S)) {
@@ -40,6 +46,8 @@ export class Parser {
         body.push(parseStatement(p));
       }
     }
+
+    finishSubScope(p);
 
     return files.length > 0 ? { type: 'Program', body, parameters, files } : { type: 'Program', body, parameters };
   }

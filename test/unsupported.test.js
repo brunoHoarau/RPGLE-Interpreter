@@ -85,13 +85,23 @@ test('opérations de lecture acceptées à l\'analyse', () => {
   `));
 });
 
-test('EXSR est refusé, y compris dans un bloc', () => {
-  assert.throws(() => parse(`exsr calcul;`), err => NOT_SUPPORTED.test(err.message) && /EXSR/.test(err.message));
-  assert.throws(() => parse(`if 1 = 1; exsr calcul; endif;`), /EXSR/);
+test('*PSSR est refusée (BEGSR et EXSR)', () => {
+  assert.throws(() => parse(`begsr *pssr; endsr;`), err => NOT_SUPPORTED.test(err.message) && /PSSR/.test(err.message));
+  assert.throws(() => parse(`exsr *pssr;`), err => NOT_SUPPORTED.test(err.message) && /PSSR/.test(err.message));
+});
+
+test('ENDSR avec opérande est refusé', () => {
+  assert.throws(() => parse(`begsr a; endsr *detc;`), err => NOT_SUPPORTED.test(err.message) && /ENDSR/.test(err.message));
+  assert.throws(() => parse(`begsr a; endsr retpt;`), NOT_SUPPORTED);
+});
+
+test('un appel récursif de sous-routine est refusé, direct ou indirect', () => {
+  assert.throws(() => parse(`begsr a; exsr a; endsr;`), err => NOT_SUPPORTED.test(err.message) && /récursif/.test(err.message));
+  assert.throws(() => parse(`begsr a; exsr b; endsr; begsr b; exsr a; endsr;`), /récursif/);
 });
 
 test('les autres codes opération non supportés sont refusés', () => {
-  for (const op of ['clear ds;', 'reset ds;', 'sorta tab;', 'exfmt ecran;', 'begsr calcul;', 'eval-corr a = b;']) {
+  for (const op of ['clear ds;', 'reset ds;', 'sorta tab;', 'exfmt ecran;', 'eval-corr a = b;']) {
     assert.throws(() => parse(op), NOT_SUPPORTED, op);
   }
 });

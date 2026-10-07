@@ -5,3 +5,4 @@ export class IterSignal {}
 export class ReturnSignal {
   constructor(public value?: any) {}
 }
+export class LeaveSrSignal {}

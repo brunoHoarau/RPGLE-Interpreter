@@ -1,4 +1,4 @@
-import { ProcedureNode, PrototypeNode, DataTypeNode, FileDeclarationNode } from '../types';
+import { SubroutineNode, ProcedureNode, PrototypeNode, DataTypeNode, FileDeclarationNode } from '../types';
 import { NativeFile } from '../files';
 import { Runtime } from '../runtime';
 import { ExecutionContext, TableDefinition, emptyContext } from '../context';
@@ -39,6 +39,7 @@ export class InterpreterState {
   returnTypes: (DataTypeNode | undefined)[] = [];
   procedures = new Map<string, ProcedureNode>();
   prototypes = new Map<string, PrototypeNode>();
+  subroutines: Map<string, SubroutineNode>[] = []; // Sous-routines de la portée en cours (programme ou procédure), au sommet
   context: ExecutionContext;
   options: InterpreterOptions;
   programDepth = 0; // Niveau d'imbrication des appels de programmes source

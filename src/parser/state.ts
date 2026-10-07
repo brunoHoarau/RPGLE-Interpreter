@@ -1,6 +1,18 @@
 import { Token, TokenType, FileDeclarationNode } from '../types';
 import { TYPE_TOKENS, FILE_OPERATION_TOKENS } from './constants';
 
+// Sous-routines d'une portée (programme principal ou procédure)
+export interface SubScope {
+  isProc: boolean;
+  defined: Map<string, number>;                          // nom en minuscules -> ligne du BEGSR
+  calls: { from?: string; to: string; token: Token }[];  // EXSR rencontrés ; from : sous-routine appelante
+  seen: boolean;                                         // un BEGSR a déjà été vu
+}
+
+export function newSubScope(isProc: boolean): SubScope {
+  return { isProc, defined: new Map(), calls: [], seen: false };
+}
+
 // État du parseur : jetons, curseur et tables de noms déclarés
 export class ParserState {
   tokens: Token[];
@@ -14,6 +26,9 @@ export class ParserState {
   fileNames = new Set<string>();
   // Utilisation (USAGE) de chaque fichier déclaré (noms en majuscules)
   fileUsage = new Map<string, FileDeclarationNode['usage']>();
+
+  subScope: SubScope = newSubScope(false);
+  currentSub?: string; // Sous-routine en cours d'analyse (minuscules)
 
   constructor(tokens: Token[]) {
     this.tokens = tokens;

@@ -9,6 +9,7 @@ import { fromMock, valueFor } from './declarations';
 import { runProgram, executeBlock } from './program';
 import { assignTo } from './statements';
 import { DEFAULT_MAX_CALL_DEPTH, InterpreterState } from './state';
+import { splitSubroutines } from './subroutines';
 import { LeaveSignal, IterSignal, ReturnSignal } from './signals';
 
 // Appelle une procédure utilisateur, sinon une procédure du runtime.
@@ -36,6 +37,8 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
 
   let returnValue: any;
   const outValues: any[] = [];
+  const { mainline, subs } = splitSubroutines(proc.body);
+  s.subroutines.push(subs);
   s.runtime.pushFrame(proc.name);
   s.returnTypes.push(proc.returnType);
   try {
@@ -44,7 +47,7 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
       if (p.isConst) s.runtime.markReadOnly(p.name);
     });
     try {
-      executeBlock(s, proc.body);
+      executeBlock(s, mainline);
     } catch (e) {
       if (e instanceof LeaveSignal) throw new Error(`LEAVE en dehors d'une boucle dans ${proc.name}`);
       if (e instanceof IterSignal) throw new Error(`ITER en dehors d'une boucle dans ${proc.name}`);
@@ -55,6 +58,7 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
       if (byReference[i]) outValues[i] = s.runtime.getVariable(p.name);
     });
   } finally {
+    s.subroutines.pop();
     s.returnTypes.pop();
     s.runtime.popFrame();
   }
