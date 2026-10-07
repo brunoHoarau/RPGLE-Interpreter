@@ -67,11 +67,13 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "node scripts/clean-out.js && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "node --test \"test/**/*.test.js\"",
-    "package": "npx --yes @vscode/vsce package --no-dependencies"
+    "package": "npx --yes @vscode/vsce package --no-dependencies",
+    "check-size": "node scripts/check-size.js",
+    "check": "npm test && npm run check-size"
   },
   "devDependencies": {
     "@types/node": "^16.18.126",
