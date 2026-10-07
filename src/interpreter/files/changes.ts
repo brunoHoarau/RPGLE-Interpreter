@@ -5,6 +5,7 @@ import { isDateTime, isDateTimeType, parseIso } from '../../datetime';
 import { RpgError, NotSupportedError } from '../../errors';
 import { NUMERIC_TYPES } from '../evaluate/builtins';
 import { fileState } from './operations';
+import { fieldsToUpdate } from './ds-io';
 import { InterpreterState, FileState } from '../state';
 
 // Contrôles du compilateur : toute opération de fichier (et l'argument de %EOF, %FOUND, %EQUAL, %OPEN)
@@ -66,14 +67,18 @@ export function executeFileChange(s: InterpreterState, node: FileOperationNode, 
       file.unlock();
       return;
     case 'write': {
-      const result = file.write(recordValues(s, state));
+      const result = file.write(recordValues(s, state, node.resultDs));
       if (result.failure === 'duplicate') {
         throw new RpgError(1021, `Clé en double dans le fichier ${file.name} (RNX1021)`);
       }
       return;
     }
     case 'update': {
-      const result = file.update(recordValues(s, state));
+      // %FIELDS : seules les zones citées sont transmises, les autres gardent la valeur de l'enregistrement en base
+      const zones = fieldsToUpdate(s, node, state);
+      const values = recordValues(s, state, node.resultDs);
+      if (zones) for (const zone of Object.keys(values)) if (!zones.has(zone)) delete values[zone];
+      const result = file.update(values);
       if (result.failure === 'noCurrent') throw noCurrent();
       if (result.failure === 'repositioned') throw blocked();
       if (result.failure === 'gone') throw refused("d'un enregistrement supprimé entre-temps");
@@ -83,7 +88,7 @@ export function executeFileChange(s: InterpreterState, node: FileOperationNode, 
       return;
     }
     case 'delete': {
-      if (node.key) {
+      if (node.key || node.kds) {
         const found = file.deleteByKey(key).found;
         state.found = s.lastIndicators.found = found;
         if (found) markDeleted(s, state);
@@ -105,24 +110,28 @@ export function markDeleted(s: InterpreterState, state: FileState): void {
 }
 
 // Valeurs des zones du fichier, lues dans les variables globales du programme
-// (une variable locale de même nom ne les masque pas) ; seul un CHAR perd ses blancs de remplissage
-export function recordValues(s: InterpreterState, state: FileState): { [zone: string]: any } {
+// (une variable locale de même nom ne les masque pas) ou, avec ds, dans les sous-zones de cette DS
+// (dans l'ordre du format, contrôlé par checkIoDs) ; seul un CHAR perd ses blancs de remplissage
+export function recordValues(s: InterpreterState, state: FileState, ds?: string): { [zone: string]: any } {
   const file = state.file;
   const values: { [zone: string]: any } = {};
-  for (const field of file.fields) {
-    const value = s.runtime.getGlobal(state.variables.get(field.name)!);
+  const shape = ds ? s.runtime.getShape(ds) : undefined;
+  file.fields.forEach((field, index) => {
+    const value = shape ? s.runtime.getField(ds!, shape.fields[index].name) : s.runtime.getGlobal(state.variables.get(field.name)!);
     if (typeof value === 'string' && field.type.typeName === 'char') values[field.name] = value.replace(/ +$/, '');
     else if (typeof value === 'boolean') values[field.name] = value ? '1' : '0';
     else if (isDateTime(value)) values[field.name] = String(value);
     else values[field.name] = value;
-  }
+  });
   return values;
 }
 
-// Copie les zones d'un enregistrement dans les variables du programme (chemin « données » : pas de checkAssignable)
-export function copyRecord(s: InterpreterState, state: FileState, row: any): void {
+// Copie les zones d'un enregistrement dans les variables du programme, ou dans les sous-zones de la DS ds
+// (chemin « données » : pas de checkAssignable)
+export function copyRecord(s: InterpreterState, state: FileState, row: any, ds?: string): void {
   const file = state.file;
-  for (const field of file.fields) {
+  const shape = ds ? s.runtime.getShape(ds) : undefined;
+  file.fields.forEach((field, index) => {
     const column = Object.keys(row).find(c => c.toUpperCase() === field.name);
     const raw = column === undefined ? undefined : row[column];
     const invalid = () => new Error(`Donnée invalide dans le fichier ${file.name} : zone ${field.name} = '${String(raw)}'`);
@@ -148,6 +157,7 @@ export function copyRecord(s: InterpreterState, state: FileState, row: any): voi
     } else if (!fitsField(raw, field.type)) {
       throw tooBig();
     }
-    s.runtime.setGlobal(state.variables.get(field.name)!, value);
-  }
+    if (shape) s.runtime.setField(ds!, shape.fields[index].name, value);
+    else s.runtime.setGlobal(state.variables.get(field.name)!, value);
+  });
 }

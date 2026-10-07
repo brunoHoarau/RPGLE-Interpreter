@@ -3,6 +3,7 @@ import { SQLEngine, SQLResult, HostVariables } from './sql-engine';
 import { DataTypeNode } from './types';
 import { coerce } from './datatypes';
 import { BUILTINS } from './builtins';
+import { DsShape, DsOrigin } from './ds-shape';
 
 // Portée de noms : le programme principal (globale) ou un appel de procédure (locale)
 interface Scope {
@@ -11,9 +12,10 @@ interface Scope {
   types: Map<string, DataTypeNode>; // Clés : 'var' ou 'ds.champ', en minuscules
   aliases: Map<string, string>;     // Champ de DS non qualifiée -> nom de la DS
   readOnly: Set<string>;            // Paramètres CONST de l'appel (minuscules)
+  shapes: Map<string, DsShape>;     // Disposition et origine de chaque DS déclarée (minuscules)
 }
 
-const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), types: new Map(), aliases: new Map(), readOnly: new Set() });
+const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), types: new Map(), aliases: new Map(), readOnly: new Set(), shapes: new Map() });
 
 // Un nom visible est une variable, ou un champ de DS non qualifiée (dsName renseigné)
 interface Resolved {
@@ -93,8 +95,10 @@ export class Runtime {
 
   // Les champs sont indexés en minuscules : ds.Champ et DS.CHAMP désignent le même champ.
   // Les champs d'une DS non qualifiée sont aussi accessibles directement par leur nom.
-  declareDataStructure(name: string, fields: FieldDeclaration[], qualified: boolean): void {
+  // link : origine (fichier) et filiation (racine) héritées d'une DS source (LIKEDS) ou propres à la DS (LIKEREC, EXTNAME)
+  declareDataStructure(name: string, fields: FieldDeclaration[], qualified: boolean, link: { origin?: DsOrigin; root?: number } = {}): void {
     const ds: any = {};
+    const shape: DsShape = { fields: [], initial: {}, origin: link.origin, root: link.root ?? ++this.lastRoot };
     for (const field of fields) {
       const key = field.name.toLowerCase();
       if (!qualified) {
@@ -103,9 +107,25 @@ export class Runtime {
       }
       this.currentScope.types.set(`${name.toLowerCase()}.${key}`, field.type);
       ds[key] = coerce(field.value, field.type, `${name}.${field.name}`);
+      shape.fields.push({ name: field.name, type: field.type });
+      shape.initial[key] = ds[key];
     }
     this.declareVariable(name, ds);
+    this.currentScope.shapes.set(name.toLowerCase(), shape);
   }
+
+  // Disposition et origine d'une DS visible (undefined si le nom n'est pas une DS déclarée)
+  getShape(name: string): DsShape | undefined {
+    const resolved = this.resolve(name);
+    return resolved && !resolved.dsName ? resolved.scope.shapes.get(name.toLowerCase()) : undefined;
+  }
+
+  // Mémorise la disposition d'une DS qui n'est pas déclarée par declareDataStructure (paramètre DS)
+  setShape(name: string, shape: DsShape): void {
+    this.currentScope.shapes.set(name.toLowerCase(), shape);
+  }
+
+  private lastRoot = 0;
 
   // Affecte la variable visible ; la crée dans la portée courante si elle n'existe pas
   setVariable(name: string, value: any): void {

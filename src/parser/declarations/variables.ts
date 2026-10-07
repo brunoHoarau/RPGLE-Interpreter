@@ -39,6 +39,7 @@ export function parseConstantDeclaration(p: ParserState): ASTNode {
   const value = parseExpression(p);
   p.expect(TokenType.SEMICOLON);
   p.readOnlyNames.set(name.toLowerCase(), 'une constante');
+  p.constants.set(name.toLowerCase(), value);
   return { type: 'ConstantDeclaration', name, value };
 }
 

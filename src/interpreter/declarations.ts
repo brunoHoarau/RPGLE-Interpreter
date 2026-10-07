@@ -1,9 +1,11 @@
-import { ExpressionNode, DataTypeNode } from '../types';
+import { ExpressionNode, DataTypeNode, DsLike } from '../types';
 import { checkAssignable, defaultValue, describeType } from '../datatypes';
 import { fromClock, isDateTime, isDateTimeType, parseIso } from '../datetime';
 import { NotSupportedError, incompatibleTypes } from '../errors';
 import { refuseFileFieldName } from './files/declare';
+import { formatLayout, tableLayout } from './files/layout';
 import { evaluate } from './evaluate/evaluate';
+import { DsOrigin } from '../ds-shape';
 import { InterpreterState } from './state';
 
 export const isZeroOrBlank = (expr: ExpressionNode | undefined) =>
@@ -66,10 +68,30 @@ export function executeConstantDeclaration(s: InterpreterState, node: any): void
 
 export function executeDataStructure(s: InterpreterState, node: any): void {
   refuseFileFieldName(s, node.name);
+  if (node.like) return declareLikeDataStructure(s, node.name, node.isQualified, node.like);
   if (!node.isQualified) for (const field of node.fields) refuseFileFieldName(s, field.name, field.dataType);
   s.runtime.declareDataStructure(node.name, node.fields.map((field: any) => ({
     name: field.name,
     type: field.dataType,
     value: initialValue(s, field.initialValue, field.dataType, `${node.name}.${field.name}`),
   })), node.isQualified);
+}
+
+// DS LIKEDS (sous-zones d'une DS visible), LIKEREC (format d'un DCL-F) ou EXTNAME (table de tables.json)
+function declareLikeDataStructure(s: InterpreterState, name: string, qualified: boolean, like: DsLike): void {
+  let fields: { name: string; type: DataTypeNode; value: any }[];
+  let link: { origin?: DsOrigin; root?: number };
+  if (like.kind === 'likeds') {
+    const source = s.runtime.getShape(like.name);
+    if (!source) throw new Error(`LIKEDS(${like.name.toUpperCase()}) : ${like.name.toUpperCase()} n'est pas une structure de données déclarée`);
+    // INZ(*LIKEDS) : valeurs de déclaration de la source (INZ), pas ses valeurs courantes
+    fields = source.fields.map(f => ({ ...f, value: like.inzLike ? source.initial[f.name.toLowerCase()] : defaultValue(f.type) }));
+    link = { origin: source.origin, root: source.root };
+  } else {
+    const layout = like.kind === 'likerec' ? formatLayout(s, like.name, like.usage) : tableLayout(s, like.name, like.format, like.usage);
+    fields = layout.fields.map(f => ({ ...f, value: defaultValue(f.type) }));
+    link = { origin: layout.origin };
+  }
+  if (!qualified) for (const field of fields) refuseFileFieldName(s, field.name, field.type, 'Sous-zone');
+  s.runtime.declareDataStructure(name, fields, qualified, link);
 }

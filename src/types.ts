@@ -218,12 +218,24 @@ export interface ParameterNode {
   options: string[];             // OPTIONS(*NOPASS : *OMIT ...), en minuscules
 }
 
+// LIKEDS / LIKEREC / EXTNAME d'une structure de données (ou d'un paramètre LIKEDS / LIKEREC).
+// name : DS source (LIKEDS, casse d'écriture), format (LIKEREC) ou fichier (EXTNAME), en majuscules sauf LIKEDS.
+// usage : type d'extraction ; 'none' pour LIKEDS (sans objet) et EXTNAME sans type d'extraction.
+export interface DsLike {
+  kind: 'likeds' | 'likerec' | 'extname';
+  name: string;
+  format?: string;
+  usage: 'all' | 'input' | 'output' | 'key' | 'none';
+  inzLike?: boolean;             // INZ(*LIKEDS) : reprend les valeurs INZ de la DS source
+}
+
 export interface DataTypeNode {
   type: 'DataType';
-  typeName: string;
+  typeName: string;              // 'ds' pour un paramètre LIKEDS / LIKEREC (alors like est renseigné)
   length?: number;
   decimals?: number;
   format?: string;
+  like?: DsLike;
 }
 
 export interface AssignmentNode {
@@ -301,6 +313,9 @@ export interface FileOperationNode {
   special?: 'start' | 'end';   // *START / *LOVAL, *END / *HIVAL
   lastKey?: boolean;           // READE / READPE sans clé : clé du dernier enregistrement lu
   extender?: { error: boolean; noLock: boolean }; // extenseurs (E) et (N)
+  resultDs?: string;           // structure de données résultat (read f ds, write fmt ds...), telle qu'écrite
+  kds?: { ds: string; count?: ExpressionNode }; // %KDS(ds {: n}) : clé tirée des sous-zones de la DS
+  fields?: string[];           // UPDATE ... %FIELDS(a : b) : noms en minuscules, tels qu'écrits (ds.a possible)
   line: number;
 }
 
@@ -360,6 +375,7 @@ export interface DataStructureNode {
   type: 'DataStructure';
   name: string;
   isQualified: boolean;
+  like?: DsLike;                 // LIKEDS / LIKEREC / EXTNAME : fields est alors vide
   fields: {
     name: string;
     dataType: DataTypeNode;

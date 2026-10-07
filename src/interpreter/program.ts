@@ -1,5 +1,6 @@
 import { ASTNode, ProgramNode, FileOperationNode } from '../types';
 import { describeValue } from '../datatypes';
+import { NotSupportedError } from '../errors';
 import { isDateTimeType, kindOf } from '../datetime';
 import { executeVariableDeclaration, executeConstantDeclaration, executeDataStructure } from './declarations';
 import { declareFile, checkRenamedFormats } from './files/declare';
@@ -38,6 +39,9 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
   // Paramètres d'entrée du programme (dcl-pi principal), passés par l'appelant
   const parameters = ast.parameters ?? [];
   parameters.forEach((p, i) => {
+    if (p.dataType.typeName === 'ds') {
+      throw new NotSupportedError(`Paramètre structure de données ${p.name.toUpperCase()} (${p.dataType.like?.kind.toUpperCase()}) du programme principal`);
+    }
     const type = p.dataType.typeName;
     // Sur IBM i les octets d'un autre type seraient réinterprétés comme une date
     if (isDateTimeType(type) && args[i] !== undefined && kindOf(args[i]) !== type) {

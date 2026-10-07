@@ -1,8 +1,11 @@
 import { Token, TokenType, FileDeclarationNode, FileOperationNode, ExpressionNode } from '../types';
 import { ParserState } from './state';
 import { READ_OPERATIONS, KEYED_OPERATIONS, unsupported, COMPOUND_OPERATORS } from './constants';
-import { parseCallArguments } from './statements/assignment';
+import { parseCallArguments, checkWritable } from './statements/assignment';
 import { parseExpression } from './expressions/operators';
+
+// Opérations qui acceptent une structure de données résultat (read f ds, write fmt ds...)
+const RESULT_DS_OPERATIONS = new Set(['read', 'readp', 'reade', 'readpe', 'chain', 'write', 'update']);
 
 // dcl-f nom [DISK] [USAGE(*INPUT)] [KEYED] [USROPN];
 export function parseFileDeclaration(p: ParserState): FileDeclarationNode {
@@ -195,13 +198,13 @@ export function parseFileOperation(p: ParserState): FileOperationNode {
 
   let key: ExpressionNode[] | undefined;
   let special: 'start' | 'end' | undefined;
+  let kds: FileOperationNode['kds'];
   if (keyed) {
     if (p.check(TokenType.SEMICOLON)) throw unsupported(`${opName} sans clé`, opToken);
-    if (p.check(TokenType.BUILTIN) && p.peek().value.toLowerCase() === '%kds') {
-      throw unsupported('%KDS', p.peek());
-    }
     const specials = ['*start', '*end', '*loval', '*hival'];
-    if (p.check(TokenType.SPECIAL_VALUE) && specials.includes(p.peek().value.toLowerCase())) {
+    if (isBuiltinAt(p, '%kds')) {
+      kds = parseKds(p);
+    } else if (p.check(TokenType.SPECIAL_VALUE) && specials.includes(p.peek().value.toLowerCase())) {
       const token = p.advance();
       if (operation !== 'setll' && operation !== 'setgt') throw unsupported(`${token.value.toUpperCase()} avec ${opName}`, token);
       special = ['*start', '*loval'].includes(token.value.toLowerCase()) ? 'start' : 'end';
@@ -215,8 +218,26 @@ export function parseFileOperation(p: ParserState): FileOperationNode {
   }
 
   const fileToken = p.expectName();
+  let resultDs: string | undefined;
+  let fields: string[] | undefined;
   if (!p.check(TokenType.SEMICOLON)) {
-    throw unsupported(`${opName} avec un opérande de plus (structure de données résultat)`, p.peek());
+    // %FIELDS : dernier opérande de UPDATE ; sinon la structure de données résultat
+    if (!isBuiltinAt(p, '%fields')) {
+      if (!RESULT_DS_OPERATIONS.has(operation)) {
+        throw unsupported(`${opName} avec un opérande de plus (structure de données résultat)`, p.peek());
+      }
+      const dsToken = p.peek();
+      resultDs = parseDsOperand(p);
+      // La lecture écrit dans la DS résultat : même refus qu'une affectation (WRITE / UPDATE la lisent seulement)
+      if (operation !== 'write' && operation !== 'update') checkWritable(p, resultDs, dsToken.line);
+    }
+    if (isBuiltinAt(p, '%fields')) {
+      if (operation !== 'update') throw new Error(`%FIELDS n'est permis qu'avec UPDATE, pas avec ${opName} (ligne ${p.peek().line})`);
+      fields = parseFields(p);
+    }
+    if (!p.check(TokenType.SEMICOLON)) {
+      throw unsupported(`${opName} avec un opérande de plus`, p.peek());
+    }
   }
   p.advance();
   requireFile(p, fileToken.value, fileToken.line, false);
@@ -229,8 +250,68 @@ export function parseFileOperation(p: ParserState): FileOperationNode {
 
   const node: FileOperationNode = { type: 'FileOperation', operation, file: fileToken.value, line: opToken.line };
   if (key) node.key = key;
+  if (kds) node.kds = kds;
+  if (resultDs) node.resultDs = resultDs;
+  if (fields) node.fields = fields;
   if (special) node.special = special;
   if (lastKey) node.lastKey = true;
   if (extender) node.extender = extender;
   return node;
+}
+
+function isBuiltinAt(p: ParserState, name: string): boolean {
+  return p.check(TokenType.BUILTIN) && p.peek().value.toLowerCase() === name;
+}
+
+// Nom d'une structure de données déclarée avant (forme simple, sans qualification)
+function parseDsOperand(p: ParserState): string {
+  const token = p.expectName();
+  if (p.check(TokenType.DOT)) throw unsupported(`Structure de données qualifiée ${token.value}.… comme opérande`, token);
+  if (!p.dsInfo.has(token.value.toLowerCase())) {
+    throw new Error(`${token.value.toUpperCase()} n'est pas une structure de données déclarée avant (ligne ${token.line})`);
+  }
+  return token.value;
+}
+
+// %KDS(ds {: n}) : n est un entier littéral ou une constante nommée, au moins 1
+function parseKds(p: ParserState): NonNullable<FileOperationNode['kds']> {
+  p.advance();
+  p.expect(TokenType.LPAREN);
+  const kds: NonNullable<FileOperationNode['kds']> = { ds: parseDsOperand(p) };
+  if (p.check(TokenType.COLON)) {
+    p.advance();
+    const token = p.advance();
+    const fail = () => new Error(`%KDS : le nombre de clés doit être un entier supérieur à 0 littéral ou une constante nommée (ligne ${token.line})`);
+    if (token.type === TokenType.NUMBER) {
+      if (!/^[0-9]+$/.test(token.value) || parseInt(token.value) < 1) throw fail();
+      kds.count = { type: 'Expression', value: parseInt(token.value), valueType: 'number' };
+    } else {
+      const constant = p.constants.get(token.value.toLowerCase());
+      if (token.type !== TokenType.IDENTIFIER || !constant || constant.valueType !== 'number'
+          || !Number.isInteger(constant.value) || constant.value < 1) throw fail();
+      kds.count = { type: 'Expression', value: token.value, valueType: 'identifier' };
+    }
+    if (!p.check(TokenType.RPAREN)) throw fail();
+  }
+  p.expect(TokenType.RPAREN);
+  return kds;
+}
+
+// %FIELDS(a : b : ds.c) : noms en minuscules, tels qu'écrits
+function parseFields(p: ParserState): string[] {
+  const keyword = p.advance();
+  p.expect(TokenType.LPAREN);
+  const names: string[] = [];
+  while (!p.check(TokenType.RPAREN) && !p.isAtEnd()) {
+    let name = p.expectName().value;
+    while (p.check(TokenType.DOT)) {
+      p.advance();
+      name += '.' + p.expectName().value;
+    }
+    names.push(name.toLowerCase());
+    if (p.check(TokenType.COLON)) p.advance(); else break;
+  }
+  p.expect(TokenType.RPAREN);
+  if (names.length === 0) throw new Error(`%FIELDS sans zone (ligne ${keyword.line})`);
+  return names;
 }

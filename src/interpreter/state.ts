@@ -28,6 +28,7 @@ export interface FileState {
   usage: FileDeclarationNode['usage'];
   table: TableDefinition;     // Table des données : deletedRows après une suppression native
   variables: Map<string, string>; // Zone → variable du programme (PREFIX), en majuscules
+  realFormat: string;         // Format de la table (avant RENAME)
 }
 
 // État de l'interpréteur, partagé par les fonctions des modules de ce dossier

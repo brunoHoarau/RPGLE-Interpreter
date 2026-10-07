@@ -1,4 +1,4 @@
-import { Token, TokenType, FileDeclarationNode } from '../types';
+import { Token, TokenType, FileDeclarationNode, ExpressionNode, DataTypeNode } from '../types';
 import { TYPE_TOKENS, FILE_OPERATION_TOKENS } from './constants';
 
 // Sous-routines d'une portée (programme principal ou procédure)
@@ -22,6 +22,11 @@ export class ParserState {
   dateTimeNames = new Set<string>();
   // Constantes DCL-C et paramètres CONST visibles (nom en minuscules -> genre) : toute affectation est refusée
   readOnlyNames = new Map<string, string>();
+  // Constantes DCL-C visibles (nom en minuscules -> valeur), pour EXTNAME(constante) et %KDS(ds : constante)
+  constants = new Map<string, ExpressionNode>();
+  // Structures de données déclarées (nom en minuscules) ; fields vide si les sous-zones ne sont connues
+  // qu'à l'exécution (LIKEREC, EXTNAME) ; fromFile : DS tirée d'un fichier (ou LIKEDS d'une telle DS)
+  dsInfo = new Map<string, { fields: { name: string; dataType: DataTypeNode }[]; fromFile?: boolean }>();
   // Fichiers déclarés par DCL-F (noms en majuscules)
   fileNames = new Set<string>();
   // Utilisation (USAGE) de chaque fichier déclaré (noms en majuscules)
@@ -78,6 +83,16 @@ export class ParserState {
   isTypeTokenAt(index: number): boolean {
     const type = this.tokens[index]?.type;
     return type !== undefined && TYPE_TOKENS.includes(type);
+  }
+
+  // *LOVAL et *HIVAL sont permis pour ce nom : date, heure ou timestamp connu, ou sous-zone d'une DS tirée d'un
+  // fichier (type connu seulement à l'exécution, qui refuse alors une sous-zone non date).
+  // Les sous-zones directes d'une DS EXTNAME non qualifiée ne sont pas reconnues ici : l'analyse ne connaît pas leurs noms.
+  mayBeDateTime(name: string): boolean {
+    const lower = name.toLowerCase();
+    if (this.dateTimeNames.has(lower)) return true;
+    const dot = lower.indexOf('.');
+    return dot > 0 && this.dsInfo.get(lower.slice(0, dot))?.fromFile === true && !lower.includes('.', dot + 1);
   }
 
   // Parenthèse ouvrante au jeton courant : texte des jetons jusqu'à la parenthèse fermante (ou ';', fin) exclue,

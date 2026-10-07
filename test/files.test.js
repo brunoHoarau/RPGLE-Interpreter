@@ -1167,3 +1167,551 @@ test('format non renommé portant le nom d\'une variable, constante, structure o
   c.tables.AUTRE = { keys: ['CLIENTF'], columns: [{ name: 'CLIENTF', type: 'int(10)' }], data: [] };
   assert.throws(() => run(`dcl-f client; dcl-f autre;`, c), /CLIENTF.*zone/);
 });
+
+// --- DS LIKEREC / EXTNAME (3b, tâche 2) ---
+
+function ctxCle() {
+  const c = ctx3();
+  c.tables.ORDRE = { format: 'ORDREF', keys: ['C', 'A'], columns: [{ name: 'A', type: 'int(10)' }, { name: 'B', type: 'char(4)' }, { name: 'C', type: 'char(3)' }], data: [] };
+  c.tables.SANSCLE = { columns: [{ name: 'A', type: 'int(10)' }], data: [] };
+  return c;
+}
+
+test('LIKEREC : sous-zones du format avec leurs types, valeurs par défaut', () => {
+  const out = run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    dsply %char(cli.numcli) + '|' + %char(%len(cli.nom));
+    cli.solde = 1.239;
+    dsply %char(cli.solde);
+    dsply %char(cli.cree: *iso);
+  `, context());
+  assert.deepEqual(out, ['0|10', '1.23', '0001-01-01']);
+});
+
+test('LIKEREC : les zones du programme ne sont pas modifiées par la DS', () => {
+  const out = run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    cli.nom = 'Zoe';
+    nom = 'Programme';
+    dsply %trim(cli.nom) + ' ' + %trim(nom);
+  `, context());
+  assert.deepEqual(out, ['Zoe Programme']);
+});
+
+test('LIKEREC *KEY : zones de clé dans l\'ordre de la clé', () => {
+  const src = `
+    dcl-f ordre keyed;
+    dcl-ds k likerec(ordref : *key);
+    dcl-ds m qualified;
+      x char(3);
+      y int(10);
+    end-ds;
+    m = k;
+    dsply 'ok';
+  `;
+  assert.deepEqual(run(src, ctxCle()), ['ok']);
+  assert.throws(() => run(`dcl-f ordre keyed; dcl-ds k likerec(ordref : *key); k.b = 'x';`, ctxCle()), /b/i);
+});
+
+test('LIKEREC *KEY sur un fichier sans KEYED, format inconnu, nom de fichier au lieu du format : erreurs', () => {
+  assert.throws(() => run(`dcl-f ordre; dcl-ds k likerec(ordref : *key);`, ctxCle()), /KEYED|clé/i);
+  assert.throws(() => run(`dcl-f client keyed; dcl-ds k likerec(inconnu);`, context()), /INCONNU/);
+  assert.throws(() => run(`dcl-f film rename(film:ffilm) keyed; dcl-ds k likerec(film);`, ctx3()), /FILM/);
+});
+
+test('LIKEREC sur un fichier RENAME', () => {
+  assert.deepEqual(run(`
+    dcl-f film rename(film:ffilm) keyed;
+    dcl-ds f likerec(ffilm);
+    f.titre = 'Alien';
+    dsply %trim(f.titre);
+  `, ctx3()), ['Alien']);
+});
+
+test('LIKEREC sur un fichier PREFIX : sous-zones préfixées', () => {
+  assert.deepEqual(run(`
+    dcl-f client prefix(c_) keyed;
+    dcl-ds cli likerec(clientf);
+    cli.c_clnom = 'Zoe';
+    dsply %trim(cli.c_clnom);
+  `, ctx3()), ['Zoe']);
+  assert.throws(() => run(`
+    dcl-f client prefix(c_) keyed;
+    dcl-ds cli likerec(clientf);
+    cli.clnom = 'Zoe';
+  `, ctx3()), /clnom/i);
+});
+
+test('EXTNAME qualifiée : sous-zones de la table', () => {
+  assert.deepEqual(run(`
+    dcl-ds cli extname('CLIENT') qualified end-ds;
+    cli.nom = 'Zoe';
+    dsply %trim(cli.nom) + '|' + %char(cli.numcli);
+  `, context()), ['Zoe|0']);
+});
+
+test('EXTNAME non qualifiée : sous-zones accessibles directement', () => {
+  assert.deepEqual(run(`
+    dcl-ds cli extname('CLIENT');
+    end-ds;
+    nom = 'Zoe';
+    dsply %trim(cli.nom) + '|' + %trim(nom);
+  `, context()), ['Zoe|Zoe']);
+});
+
+test('EXTNAME avec format et type d\'extraction', () => {
+  assert.deepEqual(run(`
+    dcl-ds k extname('ORDRE' : 'ORDREF' : *key) qualified end-ds;
+    k.c = 'abc';
+    dsply k.c;
+  `, ctxCle()), ['abc']);
+  assert.deepEqual(run(`dcl-ds a extname('AUTRE':'AUTREF') qualified end-ds; dsply %char(a.x);`, ctx3()), ['0']);
+});
+
+test('EXTNAME non qualifiée dont une sous-zone porte le nom d\'une zone de DCL-F : pas encore supporté', () => {
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds cli extname('CLIENT') end-ds;
+  `, context()), NOT_SUPPORTED);
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli extname('CLIENT') qualified end-ds;
+    dsply 'ok';
+  `, context()), ['ok']);
+});
+
+test('EXTNAME : table absente, format faux, *KEY sur table sans clé : erreurs', () => {
+  assert.throws(() => run(`dcl-ds x extname('ABSENT') qualified end-ds;`, context()), /absent de context\/tables\.json/);
+  assert.throws(() => run(`dcl-ds x extname('CLIENT':'FAUX') qualified end-ds;`, context()), /format.*FAUX|FAUX.*format/i);
+  assert.throws(() => run(`dcl-ds x extname('SANSCLE' : *key) qualified end-ds;`, ctxCle()), /clé|keys/i);
+});
+
+test('LIKEDS d\'une DS LIKEREC ou EXTNAME : mêmes sous-zones, copie a = b', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    dcl-ds c2 likeds(cli);
+    cli.nom = 'Zoe';
+    c2 = cli;
+    dsply %trim(c2.nom);
+  `, context()), ['Zoe']);
+});
+
+test('DS LIKEREC : *LOVAL sur une zone date acceptée, sur une zone non date refusée', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    cli.cree = *hival;
+    dsply %char(cli.cree: *iso);
+    if cli.cree = *hival;
+      dsply 'egal';
+    endif;
+  `, context()), ['9999-12-31', 'egal']);
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    cli.nom = *loval;
+  `, context()), NOT_SUPPORTED);
+});
+
+test('DS EXTNAME et LIKEDS : *LOVAL sur une zone date', () => {
+  assert.deepEqual(run(`
+    dcl-ds cli extname('CLIENT') qualified end-ds;
+    dcl-ds c2 likeds(cli);
+    c2.cree = *hival;
+    dsply %char(c2.cree: *iso);
+  `, context()), ['9999-12-31']);
+});
+
+test('paramètre LIKEREC CONST : argument de même format et même usage accepté, sous-zones lisibles', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    cli.nom = 'Zoe';
+    lire(cli);
+    dcl-proc lire;
+      dcl-pi *n;
+        p likerec(clientf) const;
+      end-pi;
+      dsply %trim(p.nom);
+    end-proc;
+  `, context()), ['Zoe']);
+});
+
+test('paramètre LIKEREC par référence : les modifications reviennent, une DS LIKEDS de la source est acceptée', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    dcl-ds c2 likeds(cli);
+    maj(c2);
+    dsply %trim(c2.nom);
+    dcl-proc maj;
+      dcl-pi *n;
+        p likerec(clientf);
+      end-pi;
+      p.nom = 'Rendu';
+    end-proc;
+  `, context()), ['Rendu']);
+});
+
+test('paramètre LIKEREC : usage différent sans filiation (refus par référence, pas encore supporté en CONST)', () => {
+  const src = mode => `
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf : *all);
+    lire(cli);
+    dcl-proc lire;
+      dcl-pi *n;
+        p likerec(clientf)${mode};
+      end-pi;
+    end-proc;
+  `;
+  assert.throws(() => run(src(''), context()), INCOMPATIBLE);
+  assert.throws(() => run(src(' const'), context()), NOT_SUPPORTED);
+});
+
+test('paramètre LIKEREC : DS sans lien avec le format : sans filiation', () => {
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds x qualified;
+      a char(1);
+    end-ds;
+    lire(x);
+    dcl-proc lire;
+      dcl-pi *n;
+        p likerec(clientf) const;
+      end-pi;
+    end-proc;
+  `, context()), NOT_SUPPORTED);
+});
+
+// --- 3b : opérations de fichier avec DS, %KDS, %FIELDS ---
+
+test('READ dans une DS LIKEREC : les zones du programme ne changent pas', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    nom = 'Avant';
+    read client cli;
+    dsply %trim(nom) + '|' + %trim(cli.nom) + '|' + %char(cli.numcli) + '|' + %char(cli.cree : *iso);
+  `, context()), ['Avant|Dupont|1|2025-01-15']);
+});
+
+test('boucle READ avec DS jusqu\'à %EOF, READP avec DS', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    read client cli;
+    dow not %eof(client);
+      dsply %trim(cli.nom);
+      read client cli;
+    enddo;
+    readp client cli;
+    dsply 'fin ' + %trim(cli.nom);
+  `, context()), ['Dupont', 'Martin', 'Durand', 'fin Durand']);
+});
+
+test('CHAIN non trouvé laisse la DS inchangée, trouvé la remplit', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    cli.nom = 'Reste';
+    chain 99 client cli;
+    dsply %trim(cli.nom) + '|' + %char(%found(client));
+    chain 2 client cli;
+    dsply %trim(cli.nom) + '|' + %trim(nom);
+  `, context()), ['Reste|0', 'Martin|']);
+});
+
+test('READE et READPE avec DS', () => {
+  assert.deepEqual(run(`
+    dcl-f cde keyed;
+    dcl-ds c likerec(cdef);
+    reade 1 cde c;
+    dsply %trim(c.lib);
+    setll 2 cde;
+    readpe 1 cde c;
+    dsply %trim(c.lib);
+    reade 2 cde c;
+    dsply %char(%eof(cde));
+  `, context()), ['c', 'a', '0']);
+});
+
+test('WRITE depuis une DS *OUTPUT puis relecture, UPDATE depuis une DS *INPUT', () => {
+  const c = wctx();
+  const out = run(`
+    dcl-f client usage(*update : *output) keyed;
+    dcl-ds sortie likerec(clientf : *output);
+    dcl-ds entree likerec(clientf : *input);
+    numcli = 77;
+    sortie.numcli = 3;
+    sortie.nom = 'Nouveau';
+    sortie.solde = 5;
+    sortie.cree = d'2026-01-01';
+    write clientf sortie;
+    chain 3 client entree;
+    dsply %trim(entree.nom) + '|' + %char(numcli);
+    entree.nom = 'Change';
+    entree.solde = 9.5;
+    update clientf entree;
+    chain 3 client;
+    dsply %trim(nom) + '|' + %char(solde);
+  `, c);
+  assert.deepEqual(out, ['Nouveau|77', 'Change|9.50']);
+  assert.equal(c.tables.CLIENT.data.length, 3);
+});
+
+test('DS *ALL acceptée pour READ, WRITE et UPDATE', () => {
+  const c = wctx();
+  assert.deepEqual(run(`
+    dcl-f client usage(*update : *output) keyed;
+    dcl-ds t likerec(clientf : *all);
+    t.numcli = 8;
+    t.nom = 'Tout';
+    t.cree = d'2026-01-01';
+    write clientf t;
+    chain 8 client t;
+    t.nom = 'Tout2';
+    update clientf t;
+    chain 8 client t;
+    dsply %trim(t.nom);
+  `, c), ['Tout2']);
+});
+
+test('LIKEDS d\'une DS LIKEREC *INPUT acceptée en lecture', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    dcl-ds c2 likeds(cli);
+    chain 1 client c2;
+    dsply %trim(c2.nom);
+  `, context()), ['Dupont']);
+});
+
+test('EXTNAME avec type d\'extraction *INPUT accepté, sans type refusé, ordinaire refusé', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds e extname('CLIENT' : *input) qualified end-ds;
+    chain 1 client e;
+    dsply %trim(e.nom);
+  `, context()), ['Dupont']);
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds e extname('CLIENT') qualified end-ds;
+    chain 1 client e;
+  `, context()), /compilateur/i);
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds d qualified;
+      numcli packed(7:0);
+      nom char(10);
+    end-ds;
+    chain 1 client d;
+  `, context()), /compilateur/i);
+});
+
+test('EXTNAME sur un fichier RENAME : le format réel est reconnu', () => {
+  assert.deepEqual(run(`
+    dcl-f film rename(film:ffilm) keyed;
+    dcl-ds e extname('FILM' : *input) qualified end-ds;
+    read film e;
+    dsply 'ok';
+  `, ctx3()), ['ok']);
+});
+
+test('usage ou fichier incompatible avec l\'opération : erreur de compilation avant tout accès', () => {
+  const head = `dcl-f client usage(*update : *output) keyed;
+    dcl-ds o likerec(clientf : *output);
+    dcl-ds i likerec(clientf : *input);
+    dcl-ds k likerec(clientf : *key);\n`;
+  assert.throws(() => run(head + 'read client o;', wctx()), /compilateur/i);
+  assert.throws(() => run(head + 'chain 1 client k;', wctx()), /compilateur/i);
+  assert.throws(() => run(head + 'write clientf i;', wctx()), /compilateur/i);
+  assert.throws(() => run(head + 'chain 1 client i; update clientf o;', wctx()), /compilateur/i);
+  assert.throws(() => run(head + 'write clientf k;', wctx()), /compilateur/i);
+  // DS d'un autre fichier
+  assert.throws(() => run(`dcl-f client keyed;
+    dcl-f cde keyed;
+    dcl-ds c likerec(cdef);
+    read client c;`, context()), /compilateur/i);
+});
+
+test('UPDATE(E) avec DS sans lecture préalable : %ERROR et statut 01221', () => {
+  assert.deepEqual(run(`
+    dcl-f client usage(*update) keyed;
+    dcl-ds e likerec(clientf);
+    update(e) clientf e;
+    dsply %char(%error) + ' ' + %char(%status);
+  `, wctx()), ['1 1221']);
+});
+
+test('%KDS : clé complète, partielle, DS quelconque et nombre trop grand', () => {
+  assert.deepEqual(run(`
+    dcl-f cde keyed;
+    dcl-ds cle qualified;
+      a packed(7:0);
+      b packed(5:0);
+    end-ds;
+    dcl-ds c likerec(cdef);
+    cle.a = 1;
+    cle.b = 7;
+    chain %kds(cle) cde c;
+    dsply %trim(c.lib);
+    chain %kds(cle : 1) cde c;
+    dsply %trim(c.lib) + '|' + %char(c.numcde);
+    cle.a = 2;
+    setll %kds(cle : 1) cde;
+    read cde c;
+    dsply %trim(c.lib);
+  `, context()), ['c', 'c|7', 'd']);
+  assert.throws(() => run(`
+    dcl-f cde keyed;
+    dcl-ds cle qualified;
+      a packed(7:0);
+    end-ds;
+    chain %kds(cle : 2) cde;
+  `, context()), /%KDS/);
+});
+
+test('%KDS sur une DS LIKEREC *KEY, SETLL puis READE avec %KDS, trop de valeurs refusé', () => {
+  assert.deepEqual(run(`
+    dcl-f cde keyed;
+    dcl-ds k likerec(cdef : *key);
+    dcl-ds c likerec(cdef);
+    k.numcli = 2;
+    setll %kds(k : 1) cde;
+    reade %kds(k : 1) cde c;
+    dsply %trim(c.lib);
+    reade %kds(k : 1) cde c;
+    dsply %trim(c.lib);
+    reade %kds(k : 1) cde c;
+    dsply %char(%eof(cde));
+  `, context()), ['d', 'b', '1']);
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds k qualified;
+      a packed(7:0);
+      b packed(7:0);
+    end-ds;
+    chain %kds(k) client;
+  `, context()), /clé/i);
+});
+
+test('DELETE avec %KDS', () => {
+  const c = wctx();
+  run(`
+    dcl-f client usage(*delete) keyed;
+    dcl-ds k qualified;
+      n packed(7:0);
+    end-ds;
+    k.n = 2;
+    delete %kds(k) client;
+  `, c);
+  assert.equal(c.tables.CLIENT.data.length, 1);
+});
+
+test('%FIELDS sans DS : seules les zones citées sont réécrites', () => {
+  const c = wctx();
+  const out = run(`
+    dcl-f client usage(*update) keyed;
+    chain 1 client;
+    nom = 'Modifie';
+    solde = 999;
+    update clientf %fields(solde);
+    chain 1 client;
+    dsply %trim(nom) + '|' + %char(solde);
+  `, c);
+  assert.deepEqual(out, ['Dupont|999.00']);
+});
+
+test('%FIELDS avec DS : sous-zones qualifiées de la DS résultat', () => {
+  const c = wctx();
+  const out = run(`
+    dcl-f client usage(*update) keyed;
+    dcl-ds ent likerec(clientf);
+    chain 2 client ent;
+    ent.nom = 'Perdu';
+    ent.solde = 12;
+    update clientf ent %fields(ent.solde);
+    chain 2 client;
+    dsply %trim(nom) + '|' + %char(solde);
+  `, c);
+  assert.deepEqual(out, ['Martin|12.00']);
+});
+
+test('%FIELDS : zone inconnue refusée, mélanges pas encore supportés', () => {
+  const head = `dcl-f client usage(*update) keyed;
+    dcl-ds ent likerec(clientf);
+    dcl-ds autre likerec(clientf);
+    chain 1 client ent;\n`;
+  assert.throws(() => run(head + 'update clientf %fields(inconnue);', wctx()), /INCONNUE/);
+  assert.throws(() => run(head + 'update clientf ent %fields(ent.inconnue);', wctx()), /INCONNUE/);
+  assert.throws(() => run(head + 'update clientf %fields(ent.solde);', wctx()), NOT_SUPPORTED);
+  assert.throws(() => run(head + 'update clientf ent %fields(solde);', wctx()), NOT_SUPPORTED);
+  assert.throws(() => run(head + 'update clientf ent %fields(autre.solde);', wctx()), NOT_SUPPORTED);
+});
+
+test('bout en bout : lecture dans une DS LIKEREC, procédure à paramètre LIKEREC CONST, DS LIKEDS globale', () => {
+  const ctx = {
+    programs: {},
+    tables: {
+      FILM: {
+        format: 'FILM',
+        columns: [{ name: 'CATEGORIE', type: 'char(15)' }, { name: 'LIBELLE', type: 'char(30)' },
+                  { name: 'VUES', type: 'packed(10:0)' }],
+        data: [
+          { CATEGORIE: 'Action', LIBELLE: 'Film A', VUES: 120 },
+          { CATEGORIE: 'Comedie', LIBELLE: 'Film B', VUES: 4500 },
+          { CATEGORIE: 'Drame', LIBELLE: 'Film C', VUES: 900 },
+        ],
+      },
+    },
+  };
+  const out = run(`
+    dcl-f film rename(film:ffilm);
+    dcl-ds curFilm likerec(ffilm);
+    dcl-ds meilleur likeds(curFilm);
+    read film curFilm;
+    dow not %eof;
+      garder(curFilm);
+      read film curFilm;
+    enddo;
+    dsply meilleur.categorie;
+    dsply meilleur.libelle;
+    dsply %char(meilleur.vues);
+    dsply %char(vues);
+    dsply %trim(categorie) + '|';
+    dcl-proc garder;
+      dcl-pi *n;
+        p_film likerec(ffilm) const;
+      end-pi;
+      if p_film.vues > meilleur.vues;
+        meilleur = p_film;
+      endif;
+    end-proc;
+  `, ctx);
+  assert.deepEqual(out, ['Comedie', 'Film B', '4500', '0', '|']);
+});
+
+const CHAIN_DANS_PARAM = (option, corps = 'chain 1 client d;\n    dsply d.nom;') => `
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    dcl-proc p;
+      dcl-pi *n;
+        d likeds(cli) ${option};
+      end-pi;
+      ${corps}
+    end-proc;
+    p(cli);
+  `;
+
+test('DS résultat d une lecture : paramètre CONST refusé à l analyse', () => {
+  assert.throws(() => run(CHAIN_DANS_PARAM('const'), context()), /d est un paramètre CONST/i);
+  assert.throws(() => run(CHAIN_DANS_PARAM('const', 'read client d;'), context()), /paramètre CONST/i);
+});
+
+test('DS résultat d une lecture : paramètre VALUE accepté (copie locale)', () => {
+  const out = run(CHAIN_DANS_PARAM('value'), context());
+  assert.equal(out.length, 1);
+});

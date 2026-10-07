@@ -100,3 +100,168 @@ test('3a : AST des mots-clés de DCL-F, des extenseurs et de READE sans clé', (
   assert.equal(ops[0].key, undefined);
   assert.deepEqual(ops[1].extender, { error: true, noLock: true });
 });
+
+// --- Incrément 3b : LIKEDS, LIKEREC, EXTNAME, DS résultat, %KDS, %FIELDS ---
+
+test('DCL-DS LIKEDS : nœud, qualifié, avec INZ(*LIKEDS)', () => {
+  const ast = parse(`
+    dcl-ds modele qualified;
+      a char(5);
+    end-ds;
+    dcl-ds copie likeds(modele);
+    dcl-ds copie2 likeds(MODELE) inz(*likeds);
+  `);
+  const [, c1, c2] = ast.body;
+  assert.equal(c1.isQualified, true);
+  assert.deepEqual(c1.fields, []);
+  assert.deepEqual(c1.like, { kind: 'likeds', name: 'modele', usage: 'none' });
+  assert.deepEqual(c2.like, { kind: 'likeds', name: 'MODELE', usage: 'none', inzLike: true });
+});
+
+test('DCL-DS LIKEREC : usage par défaut *INPUT, noms en majuscules', () => {
+  const ast = parse(`
+    dcl-f client keyed;
+    dcl-ds a likerec(clientf);
+    dcl-ds b likerec(clientf : *all);
+    dcl-ds c likerec(clientf : *Output);
+    dcl-ds d likerec(clientf : *key) qualified;
+  `);
+  const [a, b, c, d] = ast.body;
+  assert.deepEqual(a.like, { kind: 'likerec', name: 'CLIENTF', format: 'CLIENTF', usage: 'input' });
+  assert.equal(a.isQualified, true);
+  assert.equal(b.like.usage, 'all');
+  assert.equal(c.like.usage, 'output');
+  assert.equal(d.like.usage, 'key');
+});
+
+test('DCL-DS EXTNAME : formes acceptées', () => {
+  const ast = parse(`
+    dcl-c f 'CLIENT';
+    dcl-ds a extname('CLIENT') end-ds;
+    dcl-ds b extname('BIB/CLIENT' : 'CLIENTF' : *input) qualified;
+    end-ds;
+    dcl-ds c extname('*LIBL/CLIENT' : *all) qualified end-ds;
+    dcl-ds d extname(f) qualified;
+    end-ds;
+    dcl-ds e extname('CLIENT');
+    end-ds;
+  `);
+  const [, a, b, c, d, e] = ast.body;
+  assert.deepEqual(a.like, { kind: 'extname', name: 'CLIENT', usage: 'none' });
+  assert.equal(a.isQualified, false);
+  assert.deepEqual(a.fields, []);
+  assert.deepEqual(b.like, { kind: 'extname', name: 'CLIENT', format: 'CLIENTF', usage: 'input' });
+  assert.equal(b.isQualified, true);
+  assert.deepEqual(c.like, { kind: 'extname', name: 'CLIENT', usage: 'all' });
+  assert.equal(d.like.name, 'CLIENT');
+  assert.equal(e.isQualified, false);
+});
+
+test('une DS LIKEREC / EXTNAME : ses sous-zones ne sont pas rejetées à l\'analyse', () => {
+  assert.doesNotThrow(() => parse(`
+    dcl-f client keyed;
+    dcl-ds cur likerec(clientf);
+    dcl-ds e extname('CLIENT') qualified end-ds;
+    cur.nom = 'x';
+    e.nom = cur.nom;
+  `));
+});
+
+test('paramètres LIKEDS / LIKEREC : dataType ds', () => {
+  const ast = parse(`
+    dcl-ds m qualified;
+      a char(5);
+    end-ds;
+    dcl-proc p;
+      dcl-pi *n;
+        x likeds(m) const;
+        y likerec(clientf : *all) value;
+        z likeds(m);
+      end-pi;
+    end-proc;
+    dcl-pr q extpgm('Q');
+      w likeds(m);
+    end-pr;
+  `);
+  const proc = ast.body.find(n => n.type === 'Procedure');
+  assert.deepEqual(proc.parameters[0].dataType, { type: 'DataType', typeName: 'ds', like: { kind: 'likeds', name: 'm', usage: 'none' } });
+  assert.equal(proc.parameters[0].isConst, true);
+  assert.deepEqual(proc.parameters[1].dataType.like, { kind: 'likerec', name: 'CLIENTF', format: 'CLIENTF', usage: 'all' });
+  assert.equal(proc.parameters[1].byValue, true);
+  assert.equal(proc.parameters[2].dataType.like.name, 'm');
+  const proto = ast.body.find(n => n.type === 'Prototype');
+  assert.equal(proto.parameters[0].dataType.typeName, 'ds');
+});
+
+test('opérations de fichier avec DS résultat', () => {
+  const ast = parse(`
+    dcl-f client keyed usage(*update : *output);
+    dcl-ds ent likerec(clientf);
+    read client ent;
+    readp client ent;
+    reade (1) client ent;
+    readpe (1) client ent;
+    chain (1) client ent;
+    chain(e) 1 client ent;
+    write clientf ent;
+    update clientf ent;
+  `);
+  const ops = ast.body.filter(n => n.type === 'FileOperation');
+  assert.deepEqual(ops.map(o => o.operation), ['read', 'readp', 'reade', 'readpe', 'chain', 'chain', 'write', 'update']);
+  assert.ok(ops.every(o => o.resultDs === 'ent'));
+  assert.equal(ops[0].file, 'client');
+  assert.equal(ops[6].file, 'clientf');
+  assert.deepEqual(ops[5].extender, { error: true, noLock: false });
+});
+
+test('%KDS : clé complète ou partielle', () => {
+  const ast = parse(`
+    dcl-f client keyed usage(*update : *delete);
+    dcl-c n 2;
+    dcl-ds cle qualified;
+      a int(10);
+      b int(10);
+    end-ds;
+    chain %kds(cle) client;
+    setll %kds(cle : 1) client;
+    setgt %kds(cle : n) client;
+    reade %kds(cle) client;
+    readpe %kds(cle : 2) client;
+    delete %kds(cle) client;
+  `);
+  const ops = ast.body.filter(n => n.type === 'FileOperation');
+  assert.equal(ops.length, 6);
+  assert.deepEqual(ops[0].kds, { ds: 'cle' });
+  assert.equal(ops[0].key, undefined);
+  assert.equal(ops[1].kds.count.value, 1);
+  assert.deepEqual(ops[2].kds.count, { type: 'Expression', value: 'n', valueType: 'identifier' });
+  assert.equal(ops[4].kds.count.value, 2);
+  assert.equal(ops[5].kds.ds, 'cle');
+});
+
+test('%KDS : DS inconnue, nombre non constant ou hors bornes refusés', () => {
+  const head = 'dcl-f client keyed; dcl-ds cle qualified; a int(10); end-ds; dcl-s v int(5);\n';
+  assert.throws(() => parse('dcl-f client keyed; chain %kds(inconnue) client;'), /INCONNUE.*structure de données/i);
+  assert.throws(() => parse(head + 'chain %kds(cle : v) client;'), /%KDS.*constante/i);
+  assert.throws(() => parse(head + 'chain %kds(cle : 0) client;'), /%KDS/);
+  assert.throws(() => parse(head + 'chain %kds(cle : 1.5) client;'), /%KDS/);
+  assert.throws(() => parse(head + 'chain %kds(cle : 1 + 1) client;'), /%KDS/);
+});
+
+test('%FIELDS : UPDATE seulement, avec ou sans DS résultat', () => {
+  const ast = parse(`
+    dcl-f client usage(*update);
+    dcl-ds ent likerec(clientf);
+    read client;
+    update clientf %fields(Nom : Solde);
+    update clientf ent %fields(ent.solde);
+  `);
+  const ops = ast.body.filter(n => n.type === 'FileOperation' && n.operation === 'update');
+  assert.deepEqual(ops[0].fields, ['nom', 'solde']);
+  assert.equal(ops[0].resultDs, undefined);
+  assert.deepEqual(ops[1].fields, ['ent.solde']);
+  assert.equal(ops[1].resultDs, 'ent');
+  assert.throws(() => parse('dcl-f client; read client %fields(a);'), /%FIELDS.*UPDATE/i);
+  assert.throws(() => parse('dcl-f client usage(*output); write clientf %fields(a);'), /%FIELDS.*UPDATE/i);
+  assert.throws(() => parse('dcl-f client usage(*update); read client; update clientf %fields();'), /%FIELDS/);
+});

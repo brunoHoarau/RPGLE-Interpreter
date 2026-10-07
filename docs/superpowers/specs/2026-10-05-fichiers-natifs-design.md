@@ -310,3 +310,26 @@ où ils l'étaient). `OPEN`/`CLOSE` avec un nom de format → erreur avant l'ex�
 `EXTFILE`/`EXTDESC`, boucle `READE` sans clé, `READ(N)` puis `UPDATE` (01221), `CHAIN(E)` sur
 fichier fermé (`%ERROR`, `%STATUS` 1211), `WRITE(E)` d'un doublon ; `test/files-core.test.js`
 pour le module ; `test/unsupported.test.js` pour chaque refus.
+
+### Incrément 3b — comportement attendu
+
+Validé le 2026-10-07. Détail et exemples : `docs/superpowers/plans/2026-10-07-fichiers-ds-3b.md`.
+
+- **`LIKEDS(ds)`** : nouvelle DS qualifiée aux mêmes sous-zones ; les `INZ` ne sont pas repris (sauf `INZ(*LIKEDS)`).
+- **`LIKEREC(format {: *ALL | *INPUT | *OUTPUT | *KEY})`** : sous-zones = zones du format d'un `DCL-F` (nom après `RENAME`), défaut `*INPUT` ; `*KEY` dans l'ordre de la clé (fichier sans `KEYED` → erreur) ; avec `PREFIX`, les sous-zones portent les noms préfixés.
+- **`EXTNAME('fichier' {: 'format'} {: type})`** : fichier et format sont des littéraux sensibles à la casse (bibliothèque ignorée) ; zones de la table de `tables.json`. Sans type d'extraction, la DS ne peut pas servir à une E/S (erreur de compilation). `*NULL`, `EXT`, `PREFIX` de DS, sous-zones déclarées : « pas encore supporté ».
+- **Origine** `{ table, format, usage }` retenue par la DS ; `LIKEDS` hérite de celle de sa source.
+- **Affectation de DS** `a = b;` : copie champ par champ entre DS de même disposition ; sinon « pas encore supporté ».
+- **Paramètres `LIKEDS` / `LIKEREC`** (`DCL-PI`/`DCL-PR`) : référence, `CONST` (sous-zones en lecture seule) ou `VALUE` ; filiation exigée par référence (sinon erreur de compilation) ; littéral ou expression → erreur ; retour `LIKEDS` → « pas encore supporté ».
+- **Lecture dans une DS** (`read`, `readp`, `reade`, `readpe`, `chain` avec DS résultat) : seule la DS change, jamais les zones du programme ; DS d'origine le format du fichier, usage `*INPUT` (ou `*ALL`), sinon erreur de compilation ; fin de fichier / non trouvé : DS inchangée.
+- **`WRITE fmt ds` / `UPDATE fmt ds`** : valeurs prises dans la DS (`*OUTPUT`/`*ALL` pour `write`, `*INPUT`/`*ALL` pour `update`), même contrôle d'origine ; mêmes statuts et verrous.
+- **`%KDS(ds {: n})`** comme clé de `CHAIN`, `SETLL`, `SETGT`, `READE`, `READPE`, `DELETE` : les `n` premières sous-zones (`n` littéral ou constante, 1 ≤ n ≤ nombre de sous-zones).
+- **`%FIELDS(z1 : z2 …)`** dernier opérande de `UPDATE` seulement : seules les zones citées sont réécrites, les autres gardent la valeur de l'enregistrement en base ; avec DS résultat, sous-zones qualifiées de cette DS.
+
+Limites connues de 3b :
+- les contrôles DS / opération (origine, usage) sont faits au moment de l'opération, pas avant l'exécution du programme ;
+- `*LOVAL` / `*HIVAL` sur une sous-zone date d'une DS `EXTNAME` non qualifiée est refusé à l'analyse ;
+- les paramètres DS sont passés par copie / recopie : une exception qui sort de la procédure ne renvoie pas les modifications ;
+- le passage par référence est simulé par copie à l'entrée / recopie au retour : une procédure qui modifie directement une variable globale également passée par référence voit la recopie au retour l'emporter (non détecté) ; une même variable (ou une DS et sa sous-zone) passée à deux paramètres par référence, ou par référence et en CONST, est refusée (« pas encore supporté ») ;
+- `CONST` / `VALUE` avec une DS sans filiation : « pas encore supporté » ;
+- `DIM` sur une DS : « pas encore supporté ».
