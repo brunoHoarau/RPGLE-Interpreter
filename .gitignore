@@ -6,3 +6,4 @@ out/
 Thumbs.db
 repomix-output.xml
 skills/
+.claude/worktrees/
