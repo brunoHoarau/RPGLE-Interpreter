@@ -1651,3 +1651,45 @@ test('%FIELDS : zone inconnue refusée, mélanges pas encore supportés', () => 
   assert.throws(() => run(head + 'update clientf ent %fields(solde);', wctx()), NOT_SUPPORTED);
   assert.throws(() => run(head + 'update clientf ent %fields(autre.solde);', wctx()), NOT_SUPPORTED);
 });
+
+test('bout en bout : lecture dans une DS LIKEREC, procédure à paramètre LIKEREC CONST, DS LIKEDS globale', () => {
+  const ctx = {
+    programs: {},
+    tables: {
+      FILM: {
+        format: 'FILM',
+        columns: [{ name: 'CATEGORIE', type: 'char(15)' }, { name: 'LIBELLE', type: 'char(30)' },
+                  { name: 'VUES', type: 'packed(10:0)' }],
+        data: [
+          { CATEGORIE: 'Action', LIBELLE: 'Film A', VUES: 120 },
+          { CATEGORIE: 'Comedie', LIBELLE: 'Film B', VUES: 4500 },
+          { CATEGORIE: 'Drame', LIBELLE: 'Film C', VUES: 900 },
+        ],
+      },
+    },
+  };
+  const out = run(`
+    dcl-f film rename(film:ffilm);
+    dcl-ds curFilm likerec(ffilm);
+    dcl-ds meilleur likeds(curFilm);
+    read film curFilm;
+    dow not %eof;
+      garder(curFilm);
+      read film curFilm;
+    enddo;
+    dsply meilleur.categorie;
+    dsply meilleur.libelle;
+    dsply %char(meilleur.vues);
+    dsply %char(vues);
+    dsply %trim(categorie) + '|';
+    dcl-proc garder;
+      dcl-pi *n;
+        p_film likerec(ffilm) const;
+      end-pi;
+      if p_film.vues > meilleur.vues;
+        meilleur = p_film;
+      endif;
+    end-proc;
+  `, ctx);
+  assert.deepEqual(out, ['Comedie', 'Film B', '4500', '0', '|']);
+});
