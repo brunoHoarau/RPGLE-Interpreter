@@ -4,6 +4,7 @@ import { unsupported } from './constants';
 import { parseVariableDeclaration, parseConstantDeclaration, rememberDateTime } from './declarations/variables';
 import { parseDataType } from './declarations/keywords';
 import { parseDataStructure } from './declarations/data-structure';
+import { isDsLikeParameter, parseDsLikeParameter, rememberDsLike } from './declarations/ds-like';
 import { parseStatement } from './statements/statement';
 import { isOpcode, parseSubroutine, checkAfterSubroutines, finishSubScope } from './subroutines';
 
@@ -17,6 +18,8 @@ export function parseProcedure(p: ParserState): ASTNode {
   const body: ASTNode[] = [];
   const outerNames = new Set(p.dateTimeNames);
   const outerReadOnly = new Map(p.readOnlyNames);
+  const outerConstants = new Map(p.constants);
+  const outerDs = new Map(p.dsInfo);
   const outerSubScope = p.subScope;
   p.subScope = newSubScope(true);
 
@@ -48,6 +51,8 @@ export function parseProcedure(p: ParserState): ASTNode {
   p.expect(TokenType.END_PROC);
   p.dateTimeNames = outerNames; // Les noms locaux disparaissent avec la procédure
   p.readOnlyNames = outerReadOnly;
+  p.constants = outerConstants;
+  p.dsInfo = outerDs;
   p.skipToSemicolon(); // end-proc peut répéter le nom
 
   return { type: 'Procedure', name, returnType, parameters, body };
@@ -86,6 +91,7 @@ export function parseProcedureInterface(p: ParserState): { returnType?: DataType
 
   parameters.forEach(param => {
     rememberDateTime(p, param.name, param.dataType);
+    if (param.dataType.like) rememberDsLike(p, param.name, param.dataType.like);
     if (param.isConst) p.readOnlyNames.set(param.name.toLowerCase(), 'un paramètre CONST');
   });
   return { returnType, parameters };
@@ -96,7 +102,7 @@ export function parseParameter(p: ParserState, position: number, allowUnnamed: b
   const unnamed = allowUnnamed && p.check(TokenType.SPECIAL_VALUE) && p.peek().value.toLowerCase() === '*n';
   if (unnamed) p.advance();
   const name = unnamed ? `*N(${position})` : p.expectName().value;
-  const dataType: DataTypeNode = parseDataType(p);
+  const dataType: DataTypeNode = isDsLikeParameter(p) ? parseDsLikeParameter(p) : parseDataType(p);
   let isConst = false;
   let byValue = false;
   const options: string[] = [];

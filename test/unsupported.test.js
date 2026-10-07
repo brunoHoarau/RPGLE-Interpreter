@@ -30,9 +30,6 @@ test('lecture sur un fichier en sortie seule : erreur d\'analyse', () => {
 
 test('écriture : constructions non supportées refusées', () => {
   for (const src of [
-    'dcl-f b usage(*update); read b; update bf %fields(nom);',
-    'dcl-f b usage(*update); read b; update bf ds;',
-    'dcl-f a usage(*output); write af ds;',
     'dcl-f a usage(*output : *xyz);',
   ]) {
     assert.throws(() => parse(src), NOT_SUPPORTED, src);
@@ -51,8 +48,8 @@ test('DCL-F : périphériques et mots-clés non supportés refusés', () => {
 
 test('opérations de fichier non supportées refusées', () => {
   for (const src of [
-    'dcl-f client keyed; chain %kds(k) client;',
-    'dcl-f client keyed; readc client;', 'dcl-f client keyed; read client ds;',
+    'dcl-f client keyed; readc client;',
+    'dcl-f client keyed; setll k client ds;', 'dcl-f client keyed; delete k client ds;',
   ]) {
     assert.throws(() => parse(src), NOT_SUPPORTED, src);
   }
@@ -142,9 +139,45 @@ test('DIM est refusé sur dcl-s et dcl-ds', () => {
   assert.throws(() => parse(`dcl-ds d qualified dim(3); a int(5); end-ds;`), /DIM/);
 });
 
-test('EXTNAME et LIKEDS sont refusés sur dcl-ds', () => {
-  assert.throws(() => parse(`dcl-ds d extname('CLIENT') end-ds;`), /EXTNAME/);
-  assert.throws(() => parse(`dcl-ds d likeds(autre);`), /LIKEDS/);
+test('DCL-DS : EXT, *NULL, PREFIX, TEMPLATE, DIM et sous-zones d\'une DS EXTNAME sont refusés', () => {
+  for (const src of [
+    'dcl-ds d ext end-ds;',
+    "dcl-ds d extname(*null) end-ds;",
+    "dcl-ds d extname('CLIENT') prefix(c_); end-ds;",
+    "dcl-ds d extname('CLIENT'); a char(5); end-ds;",
+    'dcl-ds d template; a char(5); end-ds;',
+    'dcl-ds m; a char(5); end-ds; dcl-ds d likeds(m) template;',
+    'dcl-ds m; a char(5); end-ds; dcl-ds d likeds(m) prefix(c_);',
+    'dcl-ds m; a char(5); end-ds; dcl-ds d likeds(m) dim(3);',
+  ]) {
+    assert.throws(() => parse(src), NOT_SUPPORTED, src);
+  }
+});
+
+test('DCL-DS : LIKEDS, LIKEREC et EXTNAME mal formés ou incohérents : erreur d\'analyse', () => {
+  for (const [src, message] of [
+    ['dcl-ds d likeds(autre);', /AUTRE.*structure de données/i],
+    ['dcl-s x char(5); dcl-ds d likeds(x);', /X.*structure de données/i],
+    ['dcl-ds d extname(client) end-ds;', /EXTNAME.*littéral/i],
+    ["dcl-ds d extname('client') end-ds;", /sensible à la casse/i],
+    ["dcl-ds d extname('') end-ds;", /EXTNAME.*mal formé/i],
+    ["dcl-ds d extname('A/B/C') end-ds;", /EXTNAME.*mal formé/i],
+    ["dcl-ds d extname('CLIENT' : fmt) end-ds;", /EXTNAME.*littéral/i],
+    ["dcl-ds d extname('CLIENT' : 'fmt') end-ds;", /sensible à la casse/i],
+    ["dcl-ds m; a char(5); end-ds; dcl-ds d extname('CLIENT') likeds(m) end-ds;", /EXTNAME.*LIKEDS/i],
+    ["dcl-ds d extname('CLIENT') likerec(fmt) end-ds;", /EXTNAME.*LIKEREC/i],
+    ['dcl-ds m; a char(5); end-ds; dcl-ds d likeds(m) likerec(fmt);', /LIKEDS.*LIKEREC/i],
+    ['dcl-ds d likerec(fmt : *xyz);', /LIKEREC.*\*XYZ/i],
+    ["dcl-ds d extname('F' : *xyz) end-ds;", /EXTNAME.*\*XYZ/i],
+    ['dcl-ds d inz(*likeds);', /INZ\(\*LIKEDS\)/i],
+  ]) {
+    assert.throws(() => parse(src), message, src);
+  }
+});
+
+test('paramètre LIKEDS / LIKEREC : mal formé refusé', () => {
+  assert.throws(() => parse(`dcl-proc p; dcl-pi *n; c likeds(inconnue) const; end-pi; end-proc;`), /INCONNUE.*structure de données/i);
+  assert.throws(() => parse(`dcl-proc p; dcl-pi *n; c likerec(f : *xyz) const; end-pi; end-proc;`), /LIKEREC.*\*XYZ/i);
 });
 
 test('les mots-clés de champ non supportés sont refusés', () => {
@@ -178,8 +211,10 @@ test('TIMESTAMP(n) autre que 6 est refusé', () => {
   assert.throws(() => parse(`dcl-s z timestamp(12);`), NOT_SUPPORTED);
 });
 
-test('LIKEDS et OPTIONS(*OMIT) sont refusés sur un paramètre', () => {
-  assert.throws(() => parse(`dcl-proc p; dcl-pi *n; c likeds(cli) const; end-pi; end-proc;`), /LIKEDS/);
+test('valeur de retour LIKEDS / LIKEREC et OPTIONS(*OMIT) sont refusés', () => {
+  assert.throws(() => parse(`dcl-ds m; a char(5); end-ds; dcl-proc p; dcl-pi *n likeds(m); end-pi; end-proc;`), NOT_SUPPORTED);
+  assert.throws(() => parse(`dcl-proc p; dcl-pi *n likerec(f); end-pi; end-proc;`), NOT_SUPPORTED);
+  assert.throws(() => parse(`dcl-pr q likeds(m); end-pr;`), NOT_SUPPORTED);
   assert.throws(() => parse(`dcl-proc p; dcl-pi *n; c int(5) options(*omit); end-pi; end-proc;`), /\*OMIT/i);
 });
 
@@ -378,4 +413,21 @@ test('3a : EXTFILE(*EXTDESC) sans EXTDESC refusé à l\'analyse', () => {
   assert.throws(() => parse(`dcl-f client extfile(*extdesc);`),
     err => !NOT_SUPPORTED.test(err.message) && /EXTFILE\(\*EXTDESC\).*EXTDESC/.test(err.message));
   assert.doesNotThrow(() => parse(`dcl-f client extfile(*extdesc) extdesc('CLIENT');`));
+});
+
+// --- Garde-fous d'exécution : analysé mais pas encore exécutable ---
+
+test('exécution : LIKEDS, EXTNAME, DS résultat, %KDS et %FIELDS sont refusés tant que non exécutés', () => {
+  const context = { programs: {}, tables: { CLIENT: { format: 'CLIENTF', keys: ['ID'], columns: [{ name: 'ID', type: 'packed(5:0)' }, { name: 'NOM', type: 'char(5)' }], data: [{ ID: 1, NOM: 'abc' }] } } };
+  for (const src of [
+    'dcl-ds m qualified;\n a char(5);\nend-ds;\ndcl-ds d likeds(m);',
+    "dcl-ds d extname('CLIENT') qualified end-ds;",
+    'dcl-f client keyed;\ndcl-ds d likerec(clientf);\nread client d;',
+    'dcl-f client keyed;\ndcl-ds k qualified;\n a int(5);\nend-ds;\nchain %kds(k) client;',
+    'dcl-f client usage(*update);\nread client;\nupdate clientf %fields(nom);',
+    'dcl-ds m qualified;\n a char(5);\nend-ds;\ndcl-pr p extpgm(\'P\');\n c likeds(m) const;\nend-pr;\np(m);',
+    'dcl-ds m qualified;\n a char(5);\nend-ds;\ndcl-proc p;\n dcl-pi *n;\n  c likeds(m) const;\n end-pi;\nend-proc;\np(m);',
+  ]) {
+    assert.throws(() => run(src, context), NOT_SUPPORTED, src);
+  }
 });

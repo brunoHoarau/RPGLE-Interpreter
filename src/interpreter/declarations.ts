@@ -65,6 +65,7 @@ export function executeConstantDeclaration(s: InterpreterState, node: any): void
 }
 
 export function executeDataStructure(s: InterpreterState, node: any): void {
+  if (node.like) throw new NotSupportedError(`${node.like.kind.toUpperCase()} de la structure de données ${node.name.toUpperCase()}`);
   refuseFileFieldName(s, node.name);
   if (!node.isQualified) for (const field of node.fields) refuseFileFieldName(s, field.name, field.dataType);
   s.runtime.declareDataStructure(node.name, node.fields.map((field: any) => ({

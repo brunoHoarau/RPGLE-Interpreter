@@ -4,7 +4,7 @@ import { coerce, describeType, sameDeclaredType } from '../datatypes';
 import { isDateTime } from '../datetime';
 import { Lexer } from '../lexer';
 import { Parser } from '../parser';
-import { RpgError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, incompatibleTypes } from '../errors';
+import { RpgError, NotSupportedError, STATUS_CALL_FAILED, STATUS_CALL_NOT_FOUND, incompatibleTypes } from '../errors';
 import { fromMock, valueFor } from './declarations';
 import { runProgram, executeBlock } from './program';
 import { assignTo } from './statements';
@@ -15,6 +15,12 @@ import { LeaveSignal, IterSignal, ReturnSignal } from './signals';
 // Appelle une procédure utilisateur, sinon une procédure du runtime.
 // Les arguments restent des expressions : un paramètre passé par référence
 // (ni CONST ni VALUE) dont l'argument est une variable est recopié chez l'appelant.
+// Paramètre LIKEDS / LIKEREC : analysé mais pas encore exécutable
+function refuseDsParameters(name: string, params: ParameterNode[]): void {
+  const param = params.find(p => p.dataType.typeName === 'ds');
+  if (param) throw new NotSupportedError(`Paramètre structure de données ${param.name.toUpperCase()} (${param.dataType.like?.kind.toUpperCase()}) de ${name}`);
+}
+
 export function callProcedure(s: InterpreterState, name: string, argExprs: ExpressionNode[]): any {
   const proc = s.procedures.get(name.toLowerCase());
   if (!proc) {
@@ -25,6 +31,7 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
   }
 
   const params = proc.parameters;
+  refuseDsParameters(proc.name, params);
   checkArgumentCount(s, proc.name, params, argExprs.length);
   checkReferenceArguments(s, params, argExprs);
   if (s.runtime.callDepth >= s.maxCallDepth) {
@@ -121,6 +128,7 @@ export function checkArgumentCount(s: InterpreterState, name: string, params: Pa
 export function callExternal(s: InterpreterState, proto: PrototypeNode, argExprs: ExpressionNode[]): any {
   const target = proto.externalName.toUpperCase();
   const what = proto.kind === 'program' ? 'Programme' : 'Procédure externe';
+  refuseDsParameters(proto.name, proto.parameters);
   checkArgumentCount(s, proto.name, proto.parameters, argExprs.length);
   checkReferenceArguments(s, proto.parameters, argExprs);
 

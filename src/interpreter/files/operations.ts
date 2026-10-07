@@ -20,6 +20,9 @@ export function fileState(s: InterpreterState, name: string): FileState {
 // Les opérandes (clé, numéro d'enregistrement) sont évalués avant : (E) n'intercepte que les erreurs
 // de l'opération elle-même, pas celles d'une procédure appelée dans la clé.
 export function executeFileOperation(s: InterpreterState, node: FileOperationNode): void {
+  if (node.resultDs) throw new NotSupportedError(`${node.operation.toUpperCase()} avec la structure de données résultat ${node.resultDs.toUpperCase()}`);
+  if (node.kds) throw new NotSupportedError(`%KDS(${node.kds.ds.toUpperCase()}) comme clé de ${node.operation.toUpperCase()}`);
+  if (node.fields) throw new NotSupportedError('%FIELDS de UPDATE');
   const key = (node.key ?? []).map(expr => evaluate(s, expr));
   if (!node.extender?.error) {
     performFileOperation(s, node, key);
