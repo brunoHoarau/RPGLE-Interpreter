@@ -94,6 +94,7 @@ export function declareFile(s: InterpreterState, node: FileDeclarationNode, para
   }
   const fields = tableFields(description, descName);
   let format = (description.format ?? descName + 'F').toUpperCase();
+  const realFormat = format;
   // RENAME : le premier argument doit être le format réel ; l'ancien nom n'est plus reconnu
   if (node.rename) {
     if (node.rename.from !== format) {
@@ -141,7 +142,7 @@ export function declareFile(s: InterpreterState, node: FileDeclarationNode, para
     const shown = Object.entries(duplicate).map(([zone, value]) => `${zone} = ${typeof value === 'string' ? `'${value}'` : String(value)}`);
     throw new Error(`Fichier ${name} : clé en double dans tables.json (${shown.join(', ')})`);
   }
-  const state: FileState = { file, open: !node.usropn, eof: false, found: false, equal: false, usage: node.usage, table, variables };
+  const state: FileState = { file, open: !node.usropn, eof: false, found: false, equal: false, usage: node.usage, table, variables, realFormat };
   s.files.set(name, state);
   s.files.set(format, state);
 

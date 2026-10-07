@@ -51,7 +51,7 @@ export function formatLayout(s: InterpreterState, format: string, usage: DsLike[
   const keys = state.file.keys.map(program);
   return {
     fields: select(fields, keys, usage, `LIKEREC(${format})`, `le fichier ${state.file.name} n'est pas déclaré KEYED`),
-    origin: { table: state.file.name, format, usage },
+    origin: { table: state.file.name, format, usage, via: 'likerec' },
   };
 }
 
@@ -65,6 +65,6 @@ export function tableLayout(s: InterpreterState, tableName: string, format: stri
   const fields = tableFields(table, tableName);
   return {
     fields: select(fields, table.keys ?? [], usage, `EXTNAME('${tableName}')`, `la table ${tableName} n'a pas de "keys" dans context/tables.json`),
-    origin: { table: tableName, format: real, usage },
+    origin: { table: tableName, format: real, usage, via: 'extname' },
   };
 }

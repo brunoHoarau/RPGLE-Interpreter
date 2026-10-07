@@ -1385,3 +1385,269 @@ test('paramètre LIKEREC : DS sans lien avec le format : sans filiation', () => 
     end-proc;
   `, context()), NOT_SUPPORTED);
 });
+
+// --- 3b : opérations de fichier avec DS, %KDS, %FIELDS ---
+
+test('READ dans une DS LIKEREC : les zones du programme ne changent pas', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    nom = 'Avant';
+    read client cli;
+    dsply %trim(nom) + '|' + %trim(cli.nom) + '|' + %char(cli.numcli) + '|' + %char(cli.cree : *iso);
+  `, context()), ['Avant|Dupont|1|2025-01-15']);
+});
+
+test('boucle READ avec DS jusqu\'à %EOF, READP avec DS', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    read client cli;
+    dow not %eof(client);
+      dsply %trim(cli.nom);
+      read client cli;
+    enddo;
+    readp client cli;
+    dsply 'fin ' + %trim(cli.nom);
+  `, context()), ['Dupont', 'Martin', 'Durand', 'fin Durand']);
+});
+
+test('CHAIN non trouvé laisse la DS inchangée, trouvé la remplit', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    cli.nom = 'Reste';
+    chain 99 client cli;
+    dsply %trim(cli.nom) + '|' + %char(%found(client));
+    chain 2 client cli;
+    dsply %trim(cli.nom) + '|' + %trim(nom);
+  `, context()), ['Reste|0', 'Martin|']);
+});
+
+test('READE et READPE avec DS', () => {
+  assert.deepEqual(run(`
+    dcl-f cde keyed;
+    dcl-ds c likerec(cdef);
+    reade 1 cde c;
+    dsply %trim(c.lib);
+    setll 2 cde;
+    readpe 1 cde c;
+    dsply %trim(c.lib);
+    reade 2 cde c;
+    dsply %char(%eof(cde));
+  `, context()), ['c', 'a', '0']);
+});
+
+test('WRITE depuis une DS *OUTPUT puis relecture, UPDATE depuis une DS *INPUT', () => {
+  const c = wctx();
+  const out = run(`
+    dcl-f client usage(*update : *output) keyed;
+    dcl-ds sortie likerec(clientf : *output);
+    dcl-ds entree likerec(clientf : *input);
+    numcli = 77;
+    sortie.numcli = 3;
+    sortie.nom = 'Nouveau';
+    sortie.solde = 5;
+    sortie.cree = d'2026-01-01';
+    write clientf sortie;
+    chain 3 client entree;
+    dsply %trim(entree.nom) + '|' + %char(numcli);
+    entree.nom = 'Change';
+    entree.solde = 9.5;
+    update clientf entree;
+    chain 3 client;
+    dsply %trim(nom) + '|' + %char(solde);
+  `, c);
+  assert.deepEqual(out, ['Nouveau|77', 'Change|9.50']);
+  assert.equal(c.tables.CLIENT.data.length, 3);
+});
+
+test('DS *ALL acceptée pour READ, WRITE et UPDATE', () => {
+  const c = wctx();
+  assert.deepEqual(run(`
+    dcl-f client usage(*update : *output) keyed;
+    dcl-ds t likerec(clientf : *all);
+    t.numcli = 8;
+    t.nom = 'Tout';
+    t.cree = d'2026-01-01';
+    write clientf t;
+    chain 8 client t;
+    t.nom = 'Tout2';
+    update clientf t;
+    chain 8 client t;
+    dsply %trim(t.nom);
+  `, c), ['Tout2']);
+});
+
+test('LIKEDS d\'une DS LIKEREC *INPUT acceptée en lecture', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    dcl-ds c2 likeds(cli);
+    chain 1 client c2;
+    dsply %trim(c2.nom);
+  `, context()), ['Dupont']);
+});
+
+test('EXTNAME avec type d\'extraction *INPUT accepté, sans type refusé, ordinaire refusé', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds e extname('CLIENT' : *input) qualified end-ds;
+    chain 1 client e;
+    dsply %trim(e.nom);
+  `, context()), ['Dupont']);
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds e extname('CLIENT') qualified end-ds;
+    chain 1 client e;
+  `, context()), /compilateur/i);
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds d qualified;
+      numcli packed(7:0);
+      nom char(10);
+    end-ds;
+    chain 1 client d;
+  `, context()), /compilateur/i);
+});
+
+test('EXTNAME sur un fichier RENAME : le format réel est reconnu', () => {
+  assert.deepEqual(run(`
+    dcl-f film rename(film:ffilm) keyed;
+    dcl-ds e extname('FILM' : *input) qualified end-ds;
+    read film e;
+    dsply 'ok';
+  `, ctx3()), ['ok']);
+});
+
+test('usage ou fichier incompatible avec l\'opération : erreur de compilation avant tout accès', () => {
+  const head = `dcl-f client usage(*update : *output) keyed;
+    dcl-ds o likerec(clientf : *output);
+    dcl-ds i likerec(clientf : *input);
+    dcl-ds k likerec(clientf : *key);\n`;
+  assert.throws(() => run(head + 'read client o;', wctx()), /compilateur/i);
+  assert.throws(() => run(head + 'chain 1 client k;', wctx()), /compilateur/i);
+  assert.throws(() => run(head + 'write clientf i;', wctx()), /compilateur/i);
+  assert.throws(() => run(head + 'chain 1 client i; update clientf o;', wctx()), /compilateur/i);
+  assert.throws(() => run(head + 'write clientf k;', wctx()), /compilateur/i);
+  // DS d'un autre fichier
+  assert.throws(() => run(`dcl-f client keyed;
+    dcl-f cde keyed;
+    dcl-ds c likerec(cdef);
+    read client c;`, context()), /compilateur/i);
+});
+
+test('UPDATE(E) avec DS sans lecture préalable : %ERROR et statut 01221', () => {
+  assert.deepEqual(run(`
+    dcl-f client usage(*update) keyed;
+    dcl-ds e likerec(clientf);
+    update(e) clientf e;
+    dsply %char(%error) + ' ' + %char(%status);
+  `, wctx()), ['1 1221']);
+});
+
+test('%KDS : clé complète, partielle, DS quelconque et nombre trop grand', () => {
+  assert.deepEqual(run(`
+    dcl-f cde keyed;
+    dcl-ds cle qualified;
+      a packed(7:0);
+      b packed(5:0);
+    end-ds;
+    dcl-ds c likerec(cdef);
+    cle.a = 1;
+    cle.b = 7;
+    chain %kds(cle) cde c;
+    dsply %trim(c.lib);
+    chain %kds(cle : 1) cde c;
+    dsply %trim(c.lib) + '|' + %char(c.numcde);
+    cle.a = 2;
+    setll %kds(cle : 1) cde;
+    read cde c;
+    dsply %trim(c.lib);
+  `, context()), ['c', 'c|7', 'd']);
+  assert.throws(() => run(`
+    dcl-f cde keyed;
+    dcl-ds cle qualified;
+      a packed(7:0);
+    end-ds;
+    chain %kds(cle : 2) cde;
+  `, context()), /%KDS/);
+});
+
+test('%KDS sur une DS LIKEREC *KEY, SETLL puis READE avec %KDS, trop de valeurs refusé', () => {
+  assert.deepEqual(run(`
+    dcl-f cde keyed;
+    dcl-ds k likerec(cdef : *key);
+    dcl-ds c likerec(cdef);
+    k.numcli = 2;
+    setll %kds(k : 1) cde;
+    reade %kds(k : 1) cde c;
+    dsply %trim(c.lib);
+    reade %kds(k : 1) cde c;
+    dsply %trim(c.lib);
+    reade %kds(k : 1) cde c;
+    dsply %char(%eof(cde));
+  `, context()), ['d', 'b', '1']);
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds k qualified;
+      a packed(7:0);
+      b packed(7:0);
+    end-ds;
+    chain %kds(k) client;
+  `, context()), /clé/i);
+});
+
+test('DELETE avec %KDS', () => {
+  const c = wctx();
+  run(`
+    dcl-f client usage(*delete) keyed;
+    dcl-ds k qualified;
+      n packed(7:0);
+    end-ds;
+    k.n = 2;
+    delete %kds(k) client;
+  `, c);
+  assert.equal(c.tables.CLIENT.data.length, 1);
+});
+
+test('%FIELDS sans DS : seules les zones citées sont réécrites', () => {
+  const c = wctx();
+  const out = run(`
+    dcl-f client usage(*update) keyed;
+    chain 1 client;
+    nom = 'Modifie';
+    solde = 999;
+    update clientf %fields(solde);
+    chain 1 client;
+    dsply %trim(nom) + '|' + %char(solde);
+  `, c);
+  assert.deepEqual(out, ['Dupont|999.00']);
+});
+
+test('%FIELDS avec DS : sous-zones qualifiées de la DS résultat', () => {
+  const c = wctx();
+  const out = run(`
+    dcl-f client usage(*update) keyed;
+    dcl-ds ent likerec(clientf);
+    chain 2 client ent;
+    ent.nom = 'Perdu';
+    ent.solde = 12;
+    update clientf ent %fields(ent.solde);
+    chain 2 client;
+    dsply %trim(nom) + '|' + %char(solde);
+  `, c);
+  assert.deepEqual(out, ['Martin|12.00']);
+});
+
+test('%FIELDS : zone inconnue refusée, mélanges pas encore supportés', () => {
+  const head = `dcl-f client usage(*update) keyed;
+    dcl-ds ent likerec(clientf);
+    dcl-ds autre likerec(clientf);
+    chain 1 client ent;\n`;
+  assert.throws(() => run(head + 'update clientf %fields(inconnue);', wctx()), /INCONNUE/);
+  assert.throws(() => run(head + 'update clientf ent %fields(ent.inconnue);', wctx()), /INCONNUE/);
+  assert.throws(() => run(head + 'update clientf %fields(ent.solde);', wctx()), NOT_SUPPORTED);
+  assert.throws(() => run(head + 'update clientf ent %fields(solde);', wctx()), NOT_SUPPORTED);
+  assert.throws(() => run(head + 'update clientf ent %fields(autre.solde);', wctx()), NOT_SUPPORTED);
+});

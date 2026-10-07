@@ -2,6 +2,7 @@ import { FileOperationNode } from '../../types';
 import { FileResult } from '../../files';
 import { RpgError, NotSupportedError, incompatibleTypes } from '../../errors';
 import { executeFileChange, copyRecord } from './changes';
+import { checkIoDs, kdsKey, fieldsToUpdate } from './ds-io';
 import { evaluate } from '../evaluate/evaluate';
 import { InterpreterState, FileState } from '../state';
 
@@ -20,10 +21,10 @@ export function fileState(s: InterpreterState, name: string): FileState {
 // Les opérandes (clé, numéro d'enregistrement) sont évalués avant : (E) n'intercepte que les erreurs
 // de l'opération elle-même, pas celles d'une procédure appelée dans la clé.
 export function executeFileOperation(s: InterpreterState, node: FileOperationNode): void {
-  if (node.resultDs) throw new NotSupportedError(`${node.operation.toUpperCase()} avec la structure de données résultat ${node.resultDs.toUpperCase()}`);
-  if (node.kds) throw new NotSupportedError(`%KDS(${node.kds.ds.toUpperCase()}) comme clé de ${node.operation.toUpperCase()}`);
-  if (node.fields) throw new NotSupportedError('%FIELDS de UPDATE');
-  const key = (node.key ?? []).map(expr => evaluate(s, expr));
+  // Contrôles du compilateur (DS, %FIELDS) : avant tout accès au fichier, jamais interceptés par (E)
+  if (node.resultDs) checkIoDs(s, node, fileState(s, node.file));
+  if (node.fields) fieldsToUpdate(s, node, fileState(s, node.file));
+  const key = node.kds ? kdsKey(s, node) : (node.key ?? []).map(expr => evaluate(s, expr));
   if (!node.extender?.error) {
     performFileOperation(s, node, key);
     return;
@@ -84,7 +85,7 @@ export function performFileOperation(s: InterpreterState, node: FileOperationNod
     case 'setgt': result = file.setgt(node.special ?? key); break;
     default: throw new Error(`Opération ${node.operation} non supportée`);
   }
-  if (result.record) copyRecord(s, state, result.record);
+  if (result.record) copyRecord(s, state, result.record, node.resultDs);
 
   switch (node.operation) {
     case 'read': case 'readp': case 'reade': case 'readpe':

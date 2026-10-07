@@ -6,6 +6,7 @@ export interface DsOrigin {
   table: string;
   format: string;
   usage: DsLike['usage'];
+  via: 'likerec' | 'extname';
 }
 
 // Ce que le runtime retient d'une structure de données déclarée
