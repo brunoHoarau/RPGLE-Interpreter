@@ -49,7 +49,7 @@ export function parseComparison(p: ParserState): ExpressionNode {
       p.check(TokenType.LESS) || p.check(TokenType.LESS_EQ) ||
       p.check(TokenType.GREATER) || p.check(TokenType.GREATER_EQ)) {
     const op = p.advance().value;
-    const allowed = left.valueType === 'identifier' && p.dateTimeNames.has(String(left.value).toLowerCase())
+    const allowed = left.valueType === 'identifier' && p.mayBeDateTime(String(left.value))
       ? ['*loval', '*hival'] : [];
     const right = parseDateTimeSpecial(p, allowed) ?? parseAddition(p);
     return { type: 'Expression', operator: op, left, right };

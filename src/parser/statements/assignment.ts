@@ -83,7 +83,7 @@ export function parseAssignmentOrCall(p: ParserState): ASTNode {
   if (p.check(TokenType.EQUALS)) {
     checkWritable(p, name, nameToken.line);
     p.advance();
-    const allowed = p.dateTimeNames.has(name.toLowerCase()) ? ['*loval', '*hival'] : [];
+    const allowed = p.mayBeDateTime(name) ? ['*loval', '*hival'] : [];
     const value = parseDateTimeSpecial(p, allowed, TokenType.SEMICOLON) ?? parseExpression(p);
     p.expect(TokenType.SEMICOLON);
     return { type: 'Assignment', variable: name, value };

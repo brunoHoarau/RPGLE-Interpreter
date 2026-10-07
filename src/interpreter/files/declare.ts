@@ -4,6 +4,7 @@ import { TableDefinition } from '../../context';
 import { defaultValue, describeType, sameDeclaredType } from '../../datatypes';
 import { NotSupportedError, incompatibleTypes } from '../../errors';
 import { fileState } from './operations';
+import { findTable, tableFields } from './layout';
 import { InterpreterState, FileState } from '../state';
 
 // EXTDESC / EXTFILE : mêmes zones (noms et types écrits dans tables.json, ordre indifférent).
@@ -27,11 +28,11 @@ export function columnDifference(desc: TableDefinition, descName: string, data: 
 // Au niveau du programme, un nom de zone de fichier ne peut pas être redéclaré (une procédure peut le masquer).
 // Une variable de même type est valide sur IBM i (elle partage la zone) mais n'est pas simulée ;
 // une structure de données ou une constante de même nom est un doublon refusé par le compilateur.
-export function refuseFileFieldName(s: InterpreterState, name: string, type?: DataTypeNode): void {
+export function refuseFileFieldName(s: InterpreterState, name: string, type?: DataTypeNode, what = 'Variable'): void {
   if (s.runtime.callDepth > 0) return;
   const field = s.fileFields.get(String(name).toLowerCase());
   if (!field) return;
-  if (type) refuseSameNameAsField(s, String(name).toUpperCase(), type, field.type, field.file, 'Variable');
+  if (type) refuseSameNameAsField(s, String(name).toUpperCase(), type, field.type, field.file, what);
   throw new Error(`${String(name).toUpperCase()} est déjà déclaré (zone du fichier ${field.file})`);
 }
 
@@ -50,13 +51,8 @@ export function declareFile(s: InterpreterState, node: FileDeclarationNode, para
   // clés et unicité doivent être identiques. La bibliothèque d'EXTFILE / EXTDESC est retirée par l'analyse.
   const descName = node.extdesc ?? name;
   const dataName = node.extfile === '*EXTDESC' ? descName : (node.extfile ?? name);
-  const findTable = (tableName: string): TableDefinition => {
-    const key = Object.keys(s.context.tables).find(n => n.toUpperCase() === tableName);
-    if (key === undefined) throw new Error(`Fichier ${tableName} absent de context/tables.json`);
-    return s.context.tables[key];
-  };
-  const description = findTable(descName);
-  const table = findTable(dataName);
+  const description = findTable(s, descName);
+  const table = findTable(s, dataName);
   if (description.columns.some(c => c.type === 'AUTO')) {
     throw new Error(`Fichier ${descName} : décrivez ses zones dans "schema" de context/tables.json`);
   }
@@ -96,11 +92,7 @@ export function declareFile(s: InterpreterState, node: FileDeclarationNode, para
   if (node.keyed && !(table.keys && table.keys.length > 0)) {
     throw new Error(`Fichier ${name} déclaré KEYED sans "keys" dans context/tables.json`);
   }
-  const fields = description.columns.map(col => {
-    const type = parseFieldType(col.type);
-    if (!type) throw new Error(`Fichier ${name} : type '${col.type}' de la zone ${col.name} inconnu`);
-    return { name: col.name.toUpperCase(), type };
-  });
+  const fields = tableFields(description, descName);
   let format = (description.format ?? descName + 'F').toUpperCase();
   // RENAME : le premier argument doit être le format réel ; l'ancien nom n'est plus reconnu
   if (node.rename) {

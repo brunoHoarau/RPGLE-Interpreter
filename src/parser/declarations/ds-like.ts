@@ -21,7 +21,7 @@ export function parseDsLikeParameter(p: ParserState): DataTypeNode {
 export function rememberDsLike(p: ParserState, name: string, like: DsLike): void {
   const source = like.kind === 'likeds' ? p.dsInfo.get(like.name.toLowerCase()) : undefined;
   const fields = source ? source.fields : [];
-  p.dsInfo.set(name.toLowerCase(), { fields });
+  p.dsInfo.set(name.toLowerCase(), { fields, fromFile: like.kind === 'likeds' ? source?.fromFile : true });
   for (const field of fields) rememberDateTime(p, `${name}.${field.name}`, field.dataType);
 }
 

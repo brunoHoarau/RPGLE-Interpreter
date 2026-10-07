@@ -1167,3 +1167,160 @@ test('format non renommé portant le nom d\'une variable, constante, structure o
   c.tables.AUTRE = { keys: ['CLIENTF'], columns: [{ name: 'CLIENTF', type: 'int(10)' }], data: [] };
   assert.throws(() => run(`dcl-f client; dcl-f autre;`, c), /CLIENTF.*zone/);
 });
+
+// --- DS LIKEREC / EXTNAME (3b, tâche 2) ---
+
+function ctxCle() {
+  const c = ctx3();
+  c.tables.ORDRE = { format: 'ORDREF', keys: ['C', 'A'], columns: [{ name: 'A', type: 'int(10)' }, { name: 'B', type: 'char(4)' }, { name: 'C', type: 'char(3)' }], data: [] };
+  c.tables.SANSCLE = { columns: [{ name: 'A', type: 'int(10)' }], data: [] };
+  return c;
+}
+
+test('LIKEREC : sous-zones du format avec leurs types, valeurs par défaut', () => {
+  const out = run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    dsply %char(cli.numcli) + '|' + %char(%len(cli.nom));
+    cli.solde = 1.239;
+    dsply %char(cli.solde);
+    dsply %char(cli.cree: *iso);
+  `, context());
+  assert.deepEqual(out, ['0|10', '1.23', '0001-01-01']);
+});
+
+test('LIKEREC : les zones du programme ne sont pas modifiées par la DS', () => {
+  const out = run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    cli.nom = 'Zoe';
+    nom = 'Programme';
+    dsply %trim(cli.nom) + ' ' + %trim(nom);
+  `, context());
+  assert.deepEqual(out, ['Zoe Programme']);
+});
+
+test('LIKEREC *KEY : zones de clé dans l\'ordre de la clé', () => {
+  const src = `
+    dcl-f ordre keyed;
+    dcl-ds k likerec(ordref : *key);
+    dcl-ds m qualified;
+      x char(3);
+      y int(10);
+    end-ds;
+    m = k;
+    dsply 'ok';
+  `;
+  assert.deepEqual(run(src, ctxCle()), ['ok']);
+  assert.throws(() => run(`dcl-f ordre keyed; dcl-ds k likerec(ordref : *key); k.b = 'x';`, ctxCle()), /b/i);
+});
+
+test('LIKEREC *KEY sur un fichier sans KEYED, format inconnu, nom de fichier au lieu du format : erreurs', () => {
+  assert.throws(() => run(`dcl-f ordre; dcl-ds k likerec(ordref : *key);`, ctxCle()), /KEYED|clé/i);
+  assert.throws(() => run(`dcl-f client keyed; dcl-ds k likerec(inconnu);`, context()), /INCONNU/);
+  assert.throws(() => run(`dcl-f film rename(film:ffilm) keyed; dcl-ds k likerec(film);`, ctx3()), /FILM/);
+});
+
+test('LIKEREC sur un fichier RENAME', () => {
+  assert.deepEqual(run(`
+    dcl-f film rename(film:ffilm) keyed;
+    dcl-ds f likerec(ffilm);
+    f.titre = 'Alien';
+    dsply %trim(f.titre);
+  `, ctx3()), ['Alien']);
+});
+
+test('LIKEREC sur un fichier PREFIX : sous-zones préfixées', () => {
+  assert.deepEqual(run(`
+    dcl-f client prefix(c_) keyed;
+    dcl-ds cli likerec(clientf);
+    cli.c_clnom = 'Zoe';
+    dsply %trim(cli.c_clnom);
+  `, ctx3()), ['Zoe']);
+  assert.throws(() => run(`
+    dcl-f client prefix(c_) keyed;
+    dcl-ds cli likerec(clientf);
+    cli.clnom = 'Zoe';
+  `, ctx3()), /clnom/i);
+});
+
+test('EXTNAME qualifiée : sous-zones de la table', () => {
+  assert.deepEqual(run(`
+    dcl-ds cli extname('CLIENT') qualified end-ds;
+    cli.nom = 'Zoe';
+    dsply %trim(cli.nom) + '|' + %char(cli.numcli);
+  `, context()), ['Zoe|0']);
+});
+
+test('EXTNAME non qualifiée : sous-zones accessibles directement', () => {
+  assert.deepEqual(run(`
+    dcl-ds cli extname('CLIENT');
+    end-ds;
+    nom = 'Zoe';
+    dsply %trim(cli.nom) + '|' + %trim(nom);
+  `, context()), ['Zoe|Zoe']);
+});
+
+test('EXTNAME avec format et type d\'extraction', () => {
+  assert.deepEqual(run(`
+    dcl-ds k extname('ORDRE' : 'ORDREF' : *key) qualified end-ds;
+    k.c = 'abc';
+    dsply k.c;
+  `, ctxCle()), ['abc']);
+  assert.deepEqual(run(`dcl-ds a extname('AUTRE':'AUTREF') qualified end-ds; dsply %char(a.x);`, ctx3()), ['0']);
+});
+
+test('EXTNAME non qualifiée dont une sous-zone porte le nom d\'une zone de DCL-F : pas encore supporté', () => {
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds cli extname('CLIENT') end-ds;
+  `, context()), NOT_SUPPORTED);
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli extname('CLIENT') qualified end-ds;
+    dsply 'ok';
+  `, context()), ['ok']);
+});
+
+test('EXTNAME : table absente, format faux, *KEY sur table sans clé : erreurs', () => {
+  assert.throws(() => run(`dcl-ds x extname('ABSENT') qualified end-ds;`, context()), /absent de context\/tables\.json/);
+  assert.throws(() => run(`dcl-ds x extname('CLIENT':'FAUX') qualified end-ds;`, context()), /format.*FAUX|FAUX.*format/i);
+  assert.throws(() => run(`dcl-ds x extname('SANSCLE' : *key) qualified end-ds;`, ctxCle()), /clé|keys/i);
+});
+
+test('LIKEDS d\'une DS LIKEREC ou EXTNAME : mêmes sous-zones, copie a = b', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    dcl-ds c2 likeds(cli);
+    cli.nom = 'Zoe';
+    c2 = cli;
+    dsply %trim(c2.nom);
+  `, context()), ['Zoe']);
+});
+
+test('DS LIKEREC : *LOVAL sur une zone date acceptée, sur une zone non date refusée', () => {
+  assert.deepEqual(run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    cli.cree = *hival;
+    dsply %char(cli.cree: *iso);
+    if cli.cree = *hival;
+      dsply 'egal';
+    endif;
+  `, context()), ['9999-12-31', 'egal']);
+  assert.throws(() => run(`
+    dcl-f client keyed;
+    dcl-ds cli likerec(clientf);
+    cli.nom = *loval;
+  `, context()), NOT_SUPPORTED);
+});
+
+test('DS EXTNAME et LIKEDS : *LOVAL sur une zone date', () => {
+  assert.deepEqual(run(`
+    dcl-ds cli extname('CLIENT') qualified end-ds;
+    dcl-ds c2 likeds(cli);
+    c2.cree = *hival;
+    dsply %char(c2.cree: *iso);
+  `, context()), ['9999-12-31']);
+});

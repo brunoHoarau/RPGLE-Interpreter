@@ -599,7 +599,7 @@ const DS_DECL = `dcl-ds d qualified; x char(3) inz('abc'); end-ds; dcl-ds e qual
 
 test('structure de données utilisée comme valeur : pas encore supporté', () => {
   for (const stmt of [
-    `e = d;`, `d = 'abc';`, `d = *blanks;`, `s = d;`, `if d = *blanks; endif;`, `s = d + 'x';`,
+    `d = 'abc';`, `d = *blanks;`, `s = d;`, `if d = *blanks; endif;`, `s = d + 'x';`,
     `dsply d;`, `dsply 'x' + d;`, `p(d);`, `s = %trim(d);`,
   ]) {
     assert.throws(() => run(`${DS_DECL} ${stmt} dcl-proc p; dcl-pi *n; k char(3) const; end-pi; end-proc;`), NOT_SUPPORTED, stmt);
