@@ -186,11 +186,23 @@ export function isFileKeywordNameUse(p: ParserState): boolean {
          after.type === TokenType.DOT || COMPOUND_OPERATORS.has(after.type);
 }
 
+// EXFMT format ; : ni clé, ni extenseur, ni structure de données résultat
+function parseExfmt(p: ParserState, opToken: Token): FileOperationNode {
+  if (!p.check(TokenType.IDENTIFIER) || p.peekNext()?.type !== TokenType.SEMICOLON) {
+    throw unsupported('EXFMT avec une clé, un extenseur ou un opérande de plus (seul EXFMT format; est supporté)', opToken);
+  }
+  const fileToken = p.advance();
+  p.advance();
+  requireFile(p, fileToken.value, fileToken.line, false);
+  return { type: 'FileOperation', operation: 'exfmt', file: fileToken.value, line: opToken.line };
+}
+
 // READ f ; READE clé f ; CHAIN clé f ; SETLL clé f ; OPEN f ; CLOSE f ...
 export function parseFileOperation(p: ParserState): FileOperationNode {
   const opToken = p.advance();
   const operation = opToken.value.toLowerCase() as FileOperationNode['operation'];
   const opName = operation.toUpperCase();
+  if (operation === 'exfmt') return parseExfmt(p, opToken);
   let keyed = KEYED_OPERATIONS.has(operation);
   // DELETE [clé] fichier : la clé est facultative
   if (operation === 'delete') {

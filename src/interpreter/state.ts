@@ -41,6 +41,7 @@ export interface DisplayState {
   definition: DisplayFileDefinition;
   routine: SpecialRoutine;
   indds?: string;                  // INDDS(nom), en majuscules
+  area?: boolean[];                // indicateurs des positions sans sous-zone INDDS (index 1..99), valeur interne du fichier
 }
 
 // État de l'interpréteur, partagé par les fonctions des modules de ce dossier

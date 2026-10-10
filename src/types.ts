@@ -211,7 +211,7 @@ export interface FileDeclarationNode {
 
 export interface FileOperationNode {
   type: 'FileOperation';
-  operation: 'read' | 'readp' | 'reade' | 'readpe' | 'chain' | 'setll' | 'setgt' | 'open' | 'close' | 'write' | 'update' | 'delete' | 'unlock';
+  operation: 'read' | 'readp' | 'reade' | 'readpe' | 'chain' | 'setll' | 'setgt' | 'open' | 'close' | 'write' | 'update' | 'delete' | 'unlock' | 'exfmt';
   file: string;                // nom de fichier ou de format, tel qu'écrit
   key?: ExpressionNode[];      // liste de valeurs de clé
   special?: 'start' | 'end';   // *START / *LOVAL, *END / *HIVAL

@@ -109,7 +109,7 @@ test('un appel récursif de sous-routine est refusé, direct ou indirect', () =>
 });
 
 test('les autres codes opération non supportés sont refusés', () => {
-  for (const op of ['clear ds;', 'reset ds;', 'exfmt ecran;', 'eval-corr a = b;']) {
+  for (const op of ['clear ds;', 'reset ds;', 'eval-corr a = b;']) {
     assert.throws(() => parse(op), NOT_SUPPORTED, op);
   }
 });
@@ -439,4 +439,10 @@ test('exécution : paramètre DS de programme externe refusé tant que non exéc
 test('%EDITC : 3e argument refusé', () => {
   assert.throws(() => parse(`dcl-s n zoned(5:0); dsply %editc(n : 'J' : *astfill);`), NOT_SUPPORTED);
   assert.throws(() => parse(`dcl-s n zoned(5:0); dsply %editc(n : 'J' : *cursym);`), NOT_SUPPORTED);
+});
+
+test('EXFMT : clé, extenseur et opérande de plus refusés', () => {
+  for (const op of ['exfmt(e) f;', 'exfmt 1 f;', 'exfmt f d;']) {
+    assert.throws(() => parse(op), NOT_SUPPORTED, op);
+  }
 });

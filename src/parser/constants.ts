@@ -16,7 +16,7 @@ export const DATETIME_LITERALS = new Map<TokenType, DateTimeKind>([
 // Opérations sur fichiers natifs : tokens dédiés
 export const FILE_OPERATION_TOKENS = [
   TokenType.SETLL, TokenType.SETGT, TokenType.READ, TokenType.READE, TokenType.READP, TokenType.READPE,
-  TokenType.CHAIN, TokenType.OPEN, TokenType.CLOSE, TokenType.UPDATE, TokenType.DELETE, TokenType.WRITE,
+  TokenType.CHAIN, TokenType.OPEN, TokenType.CLOSE, TokenType.UPDATE, TokenType.DELETE, TokenType.WRITE, TokenType.EXFMT,
 ];
 export const READ_OPERATIONS = new Set(['read', 'readp', 'reade', 'readpe', 'chain', 'setll', 'setgt']);
 // Opérations dont le premier opérande est une clé
@@ -29,7 +29,7 @@ export const FILE_BUILTINS = new Set(['%eof', '%found', '%equal', '%open']);
 // suivis de '=', '.' ou '(' : sinon ce sont des noms de variable ou de procédure)
 export const UNSUPPORTED_OPCODES = new Set([
   'acq', 'clear', 'commit', 'data-gen', 'data-into', 'dealloc', 'dump',
-  'eval-corr', 'evalr', 'except', 'exfmt', 'feod', 'force', 'in', 'next',
+  'eval-corr', 'evalr', 'except', 'feod', 'force', 'in', 'next',
   'on-excp', 'on-exit', 'out', 'post', 'readc', 'rel', 'reset',
   'rolbk', 'snd-msg', 'test', 'xml-into', 'xml-sax',
 ]);

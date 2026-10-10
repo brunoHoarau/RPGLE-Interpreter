@@ -5,13 +5,15 @@ import { SpecialCall } from '../../screens/protocol';
 import { declareFileField } from '../files/declare';
 import { DisplayState, InterpreterState } from '../state';
 
+export function displayError(file: string, call: SpecialCall): Error {
+  return new Error(`fichier écran ${file} : ${call.message ?? 'erreur'} (erreur ${String(call.error).padStart(5, '0')})`);
+}
+
 function callSpecial(s: InterpreterState, file: string, option: 'O' | 'C'): void {
   const routine = s.displays.get(file)!.routine;
   const call: SpecialCall = { option, status: '0', error: 0, area: '', format: '', indicators: '' };
   routine.call(call);
-  if (call.status === '2') {
-    throw new Error(`fichier écran ${file} : ${call.message ?? 'erreur'} (erreur ${String(call.error).padStart(5, '0')})`);
-  }
+  if (call.status === '2') throw displayError(file, call);
 }
 
 export function declareDisplayFile(s: InterpreterState, node: FileDeclarationNode, parameters: ParameterNode[]): void {

@@ -5,6 +5,7 @@ import { executeFileChange, copyRecord } from './changes';
 import { checkIoDs, kdsKey, fieldsToUpdate } from './ds-io';
 import { evaluate } from '../evaluate/evaluate';
 import { InterpreterState, FileState } from '../state';
+import { executeScreenOperation } from '../screens/operations';
 
 // Statuts d'erreur de fichier (01000 à 01999) : les seuls interceptés par l'extenseur (E)
 export const isFileStatus = (status: number) => status >= 1000 && status <= 1999;
@@ -21,6 +22,10 @@ export function fileState(s: InterpreterState, name: string): FileState {
 // Les opérandes (clé, numéro d'enregistrement) sont évalués avant : (E) n'intercepte que les erreurs
 // de l'opération elle-même, pas celles d'une procédure appelée dans la clé.
 export function executeFileOperation(s: InterpreterState, node: FileOperationNode): void {
+  if (s.displays.has(node.file.toUpperCase()) || node.operation === 'exfmt') {
+    executeScreenOperation(s, node);
+    return;
+  }
   // Contrôles du compilateur (DS, %FIELDS) : avant tout accès au fichier, jamais interceptés par (E)
   if (node.resultDs) checkIoDs(s, node, fileState(s, node.file));
   if (node.fields) fieldsToUpdate(s, node, fileState(s, node.file));

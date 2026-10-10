@@ -19,6 +19,8 @@ export function checkFileChanges(s: InterpreterState, node: any): void {
     return;
   }
   if (node === null || typeof node !== 'object') return;
+  // Fichiers écran : opérations contrôlées à l'exécution (interpreter/screens/operations.ts)
+  if (node.type === 'FileOperation' && s.displays.has(String(node.file).toUpperCase())) return;
   if (node.type === 'FileOperation') {
     const state = fileState(s, node.file);
     if (['write', 'update', 'delete', 'unlock'].includes(node.operation)) checkFileChange(s, node, state);

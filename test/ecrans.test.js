@@ -461,3 +461,196 @@ test('DCL-F WORKSTN : pas d appel O si un contrôle de déclaration échoue', ()
   assert.throws(() => run('dcl-f e workstn indds(ind);', { tables: {}, programs: {}, displays: d }, { screens }), /non déclarée/);
   assert.deepEqual(log, []);
 });
+
+// --- WRITE, READ, EXFMT ---
+const SAISIE = () => displaysFrom({
+  ECRAN: {
+    keys: { CA03: '03' },
+    formats: {
+      FMT01: {
+        keys: { CF05: '05' },
+        constants: [
+          { row: 20, col: 2, text: 'Rafraichi', if: '31' },
+          { row: 21, col: 2, text: 'Normal', if: 'N31' },
+          { row: 22, col: 2, text: 'Cinq', if: '05' },
+        ],
+        fields: [field('CODE', 'char(6)', 3), field('QTE', 'zoned(5:2)', 4), field('LIB', 'char(10)', 5, 'O')],
+      },
+      FMT02: { fields: [field('NOTE', 'char(4)', 3)] },
+    },
+  },
+});
+
+test('EXFMT : ENTER affecte les zones saisies', () => {
+  const { output, shown } = runScreens(`
+    dcl-f ecran workstn;
+    code = 'A1';
+    lib = 'LIBELLE';
+    exfmt fmt01;
+    dsply code;
+    dsply qte;
+    dsply lib;
+  `, SAISIE(), [{ format: 'FMT01', fields: { CODE: 'ZZ9', QTE: '1,5' } }]);
+  assert.deepEqual(output, ['ZZ9', '1.5', 'LIBELLE']);
+  assert.equal(shown[0].fields.find(f => f.name === 'LIB').value.trim(), 'LIBELLE');
+});
+
+test('EXFMT : nom de format en minuscules, déclaré en majuscules', () => {
+  const { output } = runScreens(`dcl-f ecran workstn; exfmt FmT01; dsply 'ok';`, SAISIE(), [{ format: 'FMT01' }]);
+  assert.deepEqual(output, ['ok']);
+});
+
+test('EXFMT : CF05 positionne *IN05, saisies transmises', () => {
+  const { output } = runScreens(`
+    dcl-f ecran workstn;
+    exfmt fmt01;
+    if *in05;
+      dsply 'F5';
+    endif;
+    dsply code;
+  `, SAISIE(), [{ format: 'FMT01', key: 'F5', fields: { CODE: 'XX' } }]);
+  assert.deepEqual(output, ['F5', 'XX']);
+});
+
+test('EXFMT : CA03 laisse les variables inchangées et positionne *IN03', () => {
+  const { output } = runScreens(`
+    dcl-f ecran workstn;
+    code = 'AVANT';
+    exfmt fmt01;
+    dsply code;
+    if *in03;
+      dsply 'F3';
+    endif;
+  `, SAISIE(), [{ format: 'FMT01', key: 'F3', fields: { CODE: 'NOUVEAU' } }]);
+  assert.deepEqual(output, ['AVANT', 'F3']);
+});
+
+test('WRITE puis READ : deux appels séparés', () => {
+  const { output, shown } = runScreens(`
+    dcl-f ecran workstn;
+    code = 'C1';
+    write fmt01;
+    dsply 'écrit';
+    read fmt01;
+    dsply code;
+  `, SAISIE(), [{ format: 'FMT01', fields: { CODE: 'C2' } }]);
+  assert.deepEqual(output, ['écrit', 'C2']);
+  assert.equal(shown.length, 1);
+});
+
+test('EXFMT : constante conditionnée par un indicateur positionné par la touche précédente', () => {
+  const { shown } = runScreens(`
+    dcl-f ecran workstn;
+    dow '1' = '1';
+      exfmt fmt01;
+      if not *in05;
+        leave;
+      endif;
+    enddo;
+  `, SAISIE(), [{ format: 'FMT01', key: 'F5' }, { format: 'FMT01' }]);
+  assert.deepEqual(shown[0].constants.map(c => c.text), ['Normal']);
+  assert.deepEqual(shown[1].constants.map(c => c.text), ['Normal', 'Cinq']);
+});
+
+test('EXFMT : *IN31 écrit par le programme conditionne l\'affichage', () => {
+  const { shown } = runScreens(`
+    dcl-f ecran workstn;
+    *in31 = *on;
+    exfmt fmt01;
+  `, SAISIE(), [{ format: 'FMT01' }]);
+  assert.deepEqual(shown[0].constants.map(c => c.text), ['Rafraichi']);
+});
+
+const INDARA = () => {
+  const d = SAISIE();
+  d.ECRAN.indara = true;
+  return d;
+};
+
+test('EXFMT avec INDDS : indicateurs par position, positions sans sous-zone conservées', () => {
+  const { output, shown } = runScreens(`
+    dcl-ds ind qualified;
+      exit ind pos(3);
+      refresh ind pos(5);
+      erreur ind pos(31);
+    end-ds;
+    dcl-f ecran workstn indds(ind);
+    ind.erreur = *on;
+    exfmt fmt01;
+    if ind.refresh;
+      dsply 'refresh';
+    endif;
+    if *in05;
+      dsply 'in05';
+    endif;
+    if ind.erreur;
+      dsply 'erreur';
+    endif;
+  `, INDARA(), [{ format: 'FMT01', key: 'F5' }]);
+  assert.deepEqual(shown[0].constants.map(c => c.text), ['Rafraichi']);
+  assert.deepEqual(output, ['refresh', 'erreur']);
+});
+
+test('INDDS : indicateur de réponse hors DS gardé pour le W suivant', () => {
+  // CF05 -> indicateur 05 sans sous-zone ; renvoyé au W suivant, la constante if 05 reste cohérente
+  const d = displaysFrom({ ECRAN: { indara: true, keys: { CA03: '03' }, formats: {
+    F1: { keys: { CF05: '05' }, fields: [] },
+    F2: { constants: [{ row: 1, col: 1, text: 'Cinq', if: '05' }], fields: [] },
+  } } });
+  const { shown } = runScreens(`
+    dcl-ds ind qualified; exit ind pos(3); end-ds;
+    dcl-f ecran workstn indds(ind);
+    exfmt f1;
+    exfmt f2;
+  `, d, [{ format: 'F1', key: 'F5' }, { format: 'F2' }]);
+  assert.deepEqual(shown[1].constants.map(c => c.text), ['Cinq']);
+});
+
+test('EXFMT : valeur négative aller-retour', () => {
+  const { output } = runScreens(`
+    dcl-f ecran workstn;
+    qte = -12.5;
+    exfmt fmt01;
+    dsply qte;
+  `, SAISIE(), [{ format: 'FMT01' }]);
+  assert.deepEqual(output, ['-12.5']);
+});
+
+test('écran : statut 2 à W ou R : erreur d\'exécution', () => {
+  const screens = () => ({ call(p) {
+    if (p.option === 'W') { p.status = '2'; p.error = 1299; p.message = 'ça casse'; }
+  } });
+  assert.throws(() => run('dcl-f ecran workstn; write fmt01;', { tables: {}, programs: {}, displays: SAISIE() }, { screens }),
+    /fichier écran ECRAN : ça casse \(erreur 01299\)/);
+  const screensR = () => ({ call(p) { if (p.option === 'R') { p.status = '2'; p.error = 5; p.message = 'lecture'; } } });
+  assert.throws(() => run('dcl-f ecran workstn; read fmt01;', { tables: {}, programs: {}, displays: SAISIE() }, { screens: screensR }),
+    /fichier écran ECRAN : lecture \(erreur 00005\)/);
+});
+
+test('écran : READ sans WRITE : erreur du simulateur', () => {
+  assert.throws(() => runScreens('dcl-f ecran workstn; read fmt01;', SAISIE(), []), /aucun écran affiché/);
+});
+
+test('écran : opérations refusées', () => {
+  const refuse = code => assert.throws(() => runScreens(`dcl-f ecran workstn; dcl-ds d qualified; x char(1); end-ds; ${code}`, SAISIE(), [{ format: 'FMT01' }]),
+    /pas encore supporté|écran/i, code);
+  refuse('write ecran;');
+  refuse('read ecran;');
+  refuse('exfmt ecran;');
+  refuse('chain 1 fmt01;');
+  refuse('update fmt01;');
+  refuse('delete fmt01;');
+  refuse('setll 1 fmt01;');
+  refuse('read(e) fmt01;');
+  refuse('write fmt01 d;');
+  refuse('open ecran;');
+  refuse('close ecran;');
+  refuse('exfmt fmt01 d;');
+  refuse('exfmt(e) fmt01;');
+  refuse('exfmt 1 fmt01;');
+});
+
+test('EXFMT sur un fichier base : erreur', () => {
+  const ctx = { tables: { CLIENT: { columns: [{ name: 'NOM', type: 'char(10)' }], data: [] } }, programs: {} };
+  assert.throws(() => runScreens('dcl-f client; dcl-f ecran workstn; exfmt client;', SAISIE(), [], ctx), /EXFMT.*fichier écran/i);
+});
