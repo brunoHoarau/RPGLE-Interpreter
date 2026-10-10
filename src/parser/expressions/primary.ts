@@ -1,6 +1,7 @@
-import { TokenType, ExpressionNode } from '../../types';
+import { TokenType, ExpressionNode, Token } from '../../types';
 import { isSupportedBuiltin } from '../../builtins';
 import { parseIso, unitFromName } from '../../datetime';
+import { EDIT_CODE } from '../../editc';
 import { ParserState } from '../state';
 import { DATETIME_LITERALS, FILE_BUILTINS, INDICATOR, SUPPORTED_SPECIAL_VALUES, NO_ARGUMENT_BUILTINS, FORMAT_BUILTINS, UNIT_ARGUMENT, BUILTIN_ARITY, unsupported } from '../constants';
 import { requireFile } from '../files';
@@ -100,6 +101,9 @@ export function parsePrimary(p: ParserState): ExpressionNode {
       if (args.length === 2 && lower === '%char') {
         throw new Error(`%CHAR accepte au plus 2 arguments (ligne ${token.line})`);
       }
+      if (args.length === 2 && lower === '%editc') {
+        throw unsupported('%EDITC avec un 3e argument (*ASTFILL, *CURSYM ou monnaie)', p.peek());
+      }
       if (args.length === 2 && lower === '%subdt') {
         throw unsupported('%SUBDT avec plus de 2 arguments', p.peek());
       }
@@ -116,6 +120,7 @@ export function parsePrimary(p: ParserState): ExpressionNode {
     }
 
     p.expect(TokenType.RPAREN);
+    if (lower === '%editc' && args.length === 2) checkEditCode(args[1], token);
     const arity = BUILTIN_ARITY[lower];
     if (arity !== undefined && args.length !== arity) {
       throw new Error(`${name.toUpperCase()} attend ${arity} argument${arity > 1 ? 's' : ''} (ligne ${token.line})`);
@@ -150,4 +155,11 @@ export function parsePrimary(p: ParserState): ExpressionNode {
   }
 
   throw new Error(`Expression inattendue à la ligne ${p.peek().line}`);
+}
+
+// Le code d'édition de %EDITC est un littéral d'un caractère valide : le compilateur refuse le reste
+function checkEditCode(arg: ExpressionNode, token: Token): void {
+  if (arg.valueType !== 'string' || !EDIT_CODE.test(String(arg.value))) {
+    throw new Error(`%EDITC : code d'édition invalide, un littéral parmi 1-4, A-D, J-Q, X, Y, Z est attendu (ligne ${token.line})`);
+  }
 }

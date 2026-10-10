@@ -128,8 +128,8 @@ test('un indice de tableau est refusé', () => {
 // --- Fonctions intégrées ---
 
 test('une fonction intégrée inconnue est refusée à l\'analyse', () => {
-  assert.throws(() => parse(`dcl-s x char(10); if 1 = 2; x = %editc(1: 'X'); endif;`),
-    err => NOT_SUPPORTED.test(err.message) && /%EDITC/i.test(err.message));
+  assert.throws(() => parse(`dcl-s x char(10); if 1 = 2; x = %editw(1: '0  '); endif;`),
+    err => NOT_SUPPORTED.test(err.message) && /%EDITW/i.test(err.message));
 });
 
 // --- Déclarations ---
@@ -424,4 +424,9 @@ test('exécution : paramètre DS de programme externe refusé tant que non exéc
   ]) {
     assert.throws(() => run(src, context), NOT_SUPPORTED, src);
   }
+});
+
+test('%EDITC : 3e argument refusé', () => {
+  assert.throws(() => parse(`dcl-s n zoned(5:0); dsply %editc(n : 'J' : *astfill);`), NOT_SUPPORTED);
+  assert.throws(() => parse(`dcl-s n zoned(5:0); dsply %editc(n : 'J' : *cursym);`), NOT_SUPPORTED);
 });

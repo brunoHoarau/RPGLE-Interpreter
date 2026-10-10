@@ -139,6 +139,8 @@ export const BUILTINS: { [name: string]: Builtin } = {
     return decimals !== undefined ? truncateDecimals(num, decimals) : num;
   },
   '%char': (_, value: any) => String(value),
+  // %EDITC a besoin du type déclaré : évalué dans interpreter/evaluate/evaluate.ts
+  '%editc': () => { throw new NotSupportedError('%EDITC hors évaluation'); },
   '%scan': (_, search: any, source: any) => {
     const pos = String(source).indexOf(String(search));
     return pos === -1 ? 0 : pos + 1;
