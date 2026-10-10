@@ -144,3 +144,36 @@ test('les mots-clés composés restent reconnus quelle que soit la casse', () =>
   `);
   assert.deepEqual(out, ['erreur', '3']);
 });
+
+// --- Ordre de comparaison des chaînes : EBCDIC CCSID 297 ---
+
+const cmp = (a, op, b) => run(`
+  dcl-s r ind;
+  r = (${a} ${op} ${b});
+  dsply %char(r);
+`)[0];
+
+test('EBCDIC : minuscule avant majuscule', () => {
+  assert.equal(cmp("'a'", '<', "'B'"), '1');
+});
+
+test('EBCDIC : majuscule avant chiffre', () => {
+  assert.equal(cmp("'Z'", '<', "'0'"), '1');
+});
+
+test('EBCDIC : blanc avant lettre', () => {
+  assert.equal(cmp("' '", '<', "'a'"), '1');
+});
+
+test('EBCDIC : é (0xC0) après a (0x81)', () => {
+  assert.equal(cmp("'é'", '<', "'a'"), '0');
+  assert.equal(cmp("'a'", '<', "'é'"), '1');
+});
+
+test('EBCDIC : comparaison avec complétion à blanc conservée', () => {
+  assert.equal(cmp("'Dupont    '", '=', "'Dupont'"), '1');
+});
+
+test('EBCDIC : caractère absent du CCSID 297 refusé', () => {
+  assert.throws(() => cmp("'€'", '=', "'a'"), /CCSID 297/);
+});
