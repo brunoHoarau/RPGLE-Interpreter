@@ -38,12 +38,19 @@ test('écriture : constructions non supportées refusées', () => {
 
 test('DCL-F : périphériques et mots-clés non supportés refusés', () => {
   for (const src of [
-    'dcl-f ecran workstn;', 'dcl-f etat printer;', 'dcl-f f special;',
+    'dcl-f etat printer;', 'dcl-f f special;',
     'dcl-f client infds(ds);', 'dcl-f client qualified;', 'dcl-f client alias;', 'dcl-f client block(*no);',
     'dcl-proc p; dcl-f client; end-proc;',
   ]) {
     assert.throws(() => parse(src), NOT_SUPPORTED, src);
   }
+});
+
+test('DCL-F WORKSTN : mots-clés refusés sur un fichier écran', () => {
+  for (const kw of ['keyed', "extfile('X')", "extdesc('X')", 'rename(a:b)', 'prefix(p_)', 'usropn']) {
+    assert.throws(() => parse(`dcl-f ecran workstn ${kw};`), /sur un fichier écran/, kw);
+  }
+  assert.throws(() => parse('dcl-f client indds(ind);'), /INDDS.*WORKSTN/);
 });
 
 test('opérations de fichier non supportées refusées', () => {

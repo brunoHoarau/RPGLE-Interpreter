@@ -5,6 +5,7 @@ import { NotSupportedError } from '../errors';
 import { isDateTimeType, kindOf } from '../datetime';
 import { executeVariableDeclaration, executeConstantDeclaration, executeDataStructure } from './declarations';
 import { declareFile, checkRenamedFormats } from './files/declare';
+import { checkDisplayIndds, closeDisplayFiles } from './screens/declare';
 import { executeFileOperation } from './files/operations';
 import { checkFileChanges } from './files/changes';
 import { executeAssignment, executeDsply, executeSQL } from './statements';
@@ -22,6 +23,7 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
   s.procedures.clear();
   s.prototypes.clear();
   s.files.clear();
+  s.displays.clear();
   s.fileFields.clear();
   s.lastIndicators = { eof: false, found: false, equal: false };
   s.lastError = false;
@@ -73,6 +75,8 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
     }
   }
 
+  checkDisplayIndds(s);
+
   // Deuxième passe : exécuter le code (les verrous de ce programme sont libérés à sa fin)
   const { mainline, subs } = splitSubroutines(ast.body);
   s.subroutines.push(subs);
@@ -95,6 +99,7 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
     for (const state of s.files.values()) state.file.release();
   }
 
+  closeDisplayFiles(s);
   return parameters.map(p => s.runtime.lookup(p.name));
 }
 

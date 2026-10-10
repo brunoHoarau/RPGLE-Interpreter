@@ -199,6 +199,8 @@ export interface FileDeclarationNode {
   keyed: boolean;
   usropn: boolean;
   usage: { input: boolean; output: boolean; update: boolean; delete: boolean };
+  device?: 'workstn';                              // WORKSTN : fichier écran (absent : DISK)
+  indds?: string;                                  // INDDS(nom) : structure des indicateurs, en majuscules
   rename?: { from: string; to: string };           // RENAME(format:nouveau), majuscules
   prefix?: { text: string; count?: number };       // PREFIX(texte[:n]), texte en majuscules sans apostrophes
   extfile?: string;                                // EXTFILE : nom de table en majuscules, bibliothèque retirée, ou '*EXTDESC'

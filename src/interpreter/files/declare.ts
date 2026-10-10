@@ -3,6 +3,7 @@ import { NativeFile, parseFieldType } from '../../files';
 import { TableDefinition } from '../../context';
 import { defaultValue, describeType, sameDeclaredType } from '../../datatypes';
 import { NotSupportedError, incompatibleTypes } from '../../errors';
+import { declareDisplayFile } from '../screens/declare';
 import { fileState } from './operations';
 import { findTable, tableFields } from './layout';
 import { InterpreterState, FileState } from '../state';
@@ -44,6 +45,7 @@ export function refuseSameNameAsField(s: InterpreterState, name: string, type: D
 }
 
 export function declareFile(s: InterpreterState, node: FileDeclarationNode, parameters: ParameterNode[]): void {
+  if (node.device === 'workstn') return declareDisplayFile(s, node, parameters);
   const name = node.name.toUpperCase();
   // Table de description (EXTDESC, sinon le nom du fichier) : zones, types, format (compilation).
   // Table de données (EXTFILE, *EXTDESC : celle de la description, sinon le nom du fichier) : lignes, verrous,
@@ -123,6 +125,8 @@ export function declareFile(s: InterpreterState, node: FileDeclarationNode, para
   }
   // Sur IBM i, les noms de fichiers et de formats d'un programme sont distincts : RENAME nécessaire
   for (const used of new Set([name, format])) {
+    const display = s.displays.get(used);
+    if (display) throw new Error(`Fichier ${name} : le nom ${used} est déjà utilisé par le fichier écran ${display.file}`);
     const other = s.files.get(used);
     if (other) {
       throw new Error(`Fichier ${name} : le nom ${used} est déjà utilisé par le fichier ${other.file.name}`
@@ -146,21 +150,24 @@ export function declareFile(s: InterpreterState, node: FileDeclarationNode, para
   s.files.set(name, state);
   s.files.set(format, state);
 
-  for (const field of fields) {
-    const variable = variables.get(field.name)!;
-    const key = variable.toLowerCase();
-    const existing = s.fileFields.get(key);
-    if (existing) {
-      if (!sameDeclaredType(existing.type, field.type)) {
-        throw incompatibleTypes(`Zone ${variable} du fichier ${name} ${describeType(field.type)} déjà déclarée par un autre fichier ${describeType(existing.type)}`);
-      }
-      continue;
+  for (const field of fields) declareFileField(s, variables.get(field.name)!, field.type, name, parameters);
+}
+
+// Zone d'un fichier (base ou écran) : variable du programme, partagée avec les autres fichiers de même type
+export function declareFileField(s: InterpreterState, variable: string, type: DataTypeNode, file: string, parameters: ParameterNode[]): void {
+  const key = variable.toLowerCase();
+  const existing = s.fileFields.get(key);
+  if (existing) {
+    if (!sameDeclaredType(existing.type, type)) {
+      const other = existing.file === file ? 'un autre format du même fichier' : 'un autre fichier';
+      throw incompatibleTypes(`Zone ${variable} du fichier ${file} ${describeType(type)} déjà déclarée par ${other} ${describeType(existing.type)}`);
     }
-    const parameter = parameters.find(p => p.name.toLowerCase() === key);
-    if (parameter) refuseSameNameAsField(s, variable, parameter.dataType, field.type, name, 'Paramètre');
-    s.fileFields.set(key, { type: field.type, file: name });
-    s.runtime.declareVariable(variable, defaultValue(field.type), field.type);
+    return;
   }
+  const parameter = parameters.find(p => p.name.toLowerCase() === key);
+  if (parameter) refuseSameNameAsField(s, variable, parameter.dataType, type, file, 'Paramètre');
+  s.fileFields.set(key, { type, file });
+  s.runtime.declareVariable(variable, defaultValue(type), type);
 }
 
 // Le nom de format de chaque DCL-F (renommé ou non) ne doit pas être déjà un nom du programme. Fichiers et formats
@@ -180,13 +187,18 @@ export function checkRenamedFormats(s: InterpreterState, ast: ProgramNode, param
     }
   }
   for (const declaration of ast.files ?? []) {
-    const format = fileState(s, declaration.name).file.format;
-    const field = s.fileFields.get(format.toLowerCase());
-    const what = field ? `zone du fichier ${field.file}` : names.get(format);
-    if (what) {
-      const rename = declaration.rename ? `RENAME(${declaration.rename.from}:${format}) : ` : '';
-      throw new Error(`Fichier ${declaration.name.toUpperCase()} : ${rename}le nom du format ${format} est déjà utilisé (${what})`
-        + (declaration.rename ? '' : ' : RENAME nécessaire'));
-    }
+    const formats = declaration.device === 'workstn'
+      ? Object.keys(s.displays.get(declaration.name.toUpperCase())!.definition.formats)
+      : [fileState(s, declaration.name).file.format];
+    for (const format of formats) checkRenamedFormat(s, declaration, format, names);
   }
+}
+
+function checkRenamedFormat(s: InterpreterState, declaration: FileDeclarationNode, format: string, names: Map<string, string>): void {
+  const field = s.fileFields.get(format.toLowerCase());
+  const what = field ? `zone du fichier ${field.file}` : names.get(format);
+  if (!what) return;
+  const rename = declaration.rename ? `RENAME(${declaration.rename.from}:${format}) : ` : '';
+  throw new Error(`Fichier ${declaration.name.toUpperCase()} : ${rename}le nom du format ${format} est déjà utilisé (${what})`
+    + (declaration.rename || declaration.device === 'workstn' ? '' : ' : RENAME nécessaire'));
 }

@@ -20,9 +20,14 @@ export function parseFileDeclaration(p: ParserState): FileDeclarationNode {
   let prefix: FileDeclarationNode['prefix'];
   let extfile: string | undefined;
   let extdesc: string | undefined;
+  let workstn = false;
+  let indds: string | undefined;
+  let indddsToken: Token | undefined;
+  const given = new Map<string, Token>();
   while (!p.check(TokenType.SEMICOLON) && !p.isAtEnd()) {
     const word = p.advance();
     const lower = word.value.toLowerCase();
+    given.set(lower, word);
     if (lower === 'disk') {
       // périphérique par défaut ; DISK(*EXT) est équivalent
       if (p.check(TokenType.LPAREN)) {
@@ -84,7 +89,14 @@ export function parseFileDeclaration(p: ParserState): FileDeclarationNode {
       }
       const name = isExtdescValue ? '*EXTDESC' : parts[parts.length - 1];
       if (lower === 'extfile') extfile = name; else extdesc = name;
-    } else if (lower === 'workstn' || lower === 'printer' || lower === 'special') {
+    } else if (lower === 'workstn') {
+      workstn = true;
+    } else if (lower === 'indds') {
+      p.expect(TokenType.LPAREN);
+      indds = p.expectName().value.toUpperCase();
+      indddsToken = word;
+      p.expect(TokenType.RPAREN);
+    } else if (lower === 'printer' || lower === 'special') {
       throw unsupported(`DCL-F ${lower.toUpperCase()}`, word);
     } else {
       throw unsupported(`Le mot-clé ${word.value.toUpperCase()} de DCL-F`, word);
@@ -93,11 +105,21 @@ export function parseFileDeclaration(p: ParserState): FileDeclarationNode {
   if (extfile === '*EXTDESC' && extdesc === undefined) {
     throw new Error(`EXTFILE(*EXTDESC) du fichier ${key} sans le mot-clé EXTDESC (ligne ${start.line})`);
   }
+  if (indds !== undefined && !workstn) throw unsupported("INDDS sur un fichier qui n'est pas WORKSTN", indddsToken!);
+  if (workstn) {
+    for (const word of ['keyed', 'extfile', 'extdesc', 'rename', 'prefix', 'usropn']) {
+      const token = given.get(word);
+      if (token) throw unsupported(`${word.toUpperCase()} sur un fichier écran`, token);
+    }
+  }
   p.expect(TokenType.SEMICOLON);
   p.fileNames.add(key);
-  const finalUsage = usage ?? { input: true, output: false, update: false, delete: false };
+  const finalUsage = usage ?? (workstn ? { input: true, output: true, update: false, delete: false }
+    : { input: true, output: false, update: false, delete: false });
   p.fileUsage.set(key, finalUsage);
   const node: FileDeclarationNode = { type: 'FileDeclaration', name: nameToken.value, keyed, usropn, usage: finalUsage, line: start.line };
+  if (workstn) node.device = 'workstn';
+  if (indds !== undefined) node.indds = indds;
   if (rename) node.rename = rename;
   if (prefix) node.prefix = prefix;
   if (extfile !== undefined) node.extfile = extfile;
