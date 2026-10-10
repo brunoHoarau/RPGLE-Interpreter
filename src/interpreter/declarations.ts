@@ -24,7 +24,12 @@ export function fromMock(value: any, type: DataTypeNode | undefined, what: strin
 
 export function executeVariableDeclaration(s: InterpreterState, node: any): void {
   refuseFileFieldName(s, node.name, node.dataType);
-  s.runtime.declareVariable(node.name, initialValue(s, node.initialValue, node.dataType, node.name), node.dataType);
+  const initial = initialValue(s, node.initialValue, node.dataType, node.name);
+  if (node.dim) {
+    s.runtime.declareArray(node.name, node.dataType, node.dim.max, node.dim.auto, () => initial);
+  } else {
+    s.runtime.declareVariable(node.name, initial, node.dataType);
+  }
 }
 
 // Valeur de INZ ; INZ(*SYS) et INZ(*JOB) lisent l'horloge (*JOB : date du jour, faute de travail IBM i)

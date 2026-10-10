@@ -4,6 +4,8 @@ import { DataTypeNode } from './types';
 import { coerce } from './datatypes';
 import { BUILTINS } from './builtins';
 import { DsShape, DsOrigin } from './ds-shape';
+import { ArrayStore, elementCount, readElement, writeElement, nextIndex } from './arrays';
+import { NotSupportedError } from './errors';
 
 // Portée de noms : le programme principal (globale) ou un appel de procédure (locale)
 interface Scope {
@@ -13,9 +15,10 @@ interface Scope {
   aliases: Map<string, string>;     // Champ de DS non qualifiée -> nom de la DS
   readOnly: Set<string>;            // Paramètres CONST de l'appel (minuscules)
   shapes: Map<string, DsShape>;     // Disposition et origine de chaque DS déclarée (minuscules)
+  arrays: Map<string, ArrayStore>;  // Tableaux DIM (minuscules) ; leur type d'élément est dans `types`
 }
 
-const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), types: new Map(), aliases: new Map(), readOnly: new Set(), shapes: new Map() });
+const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), types: new Map(), aliases: new Map(), readOnly: new Set(), shapes: new Map(), arrays: new Map() });
 
 // Un nom visible est une variable, ou un champ de DS non qualifiée (dsName renseigné)
 interface Resolved {
@@ -64,7 +67,7 @@ export class Runtime {
   private resolve(name: string): Resolved | undefined {
     const key = name.toLowerCase();
     for (const scope of this.visibleScopes()) {
-      if (scope.variables.has(key)) return { scope };
+      if (scope.variables.has(key) || scope.arrays.has(key)) return { scope };
       const dsName = scope.aliases.get(key);
       if (dsName !== undefined) return { scope, dsName };
     }
@@ -73,7 +76,7 @@ export class Runtime {
 
   private assertUndeclared(name: string): void {
     const key = name.toLowerCase();
-    if (this.currentScope.variables.has(key) || this.currentScope.aliases.has(key)) {
+    if (this.currentScope.variables.has(key) || this.currentScope.arrays.has(key) || this.currentScope.aliases.has(key)) {
       throw new Error(`'${name}' est déjà déclaré`);
     }
   }
@@ -85,6 +88,7 @@ export class Runtime {
     if (this.currentScope.aliases.has(key)) {
       throw new Error(`'${name}' est déjà déclaré`);
     }
+    this.currentScope.arrays.delete(key);
     if (type) {
       this.currentScope.types.set(key, type);
     } else {
@@ -136,7 +140,56 @@ export class Runtime {
     }
     const key = name.toLowerCase();
     const scope = resolved?.scope ?? this.currentScope;
+    if (scope.arrays.has(key)) throw this.wholeArray(name);
     scope.variables.set(key, coerce(value, scope.types.get(key), name));
+  }
+
+  // Tableau DIM : max éléments, ou *AUTO jusqu'à max ; fresh() donne la valeur initiale d'un élément
+  declareArray(name: string, type: DataTypeNode, max: number, auto: boolean, fresh: () => any): void {
+    const key = name.toLowerCase();
+    this.assertUndeclared(name);
+    this.currentScope.types.set(key, type);
+    this.currentScope.arrays.set(key, { values: [], max, auto, type, fresh });
+  }
+
+  private arrayOf(name: string): { store: ArrayStore; type: DataTypeNode } | undefined {
+    const resolved = this.resolve(name);
+    const store = resolved?.scope.arrays.get(name.toLowerCase());
+    return store && { store, type: store.type };
+  }
+
+  isArray(name: string): boolean {
+    return this.arrayOf(name) !== undefined;
+  }
+
+  wholeArray(name: string): Error {
+    return new NotSupportedError(`Opération sur le tableau entier ${name.toUpperCase()}`);
+  }
+
+  private array(name: string): ArrayStore {
+    const found = this.arrayOf(name);
+    if (!found) throw new Error(`'${name}' n'est pas un tableau`);
+    return found.store;
+  }
+
+  // Nombre d'éléments : DIM, ou nombre courant d'un tableau *AUTO (%ELEM)
+  arrayCount(name: string): number {
+    return elementCount(this.array(name));
+  }
+
+  isAutoArray(name: string): boolean {
+    return this.array(name).auto;
+  }
+
+  getElement(name: string, index: number): any {
+    return readElement(this.array(name), name, index);
+  }
+
+  // index : numéro 1..DIM, ou '*next' (élément suivant d'un tableau *AUTO)
+  setElement(name: string, index: number | '*next', value: any): void {
+    const store = this.array(name);
+    const at = index === '*next' ? nextIndex(store) : index;
+    writeElement(store, name, at, coerce(value, store.type, `${name}(${at})`));
   }
 
   // Affecte une variable globale, même depuis une procédure (zones des fichiers)

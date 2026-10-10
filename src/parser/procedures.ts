@@ -18,6 +18,7 @@ export function parseProcedure(p: ParserState): ASTNode {
   const body: ASTNode[] = [];
   const outerNames = new Set(p.dateTimeNames);
   const outerReadOnly = new Map(p.readOnlyNames);
+  const outerArrays = new Map(p.arrayNames);
   const outerConstants = new Map(p.constants);
   const outerDs = new Map(p.dsInfo);
   const outerSubScope = p.subScope;
@@ -51,6 +52,7 @@ export function parseProcedure(p: ParserState): ASTNode {
   p.expect(TokenType.END_PROC);
   p.dateTimeNames = outerNames; // Les noms locaux disparaissent avec la procédure
   p.readOnlyNames = outerReadOnly;
+  p.arrayNames = outerArrays;
   p.constants = outerConstants;
   p.dsInfo = outerDs;
   p.skipToSemicolon(); // end-proc peut répéter le nom

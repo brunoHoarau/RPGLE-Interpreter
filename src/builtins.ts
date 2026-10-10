@@ -117,6 +117,7 @@ export const BUILTINS: { [name: string]: Builtin } = {
   '%diff': (_, a: any, b: any, unit: string) => diff(a, b, unit),
   '%subdt': (_, value: any, unit: string) => subdtBuiltin(value, unit),
   '%len': (_, str: any) => String(str).length,
+  '%elem': (_, count: number) => count, // le nombre d'éléments est lu sur le tableau par l'évaluation
   '%trim': (_, str: any) => String(str).trim(),
   '%trimr': (_, str: any) => String(str).trimEnd(),
   '%triml': (_, str: any) => String(str).trimStart(),

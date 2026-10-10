@@ -173,6 +173,19 @@ export interface VariableDeclarationNode {
   name: string;
   dataType: DataTypeNode;
   initialValue?: ExpressionNode;
+  dim?: DimNode;
+}
+
+// DIM(max) ou DIM(*AUTO : max)
+export interface DimNode {
+  max: number;
+  auto: boolean;
+}
+
+// Élément de tableau : arr(index) ; index = expression, '*' (tous les éléments, T5) ou '*next' (cible *AUTO)
+export interface ElementRef {
+  name: string;
+  index: ExpressionNode | '*' | '*next';
 }
 
 export interface ConstantDeclarationNode {
@@ -240,7 +253,8 @@ export interface DataTypeNode {
 
 export interface AssignmentNode {
   type: 'Assignment';
-  variable: string;
+  variable: string;      // pour un élément de tableau : le nom du tableau
+  target?: ElementRef;   // cible arr(index) = ... (sinon la cible est `variable`)
   value: ExpressionNode;
 }
 
@@ -363,7 +377,7 @@ export interface ExpressionNode {
   right?: ExpressionNode;
   value?: any;
   hasDecimalPoint?: boolean; // littéral numérique écrit avec un point décimal
-  valueType?: 'number' | 'string' | 'boolean' | 'identifier' | 'builtin' | 'special' | 'call' | 'datetime' | 'file';
+  valueType?: 'number' | 'string' | 'boolean' | 'identifier' | 'builtin' | 'special' | 'call' | 'datetime' | 'file' | 'element' | 'array';
 }
 
 

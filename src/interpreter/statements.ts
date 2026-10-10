@@ -3,11 +3,21 @@ import { isDateTimeType, isDuration } from '../datetime';
 import { NotSupportedError, incompatibleTypes } from '../errors';
 import { valueFor } from './declarations';
 import { evaluate } from './evaluate/evaluate';
+import { elementIndex } from './evaluate/element';
 import { InterpreterState } from './state';
 
 export function executeAssignment(s: InterpreterState, node: any): void {
+  if (node.target) return assignElement(s, node);
+  if (s.runtime.isArray(node.variable)) throw s.runtime.wholeArray(node.variable);
   if (!node.variable.includes('.') && isDataStructure(s.runtime.lookup(node.variable))) return assignDataStructure(s, node);
   assignTo(s, node.variable, valueFor(s, node.value, s.runtime.getType(node.variable), node.variable));
+}
+
+// arr(i) = valeur : la valeur est calculée avant l'index, puis contrôlée et convertie au type de l'élément
+function assignElement(s: InterpreterState, node: any): void {
+  const { name, index } = node.target;
+  const value = valueFor(s, node.value, s.runtime.getType(name), `${name}(…)`);
+  s.runtime.setElement(name, index === '*next' ? '*next' : elementIndex(s, node.target), value);
 }
 
 export function assignTo(s: InterpreterState, variable: string, value: any): void {
@@ -85,6 +95,7 @@ export function executeDsply(s: InterpreterState, node: any): void {
 export function executeSQL(s: InterpreterState, node: any): void {
   // Variables hôtes date/heure : les dates en SQL font l'objet d'un incrément à venir
   for (const [, name] of node.sql.matchAll(/:([A-Za-z_$#@][\w$#@]*(?:\.[\w$#@]+)?)/g)) {
+    if (s.runtime.isArray(name.split('.')[0])) throw s.runtime.wholeArray(name);
     const type = s.runtime.getType(name);
     if (type && isDateTimeType(type.typeName)) {
       throw new Error(`Variable hôte :${name} de type ${type.typeName.toUpperCase()} dans EXEC SQL : pas encore supporté par l'interpréteur`);

@@ -134,8 +134,7 @@ test('une fonction intégrée inconnue est refusée à l\'analyse', () => {
 
 // --- Déclarations ---
 
-test('DIM est refusé sur dcl-s et dcl-ds', () => {
-  assert.throws(() => parse(`dcl-s t char(10) dim(5);`), /DIM/);
+test('DIM est refusé sur dcl-ds', () => {
   assert.throws(() => parse(`dcl-ds d qualified dim(3); a int(5); end-ds;`), /DIM/);
 });
 

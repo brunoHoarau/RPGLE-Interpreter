@@ -1,13 +1,15 @@
-import { TokenType, ExpressionNode, DataTypeNode } from '../../types';
+import { TokenType, ExpressionNode, DataTypeNode, DimNode } from '../../types';
 import { DateTimeKind, isDateTimeType } from '../../datetime';
 import { ParserState } from '../state';
 import { TYPE_TOKENS, UNSUPPORTED_TYPE_TOKENS, unsupported } from '../constants';
 import { inzSpecials, parseDateTimeSpecial } from './variables';
 import { parseExpression } from '../expressions/operators';
+import { parseDim } from './dim';
 
 // Mots-clés d'une déclaration jusqu'au ';' : INZ, et POS pour un champ de DS (rangé dans fieldPos).
+// DIM(...) n'est reçu que si dimOut est fourni (DCL-S) ; ailleurs, DIM est refusé.
 // Renvoie la valeur de INZ(...), undefined pour INZ seul (valeur par défaut du type).
-export function parseDeclarationKeywords(p: ParserState, context: string, dataType: DataTypeNode, fieldPos?: { pos?: number }, fieldName = ''): ExpressionNode | undefined {
+export function parseDeclarationKeywords(p: ParserState, context: string, dataType: DataTypeNode, fieldPos?: { pos?: number }, fieldName = '', dimOut?: { dim?: DimNode }): ExpressionNode | undefined {
   let initialValue: ExpressionNode | undefined;
   while (!p.check(TokenType.SEMICOLON) && !p.isAtEnd()) {
     const token = p.peek();
@@ -18,6 +20,10 @@ export function parseDeclarationKeywords(p: ParserState, context: string, dataTy
         initialValue = parseDateTimeSpecial(p, inzSpecials(p, dataType), TokenType.RPAREN) ?? parseExpression(p);
         p.expect(TokenType.RPAREN);
       }
+    } else if (dimOut && token.type === TokenType.IDENTIFIER && token.value.toLowerCase() === 'dim' && p.peekNext()?.type === TokenType.LPAREN) {
+      p.advance();
+      if (dimOut.dim) throw new Error(`DIM indiqué deux fois à la ligne ${token.line}`);
+      dimOut.dim = parseDim(p);
     } else if (fieldPos && token.type === TokenType.IDENTIFIER && token.value.toLowerCase() === 'pos') {
       p.advance();
       if (fieldPos.pos !== undefined) throw new Error(`POS indiqué deux fois pour le champ ${fieldName.toUpperCase()} à la ligne ${token.line}`);

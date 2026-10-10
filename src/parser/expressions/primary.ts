@@ -7,6 +7,7 @@ import { DATETIME_LITERALS, FILE_BUILTINS, INDICATOR, SUPPORTED_SPECIAL_VALUES, 
 import { requireFile } from '../files';
 import { parseCallArguments } from '../statements/assignment';
 import { parseExpression } from './operators';
+import { parseElement, elementExpression, refuseWholeArray } from './element';
 
 // Unité de %DIFF / %SUBDT : *YEARS, *Y, *MONTHS, *M... ; inconnue : erreur, comme à la compilation
 export function isUnitToken(p: ParserState): boolean {
@@ -89,6 +90,16 @@ export function parsePrimary(p: ParserState): ExpressionNode {
       }
       return { type: 'Expression', value: { name, args }, valueType: 'builtin' };
     }
+    // %ELEM(tableau) : l'argument est un nom de tableau, non évalué
+    if (name.toLowerCase() === '%elem') {
+      p.expect(TokenType.LPAREN);
+      const arrayToken = p.expectName();
+      if (!p.arrayNames.has(arrayToken.value.toLowerCase())) {
+        throw new Error(`%ELEM attend le nom d'un tableau : ${arrayToken.value.toUpperCase()} n'en est pas un (ligne ${arrayToken.line})`);
+      }
+      p.expect(TokenType.RPAREN);
+      return { type: 'Expression', value: { name, args: [{ type: 'Expression', value: arrayToken.value, valueType: 'array' }] }, valueType: 'builtin' };
+    }
     // %DATE, %TIME et %TIMESTAMP sont valides sans parenthèses
     if (NO_ARGUMENT_BUILTINS.has(name.toLowerCase()) && !p.check(TokenType.LPAREN)) {
       return { type: 'Expression', value: { name, args: [] }, valueType: 'builtin' };
@@ -130,7 +141,12 @@ export function parsePrimary(p: ParserState): ExpressionNode {
 
   if (p.isName()) {
       // 🔥 CORRECTION : Gérer la notation pointée dans les expressions
-      let name = p.advance().value;
+      const nameToken = p.advance();
+      let name = nameToken.value;
+      if (p.arrayNames.has(name.toLowerCase())) {
+        if (!p.check(TokenType.LPAREN)) throw refuseWholeArray(name, nameToken);
+        return elementExpression(parseElement(p, nameToken, false));
+      }
 
       // Si on a un '.', on continue à lire les parties suivantes
       while (p.check(TokenType.DOT)) {

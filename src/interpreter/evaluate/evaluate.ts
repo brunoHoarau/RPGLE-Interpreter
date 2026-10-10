@@ -7,6 +7,7 @@ import { FILE_BUILTINS, fileBuiltin } from '../files/builtins';
 import { callProcedure, declaredType } from '../calls';
 import { dataStructureAsValue } from '../statements';
 import { executeOperator } from './operators';
+import { elementIndex } from './element';
 import { editc } from '../../editc';
 import { InterpreterState } from '../state';
 
@@ -46,6 +47,7 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
         return s.runtime.getField(dsName, fieldName);
     }
 
+    if (s.runtime.isArray(expr.value)) throw s.runtime.wholeArray(expr.value);
     if (s.runtime.hasVariable(expr.value)) {
         const value = s.runtime.getVariable(expr.value);
         if (isDataStructure(value)) throw dataStructureAsValue(s, expr.value);
@@ -56,6 +58,11 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
     } catch {
         throw new Error(`Variable non déclarée: ${expr.value}`);
     }
+  }
+
+  if (expr.valueType === 'element') {
+    const ref = expr.value;
+    return s.runtime.getElement(ref.name, elementIndex(s, ref));
   }
 
   if (expr.valueType === 'call') {
@@ -70,6 +77,8 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
       if (expr.value.args.length > 0) throw new Error(`%ERROR n'accepte pas d'argument`);
       return s.lastError;
     }
+    // %ELEM : l'argument est un nom de tableau
+    if (builtin === '%elem') return s.runtime.executeBuiltin('%elem', [s.runtime.arrayCount(expr.value.args[0].value)]);
     if (builtin === '%editc') return editcBuiltin(s, expr.value.args);
     const isChar = builtin === '%char';
     // Le 2e argument (*ISO) est un format, inutile à évaluer
