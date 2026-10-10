@@ -1,4 +1,5 @@
 // Définit la structure du contexte fourni par l'utilisateur
+import { DisplayFileDefinition, normalizeDisplays } from './screens/definition';
 
 export interface ColumnDefinition {
   name: string;
@@ -32,9 +33,10 @@ export interface ProgramMock {
 export interface ExecutionContext {
   tables: { [tableName: string]: TableDefinition };
   programs: { [programName: string]: ProgramMock };
+  displays: { [fileName: string]: DisplayFileDefinition };   // Fichiers écran (displays.json)
 }
 
-// Charge le contexte d'exécution (données simulées) depuis un dossier : tables.json, programs.json.
+// Charge le contexte d'exécution (données simulées) depuis un dossier : tables.json, programs.json, displays.json.
 // Un dossier ou un fichier absent donne un contexte vide ; un fichier invalide est une erreur.
 export function loadContextFromFolder(folderPath: string): ExecutionContext {
   const context = emptyContext();
@@ -44,6 +46,9 @@ export function loadContextFromFolder(folderPath: string): ExecutionContext {
 
   const programs = readJson(folderPath, 'programs.json');
   if (programs !== undefined) context.programs = normalizePrograms(programs.content, programs.path);
+
+  const displays = readJson(folderPath, 'displays.json');
+  if (displays !== undefined) context.displays = normalizeDisplays(displays.content, displays.path);
 
   return context;
 }
@@ -126,5 +131,5 @@ function normalizeTables(raw: any, sourcePath: string): { [name: string]: TableD
 
 // Contexte vide par défaut
 export function emptyContext(): ExecutionContext {
-  return { tables: {}, programs: {} };
+  return { tables: {}, programs: {}, displays: {} };
 }
