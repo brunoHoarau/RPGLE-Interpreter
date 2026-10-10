@@ -1,11 +1,14 @@
-import { TokenType, ExpressionNode } from '../../types';
+import { TokenType, ExpressionNode, Token } from '../../types';
 import { isSupportedBuiltin } from '../../builtins';
 import { parseIso, unitFromName } from '../../datetime';
+import { EDIT_CODE } from '../../editc';
 import { ParserState } from '../state';
 import { DATETIME_LITERALS, FILE_BUILTINS, INDICATOR, SUPPORTED_SPECIAL_VALUES, NO_ARGUMENT_BUILTINS, FORMAT_BUILTINS, UNIT_ARGUMENT, BUILTIN_ARITY, unsupported } from '../constants';
 import { requireFile } from '../files';
 import { parseCallArguments } from '../statements/assignment';
 import { parseExpression } from './operators';
+import { parseLookup } from './array-operand';
+import { parseElement, elementExpression, refuseUnindexed } from './element';
 
 // Unité de %DIFF / %SUBDT : *YEARS, *Y, *MONTHS, *M... ; inconnue : erreur, comme à la compilation
 export function isUnitToken(p: ParserState): boolean {
@@ -88,6 +91,17 @@ export function parsePrimary(p: ParserState): ExpressionNode {
       }
       return { type: 'Expression', value: { name, args }, valueType: 'builtin' };
     }
+    if (name.toLowerCase() === '%lookup') return parseLookup(p, name, token.line);
+    // %ELEM(tableau) : l'argument est un nom de tableau, non évalué
+    if (name.toLowerCase() === '%elem') {
+      p.expect(TokenType.LPAREN);
+      const arrayToken = p.expectName();
+      if (!p.arrayNames.has(arrayToken.value.toLowerCase())) {
+        throw new Error(`%ELEM attend le nom d'un tableau : ${arrayToken.value.toUpperCase()} n'en est pas un (ligne ${arrayToken.line})`);
+      }
+      p.expect(TokenType.RPAREN);
+      return { type: 'Expression', value: { name, args: [{ type: 'Expression', value: arrayToken.value, valueType: 'array' }] }, valueType: 'builtin' };
+    }
     // %DATE, %TIME et %TIMESTAMP sont valides sans parenthèses
     if (NO_ARGUMENT_BUILTINS.has(name.toLowerCase()) && !p.check(TokenType.LPAREN)) {
       return { type: 'Expression', value: { name, args: [] }, valueType: 'builtin' };
@@ -99,6 +113,9 @@ export function parsePrimary(p: ParserState): ExpressionNode {
     while (!p.check(TokenType.RPAREN)) {
       if (args.length === 2 && lower === '%char') {
         throw new Error(`%CHAR accepte au plus 2 arguments (ligne ${token.line})`);
+      }
+      if (args.length === 2 && lower === '%editc') {
+        throw unsupported('%EDITC avec un 3e argument (*ASTFILL, *CURSYM ou monnaie)', p.peek());
       }
       if (args.length === 2 && lower === '%subdt') {
         throw unsupported('%SUBDT avec plus de 2 arguments', p.peek());
@@ -116,6 +133,7 @@ export function parsePrimary(p: ParserState): ExpressionNode {
     }
 
     p.expect(TokenType.RPAREN);
+    if (lower === '%editc' && args.length === 2) checkEditCode(args[1], token);
     const arity = BUILTIN_ARITY[lower];
     if (arity !== undefined && args.length !== arity) {
       throw new Error(`${name.toUpperCase()} attend ${arity} argument${arity > 1 ? 's' : ''} (ligne ${token.line})`);
@@ -125,7 +143,12 @@ export function parsePrimary(p: ParserState): ExpressionNode {
 
   if (p.isName()) {
       // 🔥 CORRECTION : Gérer la notation pointée dans les expressions
-      let name = p.advance().value;
+      const nameToken = p.advance();
+      let name = nameToken.value;
+      if (p.arrayNames.has(name.toLowerCase())) {
+        if (!p.check(TokenType.LPAREN)) throw refuseUnindexed(p, name, nameToken);
+        return elementExpression(parseElement(p, nameToken, false));
+      }
 
       // Si on a un '.', on continue à lire les parties suivantes
       while (p.check(TokenType.DOT)) {
@@ -150,4 +173,11 @@ export function parsePrimary(p: ParserState): ExpressionNode {
   }
 
   throw new Error(`Expression inattendue à la ligne ${p.peek().line}`);
+}
+
+// Le code d'édition de %EDITC est un littéral d'un caractère valide : le compilateur refuse le reste
+function checkEditCode(arg: ExpressionNode, token: Token): void {
+  if (arg.valueType !== 'string' || !EDIT_CODE.test(String(arg.value))) {
+    throw new Error(`%EDITC : code d'édition invalide, un littéral parmi 1-4, A-D, J-Q, X, Y, Z est attendu (ligne ${token.line})`);
+  }
 }

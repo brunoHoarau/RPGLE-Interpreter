@@ -86,6 +86,9 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
 
 export function declaredType(s: InterpreterState, expr: ExpressionNode | undefined): DataTypeNode | undefined {
   if (expr?.valueType === 'identifier') return s.runtime.getType(expr.value);
+  if (expr?.valueType === 'element') {
+    return s.runtime.getType(expr.value.field ? `${expr.value.name}.${expr.value.field}` : expr.value.name);
+  }
   if (expr?.valueType === 'call') {
     const name = expr.value.name.toLowerCase();
     return (s.procedures.get(name) ?? s.prototypes.get(name))?.returnType;
@@ -100,6 +103,9 @@ export function checkReferenceArguments(s: InterpreterState, params: ParameterNo
     const param = params[i];
     if (!param || param.isConst || param.byValue) return;
     const what = `passée à un paramètre modifiable ${param.name}`;
+    if (arg.valueType === 'element') {
+      throw new NotSupportedError(`Élément de tableau ${arg.value.name.toUpperCase()}(…) ${what} : passage par référence d'un élément non simulé`);
+    }
     if (arg.valueType !== 'identifier') {
       // Un indicateur *INxx est une variable : l'évaluation le traite comme avant
       if (arg.valueType === 'special' && /^\*in(lr|\d\d)$/.test(arg.value)) return;

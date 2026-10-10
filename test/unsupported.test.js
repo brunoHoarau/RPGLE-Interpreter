@@ -98,7 +98,7 @@ test('un appel récursif de sous-routine est refusé, direct ou indirect', () =>
 });
 
 test('les autres codes opération non supportés sont refusés', () => {
-  for (const op of ['clear ds;', 'reset ds;', 'sorta tab;', 'exfmt ecran;', 'eval-corr a = b;']) {
+  for (const op of ['clear ds;', 'reset ds;', 'exfmt ecran;', 'eval-corr a = b;']) {
     assert.throws(() => parse(op), NOT_SUPPORTED, op);
   }
 });
@@ -128,18 +128,17 @@ test('un indice de tableau est refusé', () => {
 // --- Fonctions intégrées ---
 
 test('une fonction intégrée inconnue est refusée à l\'analyse', () => {
-  assert.throws(() => parse(`dcl-s x char(10); if 1 = 2; x = %editc(1: 'X'); endif;`),
-    err => NOT_SUPPORTED.test(err.message) && /%EDITC/i.test(err.message));
+  assert.throws(() => parse(`dcl-s x char(10); if 1 = 2; x = %editw(1: '0  '); endif;`),
+    err => NOT_SUPPORTED.test(err.message) && /%EDITW/i.test(err.message));
 });
 
 // --- Déclarations ---
 
-test('DIM est refusé sur dcl-s et dcl-ds', () => {
-  assert.throws(() => parse(`dcl-s t char(10) dim(5);`), /DIM/);
-  assert.throws(() => parse(`dcl-ds d qualified dim(3); a int(5); end-ds;`), /DIM/);
+test('DIM est refusé sur une sous-zone de dcl-ds', () => {
+  assert.throws(() => parse(`dcl-ds d qualified; a int(5) dim(3); end-ds;`), /DIM/);
 });
 
-test('DCL-DS : EXT, *NULL, PREFIX, TEMPLATE, DIM et sous-zones d\'une DS EXTNAME sont refusés', () => {
+test('DCL-DS : EXT, *NULL, PREFIX, TEMPLATE, LIKEDS d un tableau et sous-zones d\'une DS EXTNAME sont refusés', () => {
   for (const src of [
     'dcl-ds d ext end-ds;',
     "dcl-ds d extname(*null) end-ds;",
@@ -148,7 +147,7 @@ test('DCL-DS : EXT, *NULL, PREFIX, TEMPLATE, DIM et sous-zones d\'une DS EXTNAME
     'dcl-ds d template; a char(5); end-ds;',
     'dcl-ds m; a char(5); end-ds; dcl-ds d likeds(m) template;',
     'dcl-ds m; a char(5); end-ds; dcl-ds d likeds(m) prefix(c_);',
-    'dcl-ds m; a char(5); end-ds; dcl-ds d likeds(m) dim(3);',
+    'dcl-ds m qualified dim(3); a char(5); end-ds; dcl-ds d likeds(m);',
   ]) {
     assert.throws(() => parse(src), NOT_SUPPORTED, src);
   }
@@ -424,4 +423,9 @@ test('exécution : paramètre DS de programme externe refusé tant que non exéc
   ]) {
     assert.throws(() => run(src, context), NOT_SUPPORTED, src);
   }
+});
+
+test('%EDITC : 3e argument refusé', () => {
+  assert.throws(() => parse(`dcl-s n zoned(5:0); dsply %editc(n : 'J' : *astfill);`), NOT_SUPPORTED);
+  assert.throws(() => parse(`dcl-s n zoned(5:0); dsply %editc(n : 'J' : *cursym);`), NOT_SUPPORTED);
 });

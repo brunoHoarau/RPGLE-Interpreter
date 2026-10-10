@@ -5,6 +5,7 @@ import { isZeroOrBlank } from '../declarations';
 import { involvesDateTime, dateTimeOperation } from './datetime';
 import { evaluate, zeroOrBlankLike } from './evaluate';
 import { InterpreterState } from '../state';
+import { compareEbcdic } from '../../ebcdic';
 
 // Deux chaînes de longueurs différentes se comparent comme si la plus courte
 // était complétée par des blancs : 'Dupont    ' = 'Dupont'
@@ -16,6 +17,12 @@ export function compare(left: any, right: any): number {
     const length = Math.max(left.length, right.length);
     left = left.padEnd(length, ' ');
     right = right.padEnd(length, ' ');
+    // Ordre IBM i : codes EBCDIC CCSID 297, pas l'ordre Unicode
+    const order = compareEbcdic(left, right);
+    if (typeof order !== 'number') {
+      throw new NotSupportedError(`Comparaison de chaînes contenant '${order.missing}', absent du CCSID 297`);
+    }
+    return order;
   }
   if (left === right) return 0;
   return left < right ? -1 : left > right ? 1 : NaN;
@@ -29,7 +36,14 @@ export function executeOperator(s: InterpreterState, expr: ExpressionNode): any 
   const op = expr.operator!;
   let left: any;
   let right: any;
-  if (COMPARISONS[op] && isZeroOrBlank(expr.left) !== isZeroOrBlank(expr.right)) {
+  if ((op === 'and' || op === 'or') && expr.left && expr.right) {
+    // Court-circuit : l'opérande droit n'est évalué que si nécessaire
+    const first = evaluate(s, expr.left);
+    if (first === false && op === 'and') return false;
+    if (first === true && op === 'or') return true;
+    left = first;
+    right = evaluate(s, expr.right);
+  } else if (COMPARISONS[op] && isZeroOrBlank(expr.left) !== isZeroOrBlank(expr.right)) {
     if (isZeroOrBlank(expr.left)) {
       right = evaluate(s, expr.right!);
       left = zeroOrBlankLike(s, expr.left!.value, right);

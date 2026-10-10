@@ -248,7 +248,7 @@ export class Lexer {
 
   private static readonly HYPHENATED_KEYWORDS = new Set([
     'ctl-opt', 'dcl-s', 'dcl-c', 'dcl-ds', 'dcl-f', 'dcl-proc', 'dcl-pi', 'dcl-pr',
-    'dcl-subf', 'dcl-parm', 'end-ds', 'end-pi', 'end-pr', 'end-proc', 'on-error', 'on-exit',
+    'dcl-subf', 'dcl-parm', 'end-ds', 'end-pi', 'end-pr', 'end-proc', 'for-each', 'on-error', 'on-exit',
     // Codes opération composés (non supportés, mais reconnus comme un seul mot)
     'eval-corr', 'xml-into', 'xml-sax', 'data-into', 'data-gen', 'snd-msg', 'on-excp',
   ]);
@@ -281,6 +281,7 @@ export class Lexer {
       'dow': TokenType.DOW,
       'dou': TokenType.DOU,
       'for': TokenType.FOR,
+      'for-each': TokenType.FOR_EACH,
       'to': TokenType.TO,
       'downto': TokenType.DOWNTO,
       'by': TokenType.BY,

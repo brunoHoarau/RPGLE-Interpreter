@@ -1,4 +1,4 @@
-import { TokenType, ASTNode, ExpressionNode, DataTypeNode } from '../../types';
+import { TokenType, ASTNode, ExpressionNode, DataTypeNode, DimNode } from '../../types';
 import { isDateTimeType } from '../../datetime';
 import { ParserState } from '../state';
 import { unsupported } from '../constants';
@@ -28,9 +28,11 @@ export function parseVariableDeclaration(p: ParserState): ASTNode {
   const name = p.expectName().value;
   const dataType = parseDataType(p);
   rememberDateTime(p, name, dataType);
-  const initialValue = parseDeclarationKeywords(p, 'DCL-S', dataType);
+  const dimOut: { dim?: DimNode } = {};
+  const initialValue = parseDeclarationKeywords(p, 'DCL-S', dataType, undefined, '', dimOut);
   p.expect(TokenType.SEMICOLON);
-  return { type: 'VariableDeclaration', name, dataType, initialValue };
+  if (dimOut.dim) p.arrayNames.set(name.toLowerCase(), { auto: dimOut.dim.auto });
+  return { type: 'VariableDeclaration', name, dataType, initialValue, dim: dimOut.dim };
 }
 
 export function parseConstantDeclaration(p: ParserState): ASTNode {
@@ -46,6 +48,7 @@ export function parseConstantDeclaration(p: ParserState): ASTNode {
 // Une déclaration d'un autre type masque un nom date homonyme (variable locale)
 export function rememberDateTime(p: ParserState, name: string, dataType: DataTypeNode): void {
   p.readOnlyNames.delete(name.toLowerCase()); // Une déclaration locale masque la constante
+  p.arrayNames.delete(name.toLowerCase()); // ... et le tableau global homonyme
   if (isDateTimeType(dataType.typeName)) {
     p.dateTimeNames.add(name.toLowerCase());
   } else {

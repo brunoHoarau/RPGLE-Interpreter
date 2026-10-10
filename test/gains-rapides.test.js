@@ -294,3 +294,67 @@ test('variable hôte de type date refusée dans exec sql', () => {
     exec sql select name into :n from customers where id = :date;
   `), NOT_SUPPORTED);
 });
+
+// --- %EDITC ---
+
+function editc(decl, value, code) {
+  const out = run(`
+    dcl-s n ${decl};
+    n = ${value};
+    dsply ('[' + %editc(n : '${code}') + ']');
+  `);
+  return out[0];
+}
+
+test('%EDITC : codes J, A et N avec signe', () => {
+  assert.equal(editc('zoned(7:2)', '12345.67', 'J'), '[12,345.67 ]');
+  assert.equal(editc('zoned(7:2)', '-12345.67', 'J'), '[12,345.67-]');
+  assert.equal(editc('zoned(7:2)', '-12345.67', 'A'), '[12,345.67CR]');
+  assert.equal(editc('zoned(7:2)', '12345.67', 'A'), '[12,345.67  ]');
+  assert.equal(editc('packed(5:2)', '-5', 'N'), '[  -5.00]');
+});
+
+test('%EDITC : zéro avec les codes 1 et 2', () => {
+  assert.equal(editc('packed(5:2)', '0', '1'), '[   .00]');
+  assert.equal(editc('packed(5:2)', '0', '2'), '[      ]');
+  assert.equal(editc('packed(5:0)', '0', '1'), '[     0]');
+  assert.equal(editc('packed(5:0)', '0', 'K'), '[       ]');
+  assert.equal(editc('packed(5:2)', '0', 'K'), '[       ]');
+});
+
+test('%EDITC : séparateurs de milliers blanchis dans la zone supprimée', () => {
+  assert.equal(editc('zoned(9:2)', '12.5', '1'), '[       12.50]');
+  assert.equal(editc('zoned(9:2)', '1234567.89', '1'), '[1,234,567.89]');
+  assert.equal(editc('zoned(9:2)', '1234567.89', '3'), '[1234567.89]');
+  assert.equal(editc('zoned(9:2)', '0.5', '1'), '[         .50]');
+});
+
+test('%EDITC : codes X, Y et Z', () => {
+  assert.equal(editc('zoned(10:0)', '94558100', 'X'), '[0094558100]');
+  assert.equal(editc('int(10)', '42', 'X'), '[0000000042]');
+  assert.equal(editc('zoned(10:0)', '0', 'X'), '[0000000000]');
+  assert.equal(editc('zoned(5:0)', '-123', 'Z'), '[  123]');
+  assert.equal(editc('zoned(5:2)', '1.5', 'Z'), '[  150]');
+  assert.equal(editc('zoned(5:0)', '0', 'Z'), '[     ]');
+  assert.equal(editc('zoned(6:0)', '31587', 'Y'), '[ 3/15/87]');
+  assert.equal(editc('zoned(6:0)', '121587', 'Y'), '[12/15/87]');
+  assert.equal(editc('zoned(8:0)', '1012024', 'Y'), '[ 1/01/2024]');
+});
+
+test('%EDITC : int et code en minuscule', () => {
+  assert.equal(editc('int(5)', '-7', 'j'), '[     7-]');
+  assert.equal(editc('int(5)', '1234', 'J'), '[ 1,234 ]');
+});
+
+test('%EDITC : refus', () => {
+  const prog = body => `dcl-s n zoned(5:0); dcl-s c char(5); n = 1; c = 'a'; ${body}`;
+  assert.throws(() => run(prog(`dsply %editc(n : 'E');`)), /code/i);
+  assert.throws(() => run(prog(`dsply %editc(n : 'ab');`)), /code/i);
+  assert.throws(() => run(prog(`dsply %editc(5 : 'J');`)), NOT_SUPPORTED);
+  assert.throws(() => run(prog(`dsply %editc(n + 1 : 'J');`)), NOT_SUPPORTED);
+  assert.throws(() => run(prog(`dsply %editc(c : 'J');`)), INCOMPATIBLE);
+  assert.throws(() => run(prog(`n = -1; dsply %editc(n : 'X');`)), NOT_SUPPORTED);
+  assert.throws(() => run(prog(`dsply %editc(n : 'Y');`)), NOT_SUPPORTED);
+  assert.throws(() => run(`dcl-s m zoned(6:0); m = 0; dsply %editc(m : 'Y');`), NOT_SUPPORTED);
+  assert.throws(() => run(`dcl-s m zoned(6:2); m = 1; dsply %editc(m : 'Y');`), NOT_SUPPORTED);
+});

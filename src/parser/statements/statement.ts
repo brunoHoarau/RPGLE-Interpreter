@@ -6,6 +6,7 @@ import { parseIfStatement, parseSelectStatement, parseLoop, parseMonitor, parseR
 import { checkCompound, advanceCompound, compoundValue, parseAssignmentOrCall } from './assignment';
 import { parseDsply, parseSQL } from './io';
 import { isOpcode, parseExsr, parseLeavesr } from '../subroutines';
+import { isSorta, parseSorta, parseForEach } from './array-ops';
 import { parseExpression } from '../expressions/operators';
 
 export function parseStatement(p: ParserState): ASTNode {
@@ -13,6 +14,7 @@ export function parseStatement(p: ParserState): ASTNode {
   if (p.check(TokenType.IF)) return parseIfStatement(p);
   if (p.check(TokenType.SELECT)) return parseSelectStatement(p);
   if (p.check(TokenType.DOW) || p.check(TokenType.DOU) || p.check(TokenType.FOR)) return parseLoop(p);
+  if (p.check(TokenType.FOR_EACH)) return parseForEach(p);
   if (p.check(TokenType.MONITOR)) return parseMonitor(p);
   if (p.check(TokenType.RETURN)) return parseReturn(p);
   if (p.check(TokenType.EXEC_SQL)) return parseSQL(p);
@@ -26,6 +28,7 @@ export function parseStatement(p: ParserState): ASTNode {
     p.expect(TokenType.SEMICOLON);
     return { type: 'Iter' } as any;
   }
+  if (isSorta(p)) return parseSorta(p);
   if (isOpcode(p, 'exsr')) return parseExsr(p);
   if (isOpcode(p, 'leavesr')) return parseLeavesr(p);
   if (isOpcode(p, 'endsr')) throw new Error(`ENDSR sans BEGSR à la ligne ${p.peek().line}`);
@@ -63,5 +66,8 @@ export function parseStatement(p: ParserState): ASTNode {
     return { type: 'Assignment', variable, value };
   }
 
+  if (token.type === TokenType.BUILTIN && token.value.toLowerCase() === '%elem') {
+    throw unsupported("L'affectation de %ELEM", token);
+  }
   throw new Error(`Instruction inattendue '${token.value.toUpperCase()}' à la ligne ${token.line}`);
 }

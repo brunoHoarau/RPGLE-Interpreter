@@ -1,15 +1,25 @@
-import { Token, TokenType, ASTNode, DataTypeNode, DsLike } from '../../types';
+import { Token, TokenType, ASTNode, DataTypeNode, DsLike, DimNode } from '../../types';
 import { byteLength } from '../../datatypes';
 import { ParserState } from '../state';
 import { unsupported } from '../constants';
 import { rememberDateTime } from './variables';
 import { parseDeclarationKeywords, parseDataType } from './keywords';
+import { parseDim } from './dim';
 import { parseLikeDs, parseLikeRec, parseExtname, rememberDsLike } from './ds-like';
 
 export function parseDataStructure(p: ParserState): ASTNode {
   p.expect(TokenType.DCL_DS);
-  const name = p.expectName().value;
+  const nameToken = p.expectName();
+  const name = nameToken.value;
   p.readOnlyNames.delete(name.toLowerCase());
+  p.arrayNames.delete(name.toLowerCase()); // une DS locale masque le tableau global homonyme
+  const dimOut: { dim?: DimNode } = {};
+  const node = parseDsBody(p, name, dimOut);
+  if (dimOut.dim) p.arrayNames.set(name.toLowerCase(), { auto: dimOut.dim.auto, ds: true });
+  return dimOut.dim ? { ...node, dim: dimOut.dim } as ASTNode : node;
+}
+
+function parseDsBody(p: ParserState, name: string, dimOut: { dim?: DimNode }): ASTNode {
   let isQualified = false;
   let like: DsLike | undefined;
   let inlineEnd = false;
@@ -25,6 +35,10 @@ export function parseDataStructure(p: ParserState): ASTNode {
     if (word === 'qualified') {
       p.advance();
       isQualified = true;
+    } else if (word === 'dim' && next?.type === TokenType.LPAREN) {
+      p.advance();
+      if (dimOut.dim) throw new Error(`DIM indiqué deux fois sur la DS ${name.toUpperCase()} (ligne ${token.line})`);
+      dimOut.dim = parseDim(p);
     } else if (word === 'inz' && next?.type !== TokenType.LPAREN) {
       p.advance(); // INZ seul : valeurs par défaut, déjà le comportement
     } else if (word === 'inz' && next?.type === TokenType.LPAREN && p.tokens[p.pos + 2]?.value.toLowerCase() === '*likeds'
@@ -44,6 +58,9 @@ export function parseDataStructure(p: ParserState): ASTNode {
     }
   }
   p.expect(TokenType.SEMICOLON);
+  if (dimOut.dim && !isQualified && (!like || like.kind === 'extname')) {
+    throw new Error(`La DS ${name.toUpperCase()} déclarée avec DIM doit porter le mot-clé QUALIFIED (ligne ${p.tokens[p.pos - 1].line})`);
+  }
   if (inzLike && like?.kind !== 'likeds') {
     throw new Error(`INZ(*LIKEDS) sans le mot-clé LIKEDS sur la DS ${name.toUpperCase()} (ligne ${inzLike.line})`);
   }

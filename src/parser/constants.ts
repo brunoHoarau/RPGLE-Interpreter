@@ -31,7 +31,7 @@ export const UNSUPPORTED_OPCODES = new Set([
   'acq', 'clear', 'commit', 'data-gen', 'data-into', 'dealloc', 'dump',
   'eval-corr', 'evalr', 'except', 'exfmt', 'feod', 'force', 'in', 'next',
   'on-excp', 'on-exit', 'out', 'post', 'readc', 'rel', 'reset',
-  'rolbk', 'snd-msg', 'sorta', 'test', 'xml-into', 'xml-sax',
+  'rolbk', 'snd-msg', 'test', 'xml-into', 'xml-sax',
 ]);
 
 export const INDICATOR = /^\*in(lr|\d\d)$/;
@@ -47,7 +47,7 @@ export const UNIT_ARGUMENT = new Map([['%diff', 2], ['%subdt', 1]]);
 // Nombre exact d'arguments des fonctions de dates
 export const BUILTIN_ARITY: { [name: string]: number } = {
   '%diff': 3, '%subdt': 2, '%years': 1, '%months': 1, '%days': 1,
-  '%hours': 1, '%minutes': 1, '%seconds': 1, '%mseconds': 1,
+  '%editc': 2, '%hours': 1, '%minutes': 1, '%seconds': 1, '%mseconds': 1,
 };
 
 export function unsupported(what: string, token: Token): Error {

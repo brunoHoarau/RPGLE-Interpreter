@@ -20,6 +20,8 @@ export class ParserState {
   // Noms déclarés DATE / TIME / TIMESTAMP ('var', 'ds.champ', champ de DS non qualifiée) :
   // *LOVAL et *HIVAL ne sont acceptés que pour eux
   dateTimeNames = new Set<string>();
+  // Tableaux DIM visibles (nom en minuscules -> true si DIM(*AUTO)) : arr(i) est un élément, pas un appel
+  arrayNames = new Map<string, { auto: boolean; ds?: boolean }>();
   // Constantes DCL-C et paramètres CONST visibles (nom en minuscules -> genre) : toute affectation est refusée
   readOnlyNames = new Map<string, string>();
   // Constantes DCL-C visibles (nom en minuscules -> valeur), pour EXTNAME(constante) et %KDS(ds : constante)

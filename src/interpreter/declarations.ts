@@ -1,4 +1,4 @@
-import { ExpressionNode, DataTypeNode, DsLike } from '../types';
+import { ExpressionNode, DataTypeNode, DsLike, DimNode } from '../types';
 import { checkAssignable, defaultValue, describeType } from '../datatypes';
 import { fromClock, isDateTime, isDateTimeType, parseIso } from '../datetime';
 import { NotSupportedError, incompatibleTypes } from '../errors';
@@ -24,7 +24,12 @@ export function fromMock(value: any, type: DataTypeNode | undefined, what: strin
 
 export function executeVariableDeclaration(s: InterpreterState, node: any): void {
   refuseFileFieldName(s, node.name, node.dataType);
-  s.runtime.declareVariable(node.name, initialValue(s, node.initialValue, node.dataType, node.name), node.dataType);
+  const initial = initialValue(s, node.initialValue, node.dataType, node.name);
+  if (node.dim) {
+    s.runtime.declareArray(node.name, node.dataType, node.dim.max, node.dim.auto, () => initial);
+  } else {
+    s.runtime.declareVariable(node.name, initial, node.dataType);
+  }
 }
 
 // Valeur de INZ ; INZ(*SYS) et INZ(*JOB) lisent l'horloge (*JOB : date du jour, faute de travail IBM i)
@@ -68,17 +73,17 @@ export function executeConstantDeclaration(s: InterpreterState, node: any): void
 
 export function executeDataStructure(s: InterpreterState, node: any): void {
   refuseFileFieldName(s, node.name);
-  if (node.like) return declareLikeDataStructure(s, node.name, node.isQualified, node.like);
+  if (node.like) return declareLikeDataStructure(s, node.name, node.isQualified, node.like, node.dim);
   if (!node.isQualified) for (const field of node.fields) refuseFileFieldName(s, field.name, field.dataType);
   s.runtime.declareDataStructure(node.name, node.fields.map((field: any) => ({
     name: field.name,
     type: field.dataType,
     value: initialValue(s, field.initialValue, field.dataType, `${node.name}.${field.name}`),
-  })), node.isQualified);
+  })), node.isQualified, {}, node.dim);
 }
 
 // DS LIKEDS (sous-zones d'une DS visible), LIKEREC (format d'un DCL-F) ou EXTNAME (table de tables.json)
-function declareLikeDataStructure(s: InterpreterState, name: string, qualified: boolean, like: DsLike): void {
+function declareLikeDataStructure(s: InterpreterState, name: string, qualified: boolean, like: DsLike, dim?: DimNode): void {
   let fields: { name: string; type: DataTypeNode; value: any }[];
   let link: { origin?: DsOrigin; root?: number };
   if (like.kind === 'likeds') {
@@ -93,5 +98,5 @@ function declareLikeDataStructure(s: InterpreterState, name: string, qualified: 
     link = { origin: layout.origin };
   }
   if (!qualified) for (const field of fields) refuseFileFieldName(s, field.name, field.type, 'Sous-zone');
-  s.runtime.declareDataStructure(name, fields, qualified, link);
+  s.runtime.declareDataStructure(name, fields, qualified, link, dim);
 }

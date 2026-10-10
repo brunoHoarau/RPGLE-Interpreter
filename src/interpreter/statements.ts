@@ -1,14 +1,29 @@
-import { describeType, describeValue, isDataStructure, sameDeclaredType } from '../datatypes';
+import { describeType, describeValue, isDataStructure } from '../datatypes';
+import { assignDataStructure } from './ds-assign';
 import { isDateTimeType, isDuration } from '../datetime';
 import { NotSupportedError, incompatibleTypes } from '../errors';
 import { valueFor } from './declarations';
 import { evaluate } from './evaluate/evaluate';
+import { elementTarget } from './evaluate/element';
 import { InterpreterState } from './state';
 
 export function executeAssignment(s: InterpreterState, node: any): void {
+  if (node.target) return assignElement(s, node);
+  if (s.runtime.isArray(node.variable)) throw s.runtime.wholeArray(node.variable);
   if (!node.variable.includes('.') && isDataStructure(s.runtime.lookup(node.variable))) return assignDataStructure(s, node);
   assignTo(s, node.variable, valueFor(s, node.value, s.runtime.getType(node.variable), node.variable));
 }
+
+// arr(i) = valeur : la valeur est calculée avant l'index, puis contrôlée et convertie au type de l'élément
+function assignElement(s: InterpreterState, node: any): void {
+  const { name, field } = node.target;
+  if (s.runtime.isDsArray(name) && !field) return assignDataStructure(s, node);
+  const value = valueFor(s, node.value, s.runtime.getType(field ? `${name}.${field}` : name), `${name}(…)${field ? `.${field}` : ''}`);
+  const at = elementTarget(s, node.target);
+  if (field) s.runtime.setElementFields(name, at, [[field, value]]);
+  else s.runtime.setElement(name, at, value);
+}
+
 
 export function assignTo(s: InterpreterState, variable: string, value: any): void {
   if (!variable.includes('.') && isDataStructure(s.runtime.lookup(variable))) throw dataStructureAsValue(s, variable);
@@ -22,25 +37,6 @@ export function assignTo(s: InterpreterState, variable: string, value: any): voi
   } else {
       s.runtime.setVariable(variable, value);
   }
-}
-
-// a = b entre deux DS de même disposition (mêmes types dans le même ordre, noms indifférents) : copie champ par champ.
-// IBM i copie des octets : toute autre combinaison n'est pas simulée.
-function assignDataStructure(s: InterpreterState, node: any): void {
-  const target: string = node.variable;
-  const source = node.value.valueType === 'identifier' ? String(node.value.value) : undefined;
-  const refuse = (reason: string) => new NotSupportedError(`Affectation à la structure de données ${target.toUpperCase()} : ${reason} (copie d'octets non simulée)`);
-  if (source === undefined || source.includes('.') || !isDataStructure(s.runtime.lookup(source))) {
-    throw refuse("la valeur n'est pas une structure de données");
-  }
-  const to = s.runtime.getShape(target);
-  const from = s.runtime.getShape(source);
-  if (!to || !from) throw refuse(`disposition de ${(to ? source : target).toUpperCase()} inconnue`);
-  const same = to.fields.length === from.fields.length && to.fields.every((f, i) => sameDeclaredType(f.type, from.fields[i].type));
-  if (!same) throw refuse(`${source.toUpperCase()} n'a pas la même disposition (types des sous-zones)`);
-  // Valeurs lues avant toute écriture, puis passage par la coercition normale de chaque sous-zone
-  const values = from.fields.map(f => s.runtime.getField(source, f.name));
-  to.fields.forEach((f, i) => s.runtime.setField(target, f.name, values[i]));
 }
 
 export function dataStructureAsValue(s: InterpreterState, name: string): Error {
@@ -85,6 +81,7 @@ export function executeDsply(s: InterpreterState, node: any): void {
 export function executeSQL(s: InterpreterState, node: any): void {
   // Variables hôtes date/heure : les dates en SQL font l'objet d'un incrément à venir
   for (const [, name] of node.sql.matchAll(/:([A-Za-z_$#@][\w$#@]*(?:\.[\w$#@]+)?)/g)) {
+    if (s.runtime.isArray(name.split('.')[0])) throw s.runtime.wholeArray(name);
     const type = s.runtime.getType(name);
     if (type && isDateTimeType(type.typeName)) {
       throw new Error(`Variable hôte :${name} de type ${type.typeName.toUpperCase()} dans EXEC SQL : pas encore supporté par l'interpréteur`);

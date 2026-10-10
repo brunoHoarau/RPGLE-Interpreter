@@ -7,6 +7,9 @@ import { FILE_BUILTINS, fileBuiltin } from '../files/builtins';
 import { callProcedure, declaredType } from '../calls';
 import { dataStructureAsValue } from '../statements';
 import { executeOperator } from './operators';
+import { elementIndex } from './element';
+import { lookup } from '../array-ops';
+import { editc } from '../../editc';
 import { InterpreterState } from '../state';
 
 export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
@@ -45,6 +48,7 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
         return s.runtime.getField(dsName, fieldName);
     }
 
+    if (s.runtime.isArray(expr.value)) throw s.runtime.wholeArray(expr.value);
     if (s.runtime.hasVariable(expr.value)) {
         const value = s.runtime.getVariable(expr.value);
         if (isDataStructure(value)) throw dataStructureAsValue(s, expr.value);
@@ -55,6 +59,13 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
     } catch {
         throw new Error(`Variable non déclarée: ${expr.value}`);
     }
+  }
+
+  if (expr.valueType === 'element') {
+    const ref = expr.value;
+    if (ref.field) return s.runtime.getElementField(ref.name, elementIndex(s, ref), ref.field);
+    if (s.runtime.isDsArray(ref.name)) throw dataStructureAsValue(s, `${ref.name}(…)`);
+    return s.runtime.getElement(ref.name, elementIndex(s, ref));
   }
 
   if (expr.valueType === 'call') {
@@ -69,6 +80,10 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
       if (expr.value.args.length > 0) throw new Error(`%ERROR n'accepte pas d'argument`);
       return s.lastError;
     }
+    // %ELEM : l'argument est un nom de tableau
+    if (builtin === '%elem') return s.runtime.executeBuiltin('%elem', [s.runtime.arrayCount(expr.value.args[0].value)]);
+    if (builtin === '%lookup') return s.runtime.executeBuiltin('%lookup', [lookup(s, expr.value.args)]);
+    if (builtin === '%editc') return editcBuiltin(s, expr.value.args);
     const isChar = builtin === '%char';
     // Le 2e argument (*ISO) est un format, inutile à évaluer
     const args = (isChar ? expr.value.args.slice(0, 1) : expr.value.args).map((arg: ExpressionNode) => evaluate(s, arg));
@@ -134,4 +149,19 @@ export function zeroOrBlankLike(s: InterpreterState, name: string, other: any): 
   }
   if (typeof other === 'boolean') throw new NotSupportedError(`Comparaison de ${name.toUpperCase()} avec un indicateur`);
   return zeros ? 0 : '';
+}
+
+// %EDITC : chiffres et décimales viennent du type déclaré de l'argument, connu seulement à l'évaluation
+function editcBuiltin(s: InterpreterState, argExprs: ExpressionNode[]): string {
+  const value = evaluate(s, argExprs[0]);
+  if (typeof value !== 'number') throw incompatibleTypes(`%EDITC(${describeValue(value)})`);
+  const type = declaredType(s, argExprs[0]);
+  const code = String(argExprs[1].value);
+  if (type?.typeName === 'packed' || type?.typeName === 'zoned') {
+    return editc(value, type.length ?? 0, type.decimals ?? 0, code);
+  }
+  if (type?.typeName === 'int' || type?.typeName === 'uns') {
+    return editc(value, type.length ?? 10, 0, code);
+  }
+  throw new NotSupportedError(`%EDITC d'une valeur sans type numérique déclaré (littéral, expression ou flottant)`);
 }

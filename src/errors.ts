@@ -14,6 +14,7 @@ export const STATUS_INVALID_NUMERIC = 105;  // RNX0105
 export const STATUS_CALL_FAILED = 202;      // Le programme ou la procédure appelé a échoué
 export const STATUS_CALL_NOT_FOUND = 211;   // Programme ou procédure appelé introuvable
 export const STATUS_INVALID_DATE = 112;     // RNX0112 : date, heure ou timestamp invalide
+export const STATUS_ARRAY_INDEX = 121;      // RNX0121 : index de tableau hors limites
 export const STATUS_DATE_OVERFLOW = 113;    // RNX0113 : date hors limites après calcul
 
 // Construction valide sur IBM i mais que l'interpréteur ne sait pas exécuter : le programme s'arrête

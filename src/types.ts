@@ -1,129 +1,5 @@
-// ==========================================
-// 1. TOKENS (Analyse Lexicale)
-// ==========================================
-
-export enum TokenType {
-  // Mots-clés de contrôle
-  CTL_OPT = 'CTL_OPT',
-
-  // Déclarations
-  DCL_S = 'DCL_S',
-  DCL_C = 'DCL_C',
-  DCL_DS = 'DCL_DS',
-  DCL_F = 'DCL_F',
-  DCL_PROC = 'DCL_PROC',
-  DCL_PI = 'DCL_PI',
-  DCL_PR = 'DCL_PR',
-
-  // Fin de blocs
-  END_DS = 'END_DS',
-  END_PI = 'END_PI',
-  END_PR = 'END_PR',
-  END_PROC = 'END_PROC',
-  ENDIF = 'ENDIF',
-  ENDSL = 'ENDSL',
-  ENDDO = 'ENDDO',
-  ENDFOR = 'ENDFOR',
-  ENDMON = 'ENDMON',
-
-  // Structures de contrôle
-  IF = 'IF',
-  ELSEIF = 'ELSEIF',
-  ELSE = 'ELSE',
-  SELECT = 'SELECT',
-  WHEN = 'WHEN',
-  OTHER = 'OTHER',
-  DOW = 'DOW',
-  DOU = 'DOU',
-  FOR = 'FOR',
-  TO = 'TO',
-  DOWNTO = 'DOWNTO',
-  BY = 'BY',
-  MONITOR = 'MONITOR',
-  ON_ERROR = 'ON_ERROR',
-
-  // Flux d'exécution
-  RETURN = 'RETURN',
-  LEAVE = 'LEAVE',
-  ITER = 'ITER',
-
-  // Types de données
-  CHAR = 'CHAR',
-  VARCHAR = 'VARCHAR',
-  PACKED = 'PACKED',
-  ZONED = 'ZONED',
-  INT = 'INT',
-  UNS = 'UNS',
-  DATE = 'DATE',
-  TIME = 'TIME',
-  TIMESTAMP = 'TIMESTAMP',
-  IND = 'IND',
-  POINTER = 'POINTER',
-
-  // Opérateurs
-  EQUALS = 'EQUALS',
-  NOT_EQUALS = 'NOT_EQUALS',
-  LESS = 'LESS',
-  LESS_EQ = 'LESS_EQ',
-  GREATER = 'GREATER',
-  GREATER_EQ = 'GREATER_EQ',
-  PLUS = 'PLUS',
-  MINUS = 'MINUS',
-  MULTIPLY = 'MULTIPLY',
-  DIVIDE = 'DIVIDE',
-  POWER = 'POWER',
-  PLUS_EQUALS = 'PLUS_EQUALS',
-  MINUS_EQUALS = 'MINUS_EQUALS',
-  MULTIPLY_EQUALS = 'MULTIPLY_EQUALS',
-  DIVIDE_EQUALS = 'DIVIDE_EQUALS',
-  POWER_EQUALS = 'POWER_EQUALS',
-  AND = 'AND',
-  OR = 'OR',
-  NOT = 'NOT',
-
-  // Symboles
-  LPAREN = 'LPAREN',
-  RPAREN = 'RPAREN',
-  COLON = 'COLON',
-  SEMICOLON = 'SEMICOLON',
-  COMMA = 'COMMA',
-  DOT = 'DOT',
-
-  // Littéraux et identifiants
-  STRING = 'STRING',
-  NUMBER = 'NUMBER',
-  DATE_LITERAL = 'DATE_LITERAL',           // D'2026-10-04'
-  TIME_LITERAL = 'TIME_LITERAL',           // T'13.45.00'
-  TIMESTAMP_LITERAL = 'TIMESTAMP_LITERAL', // Z'2026-10-04-13.45.00.000000'
-  IDENTIFIER = 'IDENTIFIER',
-  BUILTIN = 'BUILTIN', // ex: %len, %trim
-  SPECIAL_VALUE = 'SPECIAL_VALUE', // ex: *on, *off, *zero
-
-  // Opérations spécifiques
-  EXEC_SQL = 'EXEC_SQL',
-  SETLL = 'SETLL',
-  READ = 'READ',
-  READE = 'READE',
-  READP = 'READP',
-  READPE = 'READPE',
-  SETGT = 'SETGT',
-  OPEN = 'OPEN',
-  CLOSE = 'CLOSE',
-  CHAIN = 'CHAIN',
-  UPDATE = 'UPDATE',
-  DELETE = 'DELETE',
-  WRITE = 'WRITE',
-  DSPLY = 'DSPLY',
-
-  EOF = 'EOF'
-}
-
-export interface Token {
-  type: TokenType;
-  value: string;
-  line: number;
-  column: number;
-}
+export * from './token-types';
+import { TokenType } from './token-types';
 
 // ==========================================
 // 2. NŒUDS AST (Abstract Syntax Tree)
@@ -143,6 +19,7 @@ export type ASTNode =
   | IfStatementNode
   | SelectStatementNode
   | LoopStatementNode
+  | SortaNode
   | ProcedureCallNode
   | ReturnNode
   | MonitorNode
@@ -173,6 +50,20 @@ export interface VariableDeclarationNode {
   name: string;
   dataType: DataTypeNode;
   initialValue?: ExpressionNode;
+  dim?: DimNode;
+}
+
+// DIM(max) ou DIM(*AUTO : max)
+export interface DimNode {
+  max: number;
+  auto: boolean;
+}
+
+// Élément de tableau : arr(index) ; index = expression, '*' (tous les éléments, T5) ou '*next' (cible *AUTO)
+export interface ElementRef {
+  name: string;
+  index: ExpressionNode | '*' | '*next';
+  field?: string; // sous-zone d'un élément de DS tableau : d(i).champ
 }
 
 export interface ConstantDeclarationNode {
@@ -240,7 +131,8 @@ export interface DataTypeNode {
 
 export interface AssignmentNode {
   type: 'Assignment';
-  variable: string;
+  variable: string;      // pour un élément de tableau : le nom du tableau
+  target?: ElementRef;   // cible arr(index) = ... (sinon la cible est `variable`)
   value: ExpressionNode;
 }
 
@@ -258,10 +150,19 @@ export interface SelectStatementNode {
   otherBlock?: ASTNode[];
 }
 
+export interface SortaNode {
+  type: 'Sorta';
+  name: string;
+  field?: string;       // SORTA d(*).champ
+  descending: boolean;  // SORTA(D)
+}
+
 export interface LoopStatementNode {
   type: 'LoopStatement';
-  loopType: 'dow' | 'dou' | 'for';
+  loopType: 'dow' | 'dou' | 'for' | 'foreach';
   variable?: string;          // Pour for
+  item?: string;              // Pour foreach : variable (ou DS) qui reçoit chaque élément
+  source?: string;            // Pour foreach : tableau parcouru
   condition?: ExpressionNode; // Pour dow/dou
   init?: ExpressionNode;      // Pour for
   limit?: ExpressionNode;     // Pour for
@@ -363,7 +264,7 @@ export interface ExpressionNode {
   right?: ExpressionNode;
   value?: any;
   hasDecimalPoint?: boolean; // littéral numérique écrit avec un point décimal
-  valueType?: 'number' | 'string' | 'boolean' | 'identifier' | 'builtin' | 'special' | 'call' | 'datetime' | 'file';
+  valueType?: 'number' | 'string' | 'boolean' | 'identifier' | 'builtin' | 'special' | 'call' | 'datetime' | 'file' | 'element' | 'array' | 'arrayref';
 }
 
 
@@ -375,6 +276,7 @@ export interface DataStructureNode {
   type: 'DataStructure';
   name: string;
   isQualified: boolean;
+  dim?: DimNode;                 // DS tableau : DIM(n) ou DIM(*AUTO : n)
   like?: DsLike;                 // LIKEDS / LIKEREC / EXTNAME : fields est alors vide
   fields: {
     name: string;

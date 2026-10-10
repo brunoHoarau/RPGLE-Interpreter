@@ -1,7 +1,7 @@
 // Fonctions intégrées qui acceptent une date, une heure ou un timestamp
 export const DURATION_BUILTINS = new Set(['%years', '%months', '%days', '%hours', '%minutes', '%seconds', '%mseconds']);
 
-export const WHOLE_NUMBER_BUILTINS = new Set(['%int', '%diff', '%subdt', '%len', '%scan', '%check', '%rem', '%div']);
+export const WHOLE_NUMBER_BUILTINS = new Set(['%int', '%diff', '%subdt', '%len', '%elem', '%scan', '%check', '%rem', '%div']);
 
 export const DATE_AWARE_BUILTINS = new Set(['%date', '%time', '%timestamp', '%len', '%diff', '%subdt']);
 

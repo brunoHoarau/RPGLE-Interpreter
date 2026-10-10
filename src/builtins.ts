@@ -117,6 +117,8 @@ export const BUILTINS: { [name: string]: Builtin } = {
   '%diff': (_, a: any, b: any, unit: string) => diff(a, b, unit),
   '%subdt': (_, value: any, unit: string) => subdtBuiltin(value, unit),
   '%len': (_, str: any) => String(str).length,
+  '%elem': (_, count: number) => count, // le nombre d'éléments est lu sur le tableau par l'évaluation
+  '%lookup': (_, index: number) => index, // la recherche est faite par l'évaluation (src/interpreter/array-ops.ts)
   '%trim': (_, str: any) => String(str).trim(),
   '%trimr': (_, str: any) => String(str).trimEnd(),
   '%triml': (_, str: any) => String(str).trimStart(),
@@ -139,6 +141,8 @@ export const BUILTINS: { [name: string]: Builtin } = {
     return decimals !== undefined ? truncateDecimals(num, decimals) : num;
   },
   '%char': (_, value: any) => String(value),
+  // %EDITC a besoin du type déclaré : évalué dans interpreter/evaluate/evaluate.ts
+  '%editc': () => { throw new NotSupportedError('%EDITC hors évaluation'); },
   '%scan': (_, search: any, source: any) => {
     const pos = String(source).indexOf(String(search));
     return pos === -1 ? 0 : pos + 1;
