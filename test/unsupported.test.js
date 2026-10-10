@@ -51,6 +51,10 @@ test('DCL-F WORKSTN : mots-clés refusés sur un fichier écran', () => {
     assert.throws(() => parse(`dcl-f ecran workstn ${kw};`), /sur un fichier écran/, kw);
   }
   assert.throws(() => parse('dcl-f client indds(ind);'), /INDDS.*WORKSTN/);
+  assert.throws(() => parse('dcl-f e workstn workstn;'), /WORKSTN en double/);
+  assert.throws(() => parse('dcl-f e disk workstn;'), /DISK et WORKSTN incompatibles/);
+  assert.throws(() => parse('dcl-f e workstn disk;'), /DISK et WORKSTN incompatibles/);
+  assert.throws(() => parse('dcl-f e workstn indds(a) indds(b);'), /INDDS en double/);
 });
 
 test('opérations de fichier non supportées refusées', () => {

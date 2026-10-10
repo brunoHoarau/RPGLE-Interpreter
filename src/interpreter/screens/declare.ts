@@ -1,12 +1,9 @@
 // Déclaration des fichiers écran (DCL-F … WORKSTN) : variables des zones, routine SPECIAL, appels O et C
 import { FileDeclarationNode, ParameterNode } from '../../types';
-import { byteLength } from '../../datatypes';
 import { NotSupportedError } from '../../errors';
 import { SpecialCall } from '../../screens/protocol';
 import { declareFileField } from '../files/declare';
-import { InterpreterState } from '../state';
-
-const INDICATORS_BYTES = 99;
+import { DisplayState, InterpreterState } from '../state';
 
 function callSpecial(s: InterpreterState, file: string, option: 'O' | 'C'): void {
   const routine = s.displays.get(file)!.routine;
@@ -38,20 +35,30 @@ export function declareDisplayFile(s: InterpreterState, node: FileDeclarationNod
   const state = { file: name, definition, routine: s.options.screens(name, definition), indds: node.indds };
   s.displays.set(name, state);
   for (const format of formats) s.displays.set(format, state);
-  callSpecial(s, name, 'O');
 }
 
-// INDDS : structure de données du programme d'au moins 99 octets ; à contrôler une fois les déclarations exécutées
+// INDDS : structure de données du programme ; à contrôler une fois les déclarations exécutées.
+// Une DS de moins de 99 octets est acceptée (indicateurs nommés à POS clairsemés)
 export function checkDisplayIndds(s: InterpreterState): void {
   for (const state of new Set(s.displays.values())) {
-    if (!state.indds) continue;
-    const shape = s.runtime.getShape(state.indds);
-    if (!shape) throw new Error(`Fichier écran ${state.file} : INDDS(${state.indds}) : structure de données non déclarée`);
-    const size = shape.fields.reduce((sum, f) => sum + byteLength(f.type), 0);
-    if (size < INDICATORS_BYTES) {
-      throw new Error(`Fichier écran ${state.file} : INDDS(${state.indds}) fait ${size} octets : ${INDICATORS_BYTES} au moins sont requis`);
+    if (state.indds && !s.runtime.getShape(state.indds)) {
+      throw new Error(`Fichier écran ${state.file} : INDDS(${state.indds}) : structure de données non déclarée`);
     }
   }
+}
+
+// Indicateur nn (position nn de la DS INDDS) -> nom de la sous-zone ind placée à cette position
+export function inddsPositions(s: InterpreterState, state: DisplayState): Map<number, string> {
+  const positions = new Map<number, string>();
+  for (const field of s.runtime.getShape(state.indds ?? '')?.fields ?? []) {
+    if (field.type.typeName === 'ind' && field.start >= 1 && field.start <= 99) positions.set(field.start, field.name);
+  }
+  return positions;
+}
+
+// Appel O de chaque fichier écran, une fois toutes les déclarations contrôlées (sinon un fichier ouvert ne serait jamais fermé)
+export function openDisplayFiles(s: InterpreterState): void {
+  for (const state of new Set(s.displays.values())) callSpecial(s, state.file, 'O');
 }
 
 // Fin de programme : un appel C par fichier écran

@@ -79,6 +79,7 @@ export interface DataStructureNode {
     name: string;
     dataType: DataTypeNode;
     initialValue?: ExpressionNode;
+    start?: number;
   }[];
 }
 
@@ -284,5 +285,6 @@ export interface DataStructureNode {
     name: string;
     dataType: DataTypeNode;
     initialValue?: ExpressionNode;
+    start?: number;              // position de début (1-based) : POS explicite, sinon octet suivant
   }[];
 }

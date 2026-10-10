@@ -1,7 +1,7 @@
 import { ExecutionContext, emptyContext } from './context';
 import { SQLEngine, SQLResult, HostVariables } from './sql-engine';
 import { DataTypeNode } from './types';
-import { coerce } from './datatypes';
+import { coerce, byteLength } from './datatypes';
 import { BUILTINS } from './builtins';
 import { DsShape, DsOrigin } from './ds-shape';
 import { ArrayStore, elementCount, readElement, writeElement, nextIndex } from './arrays';
@@ -33,6 +33,7 @@ export interface FieldDeclaration {
   name: string;
   type: DataTypeNode;
   value: any;
+  start?: number; // position de début (1-based) ; absente : octet qui suit le champ précédent
 }
 
 export class Runtime {
@@ -106,15 +107,18 @@ export class Runtime {
   declareDataStructure(name: string, fields: FieldDeclaration[], qualified: boolean, link: { origin?: DsOrigin; root?: number } = {}, dim?: { max: number; auto: boolean }): void {
     const ds: any = {};
     const shape: DsShape = { fields: [], initial: {}, origin: link.origin, root: link.root ?? ++this.lastRoot };
+    let nextStart = 1;
     for (const field of fields) {
       const key = field.name.toLowerCase();
+      const start = field.start ?? nextStart;
+      nextStart = start + byteLength(field.type);
       if (!qualified) {
         this.assertUndeclared(field.name);
         this.currentScope.aliases.set(key, name.toLowerCase());
       }
       this.currentScope.types.set(`${name.toLowerCase()}.${key}`, field.type);
       ds[key] = coerce(field.value, field.type, `${name}.${field.name}`);
-      shape.fields.push({ name: field.name, type: field.type });
+      shape.fields.push({ name: field.name, type: field.type, start });
       shape.initial[key] = ds[key];
     }
     if (dim) {

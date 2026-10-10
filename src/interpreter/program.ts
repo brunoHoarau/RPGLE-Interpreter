@@ -5,7 +5,7 @@ import { NotSupportedError } from '../errors';
 import { isDateTimeType, kindOf } from '../datetime';
 import { executeVariableDeclaration, executeConstantDeclaration, executeDataStructure } from './declarations';
 import { declareFile, checkRenamedFormats } from './files/declare';
-import { checkDisplayIndds, closeDisplayFiles } from './screens/declare';
+import { checkDisplayIndds, closeDisplayFiles, openDisplayFiles } from './screens/declare';
 import { executeFileOperation } from './files/operations';
 import { checkFileChanges } from './files/changes';
 import { executeAssignment, executeDsply, executeSQL } from './statements';
@@ -76,6 +76,7 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
   }
 
   checkDisplayIndds(s);
+  openDisplayFiles(s);
 
   // Deuxième passe : exécuter le code (les verrous de ce programme sont libérés à sa fin)
   const { mainline, subs } = splitSubroutines(ast.body);

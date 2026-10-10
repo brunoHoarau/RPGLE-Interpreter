@@ -402,8 +402,9 @@ test('DCL-F WORKSTN : INDDS sans indara refusé ; avec indara, DS de 99 octets a
     /INDDS.*indara/);
   const avec = displaysFrom({ E: { indara: true, formats: {} } });
   assert.throws(() => runScreens('dcl-f e workstn indds(ind);', avec, []), /IND.*non déclarée/);
-  assert.throws(() => runScreens('dcl-ds ind qualified; f char(98); end-ds; dcl-f e workstn indds(ind);', avec, []),
-    /IND.*99/);
+  // DS de moins de 99 octets acceptée : indicateurs nommés à POS clairsemés
+  assert.deepEqual(runScreens(`dcl-ds ind qualified; exit ind pos(3); refresh ind pos(5); end-ds;
+    dcl-f e workstn indds(ind); dsply 'ok';`, avec, []).output, ['ok']);
   assert.deepEqual(runScreens('dcl-ds ind qualified; f char(99); end-ds; dcl-f e workstn indds(ind); dsply \'ok\';',
     avec, []).output, ['ok']);
 });
@@ -423,4 +424,40 @@ test('DCL-F WORKSTN : statut 2 à l\'appel O : erreur', () => {
   const screens = () => ({ call(p) { p.status = '2'; p.error = 1299; p.message = 'écran indisponible'; } });
   assert.throws(() => run('dcl-f ecran workstn;', { tables: {}, programs: {}, displays: ECRAN() }, { screens }),
     /fichier écran ECRAN : écran indisponible \(erreur 01299\)/);
+});
+
+test('DCL-F WORKSTN : positions des sous-zones ind de la DS INDDS', () => {
+  const path = require('path');
+  const out = path.join(__dirname, '..', 'out', 'interpreter');
+  const { InterpreterState } = require(path.join(out, 'state'));
+  const { runProgram } = require(path.join(out, 'program'));
+  const { inddsPositions } = require(path.join(out, 'screens', 'declare'));
+  const { ScreenSimulator } = require(path.join(__dirname, '..', 'out', 'screens', 'simulator'));
+  const { ScriptedTerminal } = require(path.join(__dirname, '..', 'out', 'screens', 'scripted-terminal'));
+  const ctx = { tables: {}, programs: {}, displays: displaysFrom({ E: { indara: true, formats: {} } }) };
+  const state = new InterpreterState(ctx, { screens: (f, d) => new ScreenSimulator(f, d, new ScriptedTerminal([])) });
+  runProgram(state, parse(`dcl-ds ind qualified;
+      exit ind pos(3);
+      refresh ind pos(5);
+      suite ind;
+      autre char(2) pos(40);
+      tard ind pos(99);
+    end-ds;
+    dcl-f e workstn indds(ind);`), []);
+  assert.deepEqual([...inddsPositions(state, state.displays.get('E'))],
+    [[3, 'exit'], [5, 'refresh'], [6, 'suite'], [99, 'tard']]);
+});
+
+test('DCL-F WORKSTN : statut 2 à l appel C : erreur', () => {
+  const screens = () => ({ call(p) { if (p.option === 'C') { p.status = '2'; p.error = 7; p.message = 'fermeture refusée'; } } });
+  assert.throws(() => run('dcl-f ecran workstn;', { tables: {}, programs: {}, displays: ECRAN() }, { screens }),
+    /fichier écran ECRAN : fermeture refusée \(erreur 00007\)/);
+});
+
+test('DCL-F WORKSTN : pas d appel O si un contrôle de déclaration échoue', () => {
+  const log = [];
+  const screens = () => ({ call(p) { log.push(p.option); } });
+  const d = displaysFrom({ E: { indara: true, formats: {} } });
+  assert.throws(() => run('dcl-f e workstn indds(ind);', { tables: {}, programs: {}, displays: d }, { screens }), /non déclarée/);
+  assert.deepEqual(log, []);
 });

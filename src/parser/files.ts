@@ -27,6 +27,12 @@ export function parseFileDeclaration(p: ParserState): FileDeclarationNode {
   while (!p.check(TokenType.SEMICOLON) && !p.isAtEnd()) {
     const word = p.advance();
     const lower = word.value.toLowerCase();
+    if (given.has(lower) && (lower === 'workstn' || lower === 'indds')) {
+      throw new Error(`${lower.toUpperCase()} en double sur le fichier ${key} (ligne ${word.line})`);
+    }
+    if (lower === 'disk' && given.has('workstn') || lower === 'workstn' && given.has('disk')) {
+      throw new Error(`DISK et WORKSTN incompatibles sur le fichier ${key} (ligne ${word.line})`);
+    }
     given.set(lower, word);
     if (lower === 'disk') {
       // périphérique par défaut ; DISK(*EXT) est équivalent

@@ -83,6 +83,7 @@ function parseDsBody(p: ParserState, name: string, dimOut: { dim?: DimNode }): A
   }
 
   // 2. Champs jusqu'à 'end-ds'
+  let nextStart = 1;
   while (!p.check(TokenType.END_DS) && !p.isAtEnd()) {
     const fieldToken = p.peek();
     const fieldName = p.expectName().value;
@@ -93,7 +94,10 @@ function parseDsBody(p: ParserState, name: string, dimOut: { dim?: DimNode }): A
     const initialValue = parseDeclarationKeywords(p, 'champ de DS', fieldType, position, fieldName);
     p.expect(TokenType.SEMICOLON);
     layout.push({ name: fieldName, type: fieldType, pos: position.pos, token: fieldToken });
-    fields.push({ name: fieldName, dataType: fieldType, initialValue });
+    // Position de début (1-based) : POS explicite, sinon l'octet qui suit le champ précédent
+    const start = position.pos ?? nextStart;
+    nextStart = start + byteLength(fieldType);
+    fields.push({ name: fieldName, dataType: fieldType, initialValue, start });
   }
 
   p.expect(TokenType.END_DS);
