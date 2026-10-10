@@ -7,49 +7,72 @@ le programme tourne jusqu'à une opération écran, l'écran s'affiche dans un p
 attend la saisie de l'utilisateur, puis le programme reprend avec les zones saisies et les
 indicateurs de réponse, et suit sa propre logique (boucles, F3 pour sortir…).
 
-Le mode interactif est le mode normal. Un fournisseur de saisie scripté existe pour les tests
-automatiques uniquement.
+Le mode interactif est le mode normal. Un terminal scripté existe pour les tests automatiques uniquement.
 
 ## Découpage
 
-- **5a — cœur** : interface `ScreenIO`, `displays.json`, `DCL-F … WORKSTN`, `EXFMT` / `WRITE` / `READ`,
-  touches CA/CF/PAGEUP/PAGEDOWN, `INDARA` + `INDDS`, conditionnement `"if"`. Entièrement testé en mode scripté.
-- **5b — interactif** : exécution dans un worker thread, panneau webview 5250, sortie DSPLY au fil de l'eau.
+- **5a — cœur** : protocole SPECIAL entre interpréteur et simulateur d'écran, simulateur (comportement
+  du poste 5250), `displays.json`, `DCL-F … WORKSTN`, `EXFMT` / `WRITE` / `READ`, touches CA/CF/PAGEUP/PAGEDOWN,
+  `INDARA` + `INDDS`, conditionnement `"if"`. Entièrement testé avec le terminal scripté.
+- **5b — interactif** : exécution dans un worker thread, terminal = panneau webview 5250, sortie DSPLY au fil de l'eau.
+- **Plus tard** : vrai `DCL-F … SPECIAL PGMNAME(...)` avec une routine écrite en RPG et interprétée, sur le même protocole.
 
-## 1. Architecture
+## 1. Architecture : le simulateur d'écran est une routine SPECIAL
+
+Le dialogue suit le protocole des fichiers SPECIAL d'IBM i (routine utilisateur appelée avec
+OPTION / STATUS / ERROR / AREA) : l'interpréteur traduit chaque verbe en un appel du simulateur, qui joue
+le rôle du programme `USERIO` de la documentation IBM. Deux paramètres supplémentaires (comme un `PLIST`)
+sont nécessaires à un écran : le nom du format et la zone des 99 indicateurs.
 
 ```
-extension.ts ──lance──▶ worker thread : lexer → parser → Interpreter (synchrone, inchangé)
-     ▲                         │ EXFMT/READ : screenIO.read(...)
-     │ réponse (zones, touche) │ → postMessage(écran) puis Atomics.wait
-     └──── panneau webview 5250 ◀┘
+programme RPG ──EXFMT FMT01──▶ interpréteur ──call(W), call(R)──▶ simulateur d'écran ──▶ terminal
+                                (variables ⇄ AREA,                 (poste 5250 : AREA ⇄ écran,     (scripté : tests ;
+                                 indicateurs ⇄ INDICATORS)          touches, contrôles de saisie)   panneau : 5b)
 ```
-
-`InterpreterOptions` reçoit un `screenIO?: ScreenIO` :
 
 ```ts
-interface ScreenIO {
-  show(screen: Screen): void;              // WRITE, et première moitié d'EXFMT
-  read(request: ReadRequest): ScreenInput; // READ, et seconde moitié d'EXFMT ; synchrone
+interface SpecialCall {
+  option: 'O' | 'C' | 'W' | 'R';   // entrée
+  status: '0' | '1' | '2';         // sortie : 0 normal, 2 erreur (1 = fin de fichier, inutilisé pour un écran)
+  error: number;                   // sortie : code d'erreur si status = 2
+  area: string;                    // entrée/sortie : image de l'enregistrement du format
+  format: string;                  // paramètre supplémentaire : nom du format (W, R)
+  indicators: string;              // paramètre supplémentaire : 99 caractères '0'/'1' (indicateur nn = position nn)
 }
-interface Screen {           // ce qui est affiché
+interface SpecialRoutine { call(parameters: SpecialCall): void; }   // synchrone ; modifie ses paramètres
+```
+
+- **Verbes** : ouverture du fichier → `O` ; `WRITE fmt` → `W` ; `READ fmt` → `R` ; `EXFMT fmt` → `W` puis `R` ;
+  `CLOSE` ou fin du programme → `C`. Statut `2` → erreur d'exécution « fichier écran ECRAN01 : <message> (erreur nnnnn) ».
+- **AREA** : les zones du format, dans l'ordre de `displays.json`, H comprises, en image mémoire :
+  char = valeur complétée à blanc ; zoned(p:d) = p chiffres, zéros de tête, signe négatif dans la dernière
+  position (`}` pour 0, `J`…`R` pour 1…9, image EBCDIC des zones négatives).
+  Le simulateur et l'interpréteur découpent AREA avec la même fonction (`src/screens/area.ts`).
+- **Simulateur** (`ScreenSimulator`, fourni par l'extension) : connaît `displays.json`, garde l'écran affiché,
+  construit ce qui est montré et applique les règles du poste 5250 (§3). Il parle à un **terminal** :
+
+```ts
+interface Terminal {
+  show(screen: Screen): void;      // affiche (W, et réaffichage avec message)
+  input(screen: Screen): ScreenInput; // attend la saisie ; synchrone
+}
+interface Screen {
   file: string; format: string;
   fields: { name: string; row: number; col: number; length: number;
-            usage: 'I' | 'O' | 'B'; numeric: boolean; value: string }[]; // H non transmises
-  constants: { row: number; col: number; text: string }[];             // seulement celles dont le "if" est vrai
-  message?: string;          // erreur de saisie à afficher en ligne 24 (voir 3.4)
+            usage: 'I' | 'O' | 'B'; numeric: boolean; value: string }[];   // zones affichées (ni H, ni "if" faux)
+  constants: { row: number; col: number; text: string }[];             // constantes dont le "if" est vrai
+  message?: string;                                                    // erreur de saisie, ligne 24
 }
-interface ReadRequest { file: string; format: string; screen: Screen; }
 interface ScreenInput { key: string; fields: { [name: string]: string }; } // key : ENTER, F1…F24, PAGEUP, PAGEDOWN
 ```
 
-- **Interactif (5b)** : le worker poste `Screen`, puis bloque sur un `SharedArrayBuffer` (`Atomics.wait`)
-  jusqu'à ce que l'extension y dépose la réponse du panneau.
-- **Scripté (tests)** : liste ordonnée de `{ format, file?, key?, fields? }` ; `format` est vérifié
-  (erreur si le programme lit un autre format) ; liste épuisée → erreur
-  « aucune saisie prévue pour le format FMT01 (lecture n° 4) ». Chaque `Screen` affiché est enregistré
-  pour que les tests vérifient ce qui a été montré.
-- Sans `screenIO`, un `DCL-F … WORKSTN` est refusé : « fichier écran : exécution interactive requise ».
+- **Terminal scripté** (tests) : liste ordonnée de `{ format, file?, key?, fields? }` ; `format` vérifié ;
+  liste épuisée → erreur « aucune saisie prévue pour le format FMT01 (lecture n° 4) » ; écran avec `message`
+  → erreur « saisie refusée par l'écran : <message> » ; garde la liste des écrans montrés.
+- **Terminal panneau** (5b) : le worker poste l'écran, puis bloque sur un `SharedArrayBuffer` (`Atomics.wait`)
+  jusqu'à la réponse du panneau.
+- `InterpreterOptions.screens?: SpecialRoutine`. Sans lui, un `DCL-F … WORKSTN` est refusé :
+  « fichier écran : exécution interactive requise ».
 
 ## 2. `displays.json` (dossier de contexte)
 
@@ -81,49 +104,49 @@ interface ScreenInput { key: string; fields: { [name: string]: string }; } // ke
 - `keys` : touche → indicateur de réponse (`"01"`…`"99"`) ou `null` (touche autorisée sans indicateur).
   Au niveau fichier (tous les formats) et au niveau format ; une même touche aux deux niveaux est une erreur.
   Touches : `CA01`…`CA24`, `CF01`…`CF24`, `PAGEUP`/`ROLLDOWN`, `PAGEDOWN`/`ROLLUP` (synonymes).
-- `type` : même syntaxe que les zones de fichiers base (`char(n)`, `zoned(p:d)`, `packed(p:d)`, forme SQL).
-  Types autorisés pour une zone écran : char, zoned, packed (affichée comme zoned). Autres → refus.
+- `type` : `char(n)` ou `zoned(p:d)` (forme SQL `NUMERIC(p,d)` acceptée) — les seuls types d'une zone d'écran ;
+  tout autre type → erreur.
 - `usage` : `I`, `O`, `B`, `H`. `row`/`col` obligatoires sauf pour `H` ; la zone doit tenir dans 24×80.
-- `if` (constantes et zones, facultatif) : liste d'indicateurs séparés par des blancs, `N` pour la négation,
-  tous vrais (ET). Une zone non affichée n'est ni montrée ni lue.
+- `if` (constantes et zones, facultatif) : indicateurs séparés par des blancs, `N` pour la négation, tous vrais (ET).
 - Noms en majuscules ; fichier, format ou zone invalides → erreur au chargement avec le chemin du fichier.
 
-## 3. Exécution (5a)
+## 3. Comportement (5a)
 
-### 3.1 Déclaration
+### 3.1 Déclaration (interpréteur)
 `DCL-F ecran WORKSTN` : le fichier doit exister dans `displays.json`. Les zones de tous ses formats
 deviennent des variables globales, comme pour un fichier base décrit en externe : une variable déjà
 déclarée avec le même nom doit avoir le même type, sinon erreur. `INDDS(ds)` est accepté si `indara`
 vaut `true` (et refusé sinon) : la DS représente la zone de 99 indicateurs, l'indicateur nn étant
-l'octet nn (sous-zones `ind pos(nn)`). Avec `indara`, indicateurs de réponse **et** de conditionnement
-(`if`) sont lus/écrits dans cette DS et non dans `*INxx`.
+l'octet nn (sous-zones `ind pos(nn)`). Les indicateurs passés au simulateur viennent de `*IN01`…`*IN99`,
+ou de cette DS avec `indara`, et y sont recopiés au retour d'un `R`.
 `USAGE` par défaut d'un WORKSTN : `*INPUT : *OUTPUT`.
 
-### 3.2 WRITE format
-Construit le `Screen` à partir des variables et des indicateurs courants (zones O et B : valeur du
-programme ; zones I : à blanc / zéro) et appelle `show`. L'écran affiché est remplacé (pas d'`OVERLAY`).
-Le programme continue sans attendre.
+### 3.2 W — affichage (simulateur)
+Découpe AREA ; zones O et B : valeur reçue ; zones I : à blanc / zéro ; zones et constantes dont le `if`
+est faux : absentes ; H : non montrées. L'écran affiché est remplacé (pas d'`OVERLAY`). Retour immédiat.
 
-### 3.3 READ format / EXFMT format
-`EXFMT` = `WRITE` puis `READ`. `READ` appelle `read` et applique la réponse :
+### 3.3 R — saisie (simulateur)
+Le format demandé doit être celui affiché, sinon statut 2 (« READ FMT02 : le format affiché est FMT01 »).
+Demande la saisie au terminal, puis :
 
-- **ENTER** : les zones I et B affichées sont rendues au programme ; tous les indicateurs de réponse
-  du format et du fichier passent à off.
-- **CFxx, PAGEUP, PAGEDOWN** : zones rendues ; l'indicateur de la touche à on, les autres à off.
-- **CAxx** : zones **non** rendues (les variables gardent leur valeur) ; indicateurs comme pour CF.
-- Indicateurs : `*INxx`, ou la DS `INDDS` si `indara`.
-- Zone B ou I non saisie : renvoie ce qui était affiché (B : valeur écrite ; I : blanc / zéro).
+- **ENTER** : AREA rendue avec les zones I et B saisies (non saisie : valeur affichée) ; tous les indicateurs
+  de réponse du format et du fichier à `0`.
+- **CFxx, PAGEUP, PAGEDOWN** : idem, et l'indicateur de la touche à `1`.
+- **CAxx** : AREA rendue **inchangée** (saisies non transmises) ; indicateurs comme pour CF.
+
+L'interpréteur recopie toute l'AREA dans les variables et les indicateurs dans `*INxx` / INDDS.
 
 ### 3.4 Contrôles sans rendre la main (comme le 5250)
-Touche non autorisée, valeur numérique invalide ou trop grande : le programme ne reprend pas ; l'écran
-est réaffiché avec un `message` et `read` est rappelé. En mode scripté, c'est une erreur du scénario.
+Touche non autorisée, zone inconnue ou non saisissable, valeur trop longue, numérique invalide ou trop grande :
+l'écran est réaffiché avec un `message` et la saisie redemandée ; le programme ne reprend pas.
+Avec le terminal scripté, c'est une erreur du scénario.
 
 ### 3.5 Valeurs à l'écran
 - char : valeur complétée à blanc.
 - numérique sans édition : chiffres avec zéros de tête, sans virgule ; négatif → signe `-` à droite
   (**à vérifier sur IBM i**).
 - saisie numérique : chiffres, un signe `-` (début ou fin), un séparateur `,` ou `.` ; alignée sur les
-  décimales ; trop de chiffres entiers ou décimaux → message (3.4).
+  décimales ; vide → zéro.
 
 ## 4. Panneau (5b)
 
@@ -143,8 +166,8 @@ résultat sur un écran ; source DDS ; attributs d'affichage (`DSPATR`, `COLOR`)
 ## 6. Tests
 
 - `test/ecrans.test.js` (5a) : `displays.json` et la liste de saisies passées au helper ; vérification
-  des `Screen` affichés (valeurs, constantes conditionnées, zones I à blanc) et des effets
-  (zones rendues, CA vs CF, indicateurs, INDDS, contrôles 3.4, erreurs de scénario).
+  des écrans montrés (valeurs, constantes conditionnées, zones I à blanc) et des effets
+  (zones rendues, CA vs CF, indicateurs, INDDS, contrôles 3.4, erreurs de scénario) ; image AREA (signe zoned).
 - `test/context.test.js` : validation de `displays.json`.
 - 5b : worker testé par un test Node sur le protocole `SharedArrayBuffer` ; panneau testé à la main.
 
