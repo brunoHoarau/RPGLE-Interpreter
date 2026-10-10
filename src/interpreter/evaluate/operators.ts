@@ -36,7 +36,14 @@ export function executeOperator(s: InterpreterState, expr: ExpressionNode): any 
   const op = expr.operator!;
   let left: any;
   let right: any;
-  if (COMPARISONS[op] && isZeroOrBlank(expr.left) !== isZeroOrBlank(expr.right)) {
+  if ((op === 'and' || op === 'or') && expr.left && expr.right) {
+    // Court-circuit : l'opérande droit n'est évalué que si nécessaire
+    const first = evaluate(s, expr.left);
+    if (first === false && op === 'and') return false;
+    if (first === true && op === 'or') return true;
+    left = first;
+    right = evaluate(s, expr.right);
+  } else if (COMPARISONS[op] && isZeroOrBlank(expr.left) !== isZeroOrBlank(expr.right)) {
     if (isZeroOrBlank(expr.left)) {
       right = evaluate(s, expr.right!);
       left = zeroOrBlankLike(s, expr.left!.value, right);

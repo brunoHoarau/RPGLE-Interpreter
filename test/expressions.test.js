@@ -177,3 +177,54 @@ test('EBCDIC : comparaison avec complétion à blanc conservée', () => {
 test('EBCDIC : caractère absent du CCSID 297 refusé', () => {
   assert.throws(() => cmp("'€'", '=', "'a'"), /CCSID 297/);
 });
+
+// --- Court-circuit de AND et OR ---
+
+test('AND : opérande droit non évalué quand le gauche est faux', () => {
+  assert.deepEqual(run(`
+    dcl-s t int(10) dim(3);
+    dcl-s i int(10) inz(0);
+    if i > 0 and t(i) = 1;
+      dsply 'non';
+    else;
+      dsply 'ok';
+    endif;
+    *inlr = *on;
+  `), ['ok']);
+});
+
+test('OR : opérande droit non évalué quand le gauche est vrai', () => {
+  assert.deepEqual(run(`
+    dcl-s t int(10) dim(3);
+    dcl-s i int(10) inz(0);
+    if i = 0 or t(i) = 1;
+      dsply 'ok';
+    endif;
+    *inlr = *on;
+  `), ['ok']);
+});
+
+test('AND / OR : appel de procédure à droite non exécuté si inutile, exécuté sinon', () => {
+  assert.deepEqual(run(`
+    dcl-s r ind;
+    r = *off and trace();
+    r = *on or trace();
+    dsply 'fin';
+    r = *on and trace();
+    r = *off or trace();
+    *inlr = *on;
+    dcl-proc trace;
+      dcl-pi *n ind end-pi;
+      dsply 'appel';
+      return *on;
+    end-proc;
+  `), ['fin', 'appel', 'appel']);
+});
+
+test('AND / OR : l\'opérande droit évalué garde son contrôle de type', () => {
+  assert.throws(() => run(`
+    dcl-s a ind inz(*on);
+    dcl-s r ind;
+    r = a and 5;
+  `), /incompatible|AND/i);
+});
