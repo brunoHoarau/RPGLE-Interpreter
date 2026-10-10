@@ -26,7 +26,7 @@ export interface DisplayFileDefinition { indara: boolean; keys: KeyMap; formats:
 
 const ROWS = 24;
 const COLS = 80;
-const KEY_SYNONYMS: { [key: string]: string } = { ROLLDOWN: 'PAGEUP', ROLLUP: 'PAGEDOWN' };
+const KEY_SYNONYMS = new Map([['ROLLDOWN', 'PAGEUP'], ['ROLLUP', 'PAGEDOWN']]);
 
 // Valide displays.json et le convertit ; les erreurs citent le chemin du fichier
 export function normalizeDisplays(raw: any, path: string): { [file: string]: DisplayFileDefinition } {
@@ -95,7 +95,8 @@ function normalizeKeys(raw: any, where: string): KeyMap {
 }
 
 function normalizeKey(written: string): string | undefined {
-  if (KEY_SYNONYMS[written]) return KEY_SYNONYMS[written];
+  const synonym = KEY_SYNONYMS.get(written);
+  if (synonym) return synonym;
   if (written === 'PAGEUP' || written === 'PAGEDOWN') return written;
   const m = /^(CA|CF)(\d\d)$/.exec(written);
   return m && Number(m[2]) >= 1 && Number(m[2]) <= 24 ? written : undefined;
@@ -123,6 +124,10 @@ function normalizeField(raw: any, where: string): DisplayField {
     throw new Error(`${here} : seuls les types char(n) ou zoned(p:d) sont acceptés (type '${raw.type}')`);
   }
   const length = type.length as number;
+  const decimals = type.decimals ?? 0;
+  if (type.typeName === 'char' ? length < 1 : length < 1 || length > 63 || decimals > length) {
+    throw new Error(`${here} : longueur invalide pour le type '${raw.type}' (char : 1 ou plus ; zoned : 1 à 63 chiffres, décimales <= chiffres)`);
+  }
   const field: DisplayField = { name: raw.name, type, usage: raw.usage, length, condition: condition(raw.if, here) };
   if (raw.usage !== 'H') {
     if (raw.row === undefined || raw.col === undefined) throw new Error(`${here} : "row" et "col" sont obligatoires (sauf usage H)`);
