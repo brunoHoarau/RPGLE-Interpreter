@@ -86,7 +86,9 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
 
 export function declaredType(s: InterpreterState, expr: ExpressionNode | undefined): DataTypeNode | undefined {
   if (expr?.valueType === 'identifier') return s.runtime.getType(expr.value);
-  if (expr?.valueType === 'element') return s.runtime.getType(expr.value.name);
+  if (expr?.valueType === 'element') {
+    return s.runtime.getType(expr.value.field ? `${expr.value.name}.${expr.value.field}` : expr.value.name);
+  }
   if (expr?.valueType === 'call') {
     const name = expr.value.name.toLowerCase();
     return (s.procedures.get(name) ?? s.prototypes.get(name))?.returnType;

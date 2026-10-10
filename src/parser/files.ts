@@ -267,6 +267,7 @@ function isBuiltinAt(p: ParserState, name: string): boolean {
 function parseDsOperand(p: ParserState): string {
   const token = p.expectName();
   if (p.check(TokenType.DOT)) throw unsupported(`Structure de données qualifiée ${token.value}.… comme opérande`, token);
+  if (p.arrayNames.get(token.value.toLowerCase())?.ds) throw unsupported(`Tableau de structures de données ${token.value.toUpperCase()} comme opérande d'une opération de fichier`, token);
   if (!p.dsInfo.has(token.value.toLowerCase())) {
     throw new Error(`${token.value.toUpperCase()} n'est pas une structure de données déclarée avant (ligne ${token.line})`);
   }

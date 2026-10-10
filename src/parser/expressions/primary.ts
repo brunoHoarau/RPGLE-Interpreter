@@ -7,7 +7,7 @@ import { DATETIME_LITERALS, FILE_BUILTINS, INDICATOR, SUPPORTED_SPECIAL_VALUES, 
 import { requireFile } from '../files';
 import { parseCallArguments } from '../statements/assignment';
 import { parseExpression } from './operators';
-import { parseElement, elementExpression, refuseWholeArray } from './element';
+import { parseElement, elementExpression, refuseUnindexed } from './element';
 
 // Unité de %DIFF / %SUBDT : *YEARS, *Y, *MONTHS, *M... ; inconnue : erreur, comme à la compilation
 export function isUnitToken(p: ParserState): boolean {
@@ -144,7 +144,7 @@ export function parsePrimary(p: ParserState): ExpressionNode {
       const nameToken = p.advance();
       let name = nameToken.value;
       if (p.arrayNames.has(name.toLowerCase())) {
-        if (!p.check(TokenType.LPAREN)) throw refuseWholeArray(name, nameToken);
+        if (!p.check(TokenType.LPAREN)) throw refuseUnindexed(p, name, nameToken);
         return elementExpression(parseElement(p, nameToken, false));
       }
 

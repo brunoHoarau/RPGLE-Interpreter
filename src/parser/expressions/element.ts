@@ -27,7 +27,23 @@ export function parseElement(p: ParserState, nameToken: Token, asTarget: boolean
     index = parseExpression(p);
   }
   p.expect(TokenType.RPAREN);
-  return { name, index };
+  if (!p.check(TokenType.DOT)) return { name, index };
+  const dot = p.advance();
+  if (!p.arrayNames.get(name.toLowerCase())?.ds) {
+    throw new Error(`${name.toUpperCase()}(…) n'est pas un tableau de structures de données : .${p.peek().value} impossible (ligne ${dot.line})`);
+  }
+  if (index === '*next') throw unsupported(`${name.toUpperCase()}(*NEXT).champ`, dot);
+  return { name, index, field: p.expectName().value };
+}
+
+// Tableau de DS pris sans index (d seul ou d.champ) : erreur de compilation
+export function wholeDsArray(name: string, token: Token): Error {
+  return new Error(`${name.toUpperCase()} est un tableau de structures de données : un index est obligatoire, ${name.toUpperCase()}(i) (ligne ${token.line})`);
+}
+
+// Tableau pris sans index : DS tableau = erreur de compilation, tableau simple = refus
+export function refuseUnindexed(p: ParserState, name: string, token: Token): Error {
+  return p.arrayNames.get(name.toLowerCase())?.ds ? wholeDsArray(name, token) : refuseWholeArray(name, token);
 }
 
 export function elementExpression(ref: ElementRef): ExpressionNode {

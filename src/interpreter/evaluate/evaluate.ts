@@ -62,6 +62,8 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
 
   if (expr.valueType === 'element') {
     const ref = expr.value;
+    if (ref.field) return s.runtime.getElementField(ref.name, elementIndex(s, ref), ref.field);
+    if (s.runtime.isDsArray(ref.name)) throw dataStructureAsValue(s, `${ref.name}(…)`);
     return s.runtime.getElement(ref.name, elementIndex(s, ref));
   }
 

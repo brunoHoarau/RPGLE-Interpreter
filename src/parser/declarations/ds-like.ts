@@ -31,6 +31,7 @@ export function parseLikeDs(p: ParserState, keyword: Token): DsLike {
   const name = p.expectName();
   if (p.check(TokenType.DOT)) throw unsupported('LIKEDS d\'une sous-zone', name);
   p.expect(TokenType.RPAREN);
+  if (p.arrayNames.get(name.value.toLowerCase())?.ds) throw unsupported(`LIKEDS de la DS tableau ${name.value.toUpperCase()}`, name);
   if (!p.dsInfo.has(name.value.toLowerCase())) {
     throw new Error(`LIKEDS(${name.value.toUpperCase()}) : ${name.value.toUpperCase()} n'est pas une structure de données déclarée avant (ligne ${keyword.line})`);
   }

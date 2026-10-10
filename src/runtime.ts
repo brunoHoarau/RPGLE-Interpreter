@@ -8,6 +8,9 @@ import { ArrayStore, elementCount, readElement, writeElement, nextIndex } from '
 import { NotSupportedError } from './errors';
 
 // Portée de noms : le programme principal (globale) ou un appel de procédure (locale)
+// Type marqueur des tableaux de DS (comparé par identité)
+const DS_ELEMENT_TYPE: DataTypeNode = { type: 'DataType', typeName: 'ds' };
+
 interface Scope {
   variables: Map<string, any>;
   constants: Map<string, any>;
@@ -100,7 +103,7 @@ export class Runtime {
   // Les champs sont indexés en minuscules : ds.Champ et DS.CHAMP désignent le même champ.
   // Les champs d'une DS non qualifiée sont aussi accessibles directement par leur nom.
   // link : origine (fichier) et filiation (racine) héritées d'une DS source (LIKEDS) ou propres à la DS (LIKEREC, EXTNAME)
-  declareDataStructure(name: string, fields: FieldDeclaration[], qualified: boolean, link: { origin?: DsOrigin; root?: number } = {}): void {
+  declareDataStructure(name: string, fields: FieldDeclaration[], qualified: boolean, link: { origin?: DsOrigin; root?: number } = {}, dim?: { max: number; auto: boolean }): void {
     const ds: any = {};
     const shape: DsShape = { fields: [], initial: {}, origin: link.origin, root: link.root ?? ++this.lastRoot };
     for (const field of fields) {
@@ -114,7 +117,13 @@ export class Runtime {
       shape.fields.push({ name: field.name, type: field.type });
       shape.initial[key] = ds[key];
     }
-    this.declareVariable(name, ds);
+    if (dim) {
+      // DS tableau : chaque élément naît comme une copie de la DS initiale ; les types 'ds.champ' sont ceux d'une DS
+      this.assertUndeclared(name);
+      this.currentScope.arrays.set(name.toLowerCase(), { values: [], max: dim.max, auto: dim.auto, type: DS_ELEMENT_TYPE, fresh: () => ({ ...shape.initial }) });
+    } else {
+      this.declareVariable(name, ds);
+    }
     this.currentScope.shapes.set(name.toLowerCase(), shape);
   }
 
@@ -175,6 +184,33 @@ export class Runtime {
   // Nombre d'éléments : DIM, ou nombre courant d'un tableau *AUTO (%ELEM)
   arrayCount(name: string): number {
     return elementCount(this.array(name));
+  }
+
+  isDsArray(name: string): boolean {
+    return this.arrayOf(name)?.store.type === DS_ELEMENT_TYPE;
+  }
+
+  // Sous-zone d'un élément de DS tableau, en lecture
+  getElementField(name: string, index: number, field: string): any {
+    const element = this.getElement(name, index);
+    const key = field.toLowerCase();
+    if (!(key in element)) throw new Error(`Champ '${field}' non trouvé dans '${name}'`);
+    return element[key];
+  }
+
+  // Écriture de sous-zones dans un élément de DS tableau (créé à la demande, comme une écriture d'élément) ;
+  // chaque valeur passe par la coercition du type de sa sous-zone
+  setElementFields(name: string, index: number | '*next', entries: [string, any][]): void {
+    const store = this.array(name);
+    const at = index === '*next' ? nextIndex(store) : index;
+    const values = entries.map(([field, value]) => {
+      const key = field.toLowerCase();
+      const type = this.getType(`${name}.${key}`);
+      if (!type) throw new Error(`Champ '${field}' non trouvé dans '${name}'`);
+      return [key, coerce(value, type, `${name}(${at}).${field}`)] as [string, any];
+    });
+    if (at < 1 || at > store.values.length) writeElement(store, name, at, store.fresh());
+    for (const [key, value] of values) store.values[at - 1][key] = value;
   }
 
   isAutoArray(name: string): boolean {

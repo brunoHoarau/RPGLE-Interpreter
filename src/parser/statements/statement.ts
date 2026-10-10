@@ -63,5 +63,8 @@ export function parseStatement(p: ParserState): ASTNode {
     return { type: 'Assignment', variable, value };
   }
 
+  if (token.type === TokenType.BUILTIN && token.value.toLowerCase() === '%elem') {
+    throw unsupported("L'affectation de %ELEM", token);
+  }
   throw new Error(`Instruction inattendue '${token.value.toUpperCase()}' à la ligne ${token.line}`);
 }

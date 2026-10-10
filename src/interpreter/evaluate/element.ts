@@ -17,3 +17,7 @@ export function elementIndex(s: InterpreterState, ref: ElementRef): number {
   }
   return value;
 }
+
+// Numéro de l'élément visé par une écriture, ou '*next' (résolu par le runtime)
+export const elementTarget = (s: InterpreterState, ref: ElementRef): number | '*next' =>
+  ref.index === '*next' ? '*next' : elementIndex(s, ref);

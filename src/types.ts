@@ -186,6 +186,7 @@ export interface DimNode {
 export interface ElementRef {
   name: string;
   index: ExpressionNode | '*' | '*next';
+  field?: string; // sous-zone d'un élément de DS tableau : d(i).champ
 }
 
 export interface ConstantDeclarationNode {
@@ -389,6 +390,7 @@ export interface DataStructureNode {
   type: 'DataStructure';
   name: string;
   isQualified: boolean;
+  dim?: DimNode;                 // DS tableau : DIM(n) ou DIM(*AUTO : n)
   like?: DsLike;                 // LIKEDS / LIKEREC / EXTNAME : fields est alors vide
   fields: {
     name: string;

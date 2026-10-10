@@ -134,11 +134,11 @@ test('une fonction intégrée inconnue est refusée à l\'analyse', () => {
 
 // --- Déclarations ---
 
-test('DIM est refusé sur dcl-ds', () => {
-  assert.throws(() => parse(`dcl-ds d qualified dim(3); a int(5); end-ds;`), /DIM/);
+test('DIM est refusé sur une sous-zone de dcl-ds', () => {
+  assert.throws(() => parse(`dcl-ds d qualified; a int(5) dim(3); end-ds;`), /DIM/);
 });
 
-test('DCL-DS : EXT, *NULL, PREFIX, TEMPLATE, DIM et sous-zones d\'une DS EXTNAME sont refusés', () => {
+test('DCL-DS : EXT, *NULL, PREFIX, TEMPLATE, LIKEDS d un tableau et sous-zones d\'une DS EXTNAME sont refusés', () => {
   for (const src of [
     'dcl-ds d ext end-ds;',
     "dcl-ds d extname(*null) end-ds;",
@@ -147,7 +147,7 @@ test('DCL-DS : EXT, *NULL, PREFIX, TEMPLATE, DIM et sous-zones d\'une DS EXTNAME
     'dcl-ds d template; a char(5); end-ds;',
     'dcl-ds m; a char(5); end-ds; dcl-ds d likeds(m) template;',
     'dcl-ds m; a char(5); end-ds; dcl-ds d likeds(m) prefix(c_);',
-    'dcl-ds m; a char(5); end-ds; dcl-ds d likeds(m) dim(3);',
+    'dcl-ds m qualified dim(3); a char(5); end-ds; dcl-ds d likeds(m);',
   ]) {
     assert.throws(() => parse(src), NOT_SUPPORTED, src);
   }

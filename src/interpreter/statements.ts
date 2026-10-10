@@ -1,9 +1,10 @@
-import { describeType, describeValue, isDataStructure, sameDeclaredType } from '../datatypes';
+import { describeType, describeValue, isDataStructure } from '../datatypes';
+import { assignDataStructure } from './ds-assign';
 import { isDateTimeType, isDuration } from '../datetime';
 import { NotSupportedError, incompatibleTypes } from '../errors';
 import { valueFor } from './declarations';
 import { evaluate } from './evaluate/evaluate';
-import { elementIndex } from './evaluate/element';
+import { elementTarget } from './evaluate/element';
 import { InterpreterState } from './state';
 
 export function executeAssignment(s: InterpreterState, node: any): void {
@@ -15,10 +16,14 @@ export function executeAssignment(s: InterpreterState, node: any): void {
 
 // arr(i) = valeur : la valeur est calculée avant l'index, puis contrôlée et convertie au type de l'élément
 function assignElement(s: InterpreterState, node: any): void {
-  const { name, index } = node.target;
-  const value = valueFor(s, node.value, s.runtime.getType(name), `${name}(…)`);
-  s.runtime.setElement(name, index === '*next' ? '*next' : elementIndex(s, node.target), value);
+  const { name, field } = node.target;
+  if (s.runtime.isDsArray(name) && !field) return assignDataStructure(s, node);
+  const value = valueFor(s, node.value, s.runtime.getType(field ? `${name}.${field}` : name), `${name}(…)${field ? `.${field}` : ''}`);
+  const at = elementTarget(s, node.target);
+  if (field) s.runtime.setElementFields(name, at, [[field, value]]);
+  else s.runtime.setElement(name, at, value);
 }
+
 
 export function assignTo(s: InterpreterState, variable: string, value: any): void {
   if (!variable.includes('.') && isDataStructure(s.runtime.lookup(variable))) throw dataStructureAsValue(s, variable);
@@ -32,25 +37,6 @@ export function assignTo(s: InterpreterState, variable: string, value: any): voi
   } else {
       s.runtime.setVariable(variable, value);
   }
-}
-
-// a = b entre deux DS de même disposition (mêmes types dans le même ordre, noms indifférents) : copie champ par champ.
-// IBM i copie des octets : toute autre combinaison n'est pas simulée.
-function assignDataStructure(s: InterpreterState, node: any): void {
-  const target: string = node.variable;
-  const source = node.value.valueType === 'identifier' ? String(node.value.value) : undefined;
-  const refuse = (reason: string) => new NotSupportedError(`Affectation à la structure de données ${target.toUpperCase()} : ${reason} (copie d'octets non simulée)`);
-  if (source === undefined || source.includes('.') || !isDataStructure(s.runtime.lookup(source))) {
-    throw refuse("la valeur n'est pas une structure de données");
-  }
-  const to = s.runtime.getShape(target);
-  const from = s.runtime.getShape(source);
-  if (!to || !from) throw refuse(`disposition de ${(to ? source : target).toUpperCase()} inconnue`);
-  const same = to.fields.length === from.fields.length && to.fields.every((f, i) => sameDeclaredType(f.type, from.fields[i].type));
-  if (!same) throw refuse(`${source.toUpperCase()} n'a pas la même disposition (types des sous-zones)`);
-  // Valeurs lues avant toute écriture, puis passage par la coercition normale de chaque sous-zone
-  const values = from.fields.map(f => s.runtime.getField(source, f.name));
-  to.fields.forEach((f, i) => s.runtime.setField(target, f.name, values[i]));
 }
 
 export function dataStructureAsValue(s: InterpreterState, name: string): Error {
