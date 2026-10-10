@@ -90,6 +90,7 @@ export class ScreenSimulator implements SpecialRoutine {
     const key = this.declaredKey(shown.definition, input.key);
     if (key === null) return { message: `Touche ${input.key} non autorisée` };
     const values = new Map(shown.values);
+    if (key?.startsWith('CA')) return { key, values };   // CA : aucune saisie transmise, aucun contrôle de zone
     for (const name of Object.keys(input.fields)) {
       const field = shown.screen.fields.find(f => f.name.toUpperCase() === name.toUpperCase());
       if (!field) return { message: `Zone ${name} inconnue ou non affichée` };
@@ -102,7 +103,7 @@ export class ScreenSimulator implements SpecialRoutine {
   }
 
   // ENTER -> undefined ; touche déclarée (CA03, CF05, PAGEUP...) ; null si non autorisée.
-  // Si CAnn et CFnn sont tous deux déclarés pour la même touche, CAnn l'emporte.
+  // CAnn et CFnn ne coexistent pas pour un même nn (refusé au chargement de displays.json).
   private declaredKey(format: DisplayFormat, written: string): string | undefined | null {
     const key = written.toUpperCase();
     if (key === 'ENTER') return undefined;

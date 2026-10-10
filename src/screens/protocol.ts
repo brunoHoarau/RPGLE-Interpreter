@@ -5,7 +5,7 @@ export interface SpecialCall {
   status: '0' | '1' | '2';         // sortie : 0 normal, 2 erreur (1 = fin de fichier, inutilisé pour un écran)
   error: number;                   // sortie : code d'erreur si status = 2
   message?: string;                // sortie : message d'erreur lisible si status = 2
-  area: string;                   // entrée/sortie : image de l'enregistrement du format
+  area: string;                    // entrée/sortie : image de l'enregistrement du format
   format: string;                  // paramètre supplémentaire : nom du format (W, R)
   indicators: string;              // paramètre supplémentaire : 99 caractères '0'/'1' (indicateur nn = position nn)
 }

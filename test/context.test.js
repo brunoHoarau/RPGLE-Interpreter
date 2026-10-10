@@ -202,6 +202,9 @@ test('displays.json : chaque erreur de validation cite le chemin', () => {
     [withDisplay((f, m) => { m.constants[1].if = '00'; }), /displays\.json.*constante.*indicateur.*01.*99/],
     [withDisplay((f, m) => { m.fields[0].if = '100'; }), /displays\.json.*zone 'CODE'.*indicateur.*01.*99/],
     [withDisplay((f, m) => { m.fields.push({ name: 'CODE', type: 'char(2)', usage: 'O', row: 9, col: 1 }); }), /displays\.json.*zone 'CODE'.*en double/],
+    [withDisplay((f, m) => { f.keys.CF03 = '04'; }), /displays\.json.*CA03.*CF03/],
+    [withDisplay((f, m) => { m.keys.CF12 = '12'; }), /displays\.json.*CA12.*CF12/],
+    [withDisplay((f, m) => { m.keys.CA05 = '06'; }), /displays\.json.*CA05.*CF05/],
   ];
   for (const [raw, pattern] of cases) {
     assert.throws(() => displaysContext(raw), pattern, pattern.source);

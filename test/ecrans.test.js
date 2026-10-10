@@ -288,3 +288,45 @@ test('saisie numérique : vide ou "-" = zéro, virgule, signe, bornes', () => {
   assert.deepEqual(parseInput(char('C', 3), 'ab  '), { value: 'ab' });
   assert.ok('message' in parseInput(char('C', 3), 'abcd'));
 });
+
+test('simulateur : CA03 avec zone invalide : aucun contrôle, AREA inchangée, indicateur 03, pas de message', () => {
+  const { sim, terminal } = setup([{ format: 'FMT01', key: 'F3', fields: { QTE: 'abc', NOPE: 'x', CODE: 'TROPLONG' } }]);
+  call(sim, 'W', { area: area01(initial) });
+  const sent = area01(initial);
+  const p = call(sim, 'R', { area: sent });
+  assert.equal(p.status, '0');
+  assert.equal(p.area, sent);
+  assert.equal(p.indicators, withInd(3));
+  assert.equal(terminal.shown.length, 1);
+});
+
+test('simulateur : PAGEUP autorisé par le fichier ou le format, sinon refusé', () => {
+  const up = { ...definition, keys: new Map([['PAGEUP', 8]]) };
+  const terminal = new ScriptedTerminal([{ format: 'FMT01', key: 'PAGEUP' }]);
+  const sim = new ScreenSimulator('ECRAN01', up, terminal);
+  call(sim, 'W', { area: area01(initial) });
+  assert.equal(call(sim, 'R').indicators, withInd(8));
+  const refused = setup([{ format: 'FMT01', key: 'PAGEUP' }]);
+  call(refused.sim, 'W', { area: area01(initial) });
+  assert.throws(() => call(refused.sim, 'R'), /Touche PAGEUP non autorisée/);
+});
+
+test('simulateur : CF déclarée au niveau du fichier, CF03 seul sans CA03', () => {
+  const def = { ...definition, keys: new Map([['CF03', 3], ['CF10', 10]]) };
+  const terminal = new ScriptedTerminal([{ format: 'FMT01', key: 'F3', fields: { QTE: '4' } }]);
+  const sim = new ScreenSimulator('ECRAN01', def, terminal);
+  call(sim, 'W', { area: area01(initial) });
+  const p = call(sim, 'R');
+  assert.equal(p.indicators, withInd(3));
+  assert.equal(area.decodeArea(fields01, p.area).get('QTE'), 4);   // CF : saisies transmises
+});
+
+test('simulateur : un négatif saisi revient dans l AREA via R ENTER', () => {
+  const { sim } = setup([{ format: 'FMT01', fields: { QTE: '-12', PRIX: '3,5-' } }]);
+  call(sim, 'W', { area: area01(initial) });
+  const p = call(sim, 'R');
+  assert.equal(p.area.slice(16, 21), '0001K');
+  const back = area.decodeArea(fields01, p.area);
+  assert.equal(back.get('QTE'), -12);
+  assert.equal(back.get('PRIX'), -3.5);
+});

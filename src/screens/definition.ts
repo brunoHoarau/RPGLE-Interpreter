@@ -45,6 +45,7 @@ function normalizeFile(raw: any, where: string): DisplayFileDefinition {
     throw new Error(`${where} : "indara" doit être vrai ou faux`);
   }
   const keys = normalizeKeys(raw.keys, where);
+  rejectCaAndCf(keys, where);
   const formats: { [name: string]: DisplayFormat } = {};
   if (raw.formats !== undefined && !isObject(raw.formats)) throw new Error(`${where} : "formats" doit être un objet`);
   for (const name of Object.keys(raw.formats ?? {})) {
@@ -60,6 +61,7 @@ function normalizeFormat(raw: any, where: string, fileKeys: KeyMap): DisplayForm
   for (const key of keys.keys()) {
     if (fileKeys.has(key)) throw new Error(`${where} : touche '${key}' définie au niveau du fichier et au format`);
   }
+  rejectCaAndCf(new Map([...fileKeys, ...keys]), where);
   const list = (value: any, what: string): any[] => {
     if (value === undefined) return [];
     if (!Array.isArray(value)) throw new Error(`${where} : "${what}" doit être une liste`);
@@ -92,6 +94,15 @@ function normalizeKeys(raw: any, where: string): KeyMap {
     keys.set(key, value === null ? null : indicator(value, `${where} : touche '${written}'`));
   }
   return keys;
+}
+
+// Impossible en DDS : CAnn et CFnn pour la même touche
+function rejectCaAndCf(keys: KeyMap, where: string): void {
+  for (const key of keys.keys()) {
+    if (key.startsWith('CA') && keys.has(`CF${key.slice(2)}`)) {
+      throw new Error(`${where} : touches '${key}' et 'CF${key.slice(2)}' déclarées toutes deux pour la même touche`);
+    }
+  }
 }
 
 function normalizeKey(written: string): string | undefined {
