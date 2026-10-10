@@ -169,7 +169,8 @@ résultat sur un écran ; source DDS ; attributs d'affichage (`DSPATR`, `COLOR`)
   des écrans montrés (valeurs, constantes conditionnées, zones I à blanc) et des effets
   (zones rendues, CA vs CF, indicateurs, INDDS, contrôles 3.4, erreurs de scénario) ; image AREA (signe zoned).
 - `test/context.test.js` : validation de `displays.json`.
-- 5b : worker testé par un test Node sur le protocole `SharedArrayBuffer` ; panneau testé à la main.
+- 5b : worker testé par un test Node sur le protocole `SharedArrayBuffer` ; page HTML du panneau testée avec Playwright
+  (Chromium headless, dépendance de développement uniquement) : positions, constantes conditionnées, touches, message ligne 24.
 
 ## Points à vérifier sur IBM i
 
