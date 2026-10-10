@@ -175,7 +175,7 @@ export class Runtime {
     return new NotSupportedError(`Opération sur le tableau entier ${name.toUpperCase()}`);
   }
 
-  private array(name: string): ArrayStore {
+  array(name: string): ArrayStore {
     const found = this.arrayOf(name);
     if (!found) throw new Error(`'${name}' n'est pas un tableau`);
     return found.store;

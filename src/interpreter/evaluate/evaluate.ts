@@ -8,6 +8,7 @@ import { callProcedure, declaredType } from '../calls';
 import { dataStructureAsValue } from '../statements';
 import { executeOperator } from './operators';
 import { elementIndex } from './element';
+import { lookup } from '../array-ops';
 import { editc } from '../../editc';
 import { InterpreterState } from '../state';
 
@@ -81,6 +82,7 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
     }
     // %ELEM : l'argument est un nom de tableau
     if (builtin === '%elem') return s.runtime.executeBuiltin('%elem', [s.runtime.arrayCount(expr.value.args[0].value)]);
+    if (builtin === '%lookup') return s.runtime.executeBuiltin('%lookup', [lookup(s, expr.value.args)]);
     if (builtin === '%editc') return editcBuiltin(s, expr.value.args);
     const isChar = builtin === '%char';
     // Le 2e argument (*ISO) est un format, inutile à évaluer

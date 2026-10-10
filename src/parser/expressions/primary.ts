@@ -7,6 +7,7 @@ import { DATETIME_LITERALS, FILE_BUILTINS, INDICATOR, SUPPORTED_SPECIAL_VALUES, 
 import { requireFile } from '../files';
 import { parseCallArguments } from '../statements/assignment';
 import { parseExpression } from './operators';
+import { parseLookup } from './array-operand';
 import { parseElement, elementExpression, refuseUnindexed } from './element';
 
 // Unité de %DIFF / %SUBDT : *YEARS, *Y, *MONTHS, *M... ; inconnue : erreur, comme à la compilation
@@ -90,6 +91,7 @@ export function parsePrimary(p: ParserState): ExpressionNode {
       }
       return { type: 'Expression', value: { name, args }, valueType: 'builtin' };
     }
+    if (name.toLowerCase() === '%lookup') return parseLookup(p, name, token.line);
     // %ELEM(tableau) : l'argument est un nom de tableau, non évalué
     if (name.toLowerCase() === '%elem') {
       p.expect(TokenType.LPAREN);

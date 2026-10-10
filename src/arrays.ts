@@ -13,7 +13,7 @@ export interface ArrayStore {
 
 export const elementCount = (a: ArrayStore): number => (a.auto ? a.values.length : a.max);
 
-function outOfRange(name: string, index: number): RpgError {
+export function outOfRange(name: string, index: number): RpgError {
   return new RpgError(STATUS_ARRAY_INDEX, `Index ${index} hors des limites du tableau ${name.toUpperCase()} (RNX0121)`);
 }
 
@@ -32,3 +32,9 @@ export function writeElement(a: ArrayStore, name: string, index: number, value: 
 
 // Index de arr(*next) : le premier élément après les éléments courants (00121 au-delà de DIM)
 export const nextIndex = (a: ArrayStore): number => a.values.length + 1;
+
+// Éléments courants avec leur valeur : un tableau fixe a tous ses DIM éléments (les non écrits valent leur valeur initiale)
+export function materialize(a: ArrayStore): any[] {
+  while (a.values.length < elementCount(a)) a.values.push(a.fresh());
+  return a.values;
+}

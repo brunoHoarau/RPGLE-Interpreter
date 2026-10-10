@@ -10,10 +10,14 @@ export function elementIndex(s: InterpreterState, ref: ElementRef): number {
   if (ref.index === '*' || ref.index === '*next') {
     throw new NotSupportedError(`${ref.name.toUpperCase()}(${ref.index.toUpperCase()}) utilisé comme valeur`);
   }
-  const value = evaluate(s, ref.index);
-  if (typeof value !== 'number') throw incompatibleTypes(`Index ${describeValue(value)} de ${ref.name.toUpperCase()}`);
+  return elementIndexValue(evaluate(s, ref.index), ref.name.toUpperCase());
+}
+
+// Index calculé : un entier obligatoire
+export function elementIndexValue(value: any, what: string): number {
+  if (typeof value !== 'number') throw incompatibleTypes(`Index ${describeValue(value)} de ${what}`);
   if (!Number.isInteger(value)) {
-    throw new NotSupportedError(`Index ${value} de ${ref.name.toUpperCase()} : un index non entier`);
+    throw new NotSupportedError(`Index ${value} de ${what} : un index non entier`);
   }
   return value;
 }

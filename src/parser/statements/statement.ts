@@ -6,6 +6,7 @@ import { parseIfStatement, parseSelectStatement, parseLoop, parseMonitor, parseR
 import { checkCompound, advanceCompound, compoundValue, parseAssignmentOrCall } from './assignment';
 import { parseDsply, parseSQL } from './io';
 import { isOpcode, parseExsr, parseLeavesr } from '../subroutines';
+import { isSorta, parseSorta } from './array-ops';
 import { parseExpression } from '../expressions/operators';
 
 export function parseStatement(p: ParserState): ASTNode {
@@ -26,6 +27,7 @@ export function parseStatement(p: ParserState): ASTNode {
     p.expect(TokenType.SEMICOLON);
     return { type: 'Iter' } as any;
   }
+  if (isSorta(p)) return parseSorta(p);
   if (isOpcode(p, 'exsr')) return parseExsr(p);
   if (isOpcode(p, 'leavesr')) return parseLeavesr(p);
   if (isOpcode(p, 'endsr')) throw new Error(`ENDSR sans BEGSR à la ligne ${p.peek().line}`);

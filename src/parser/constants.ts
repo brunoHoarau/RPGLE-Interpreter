@@ -31,7 +31,7 @@ export const UNSUPPORTED_OPCODES = new Set([
   'acq', 'clear', 'commit', 'data-gen', 'data-into', 'dealloc', 'dump',
   'eval-corr', 'evalr', 'except', 'exfmt', 'feod', 'force', 'in', 'next',
   'on-excp', 'on-exit', 'out', 'post', 'readc', 'rel', 'reset',
-  'rolbk', 'snd-msg', 'sorta', 'test', 'xml-into', 'xml-sax',
+  'rolbk', 'snd-msg', 'test', 'xml-into', 'xml-sax',
 ]);
 
 export const INDICATOR = /^\*in(lr|\d\d)$/;

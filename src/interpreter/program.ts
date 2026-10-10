@@ -1,3 +1,4 @@
+import { executeSorta } from './array-ops';
 import { ASTNode, ProgramNode, FileOperationNode } from '../types';
 import { describeValue } from '../datatypes';
 import { NotSupportedError } from '../errors';
@@ -113,6 +114,8 @@ export function executeNode(s: InterpreterState, node: ASTNode): any {
       return executeSelect(s, node as any);
     case 'LoopStatement':
       return executeLoop(s, node as any);
+    case 'Sorta':
+      return executeSorta(s, node as any);
     case 'ProcedureCall':
       return executeProcedureCall(s, node as any);
     case 'Return':
