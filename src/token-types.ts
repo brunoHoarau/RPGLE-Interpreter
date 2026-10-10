@@ -37,6 +37,7 @@ export enum TokenType {
   DOW = 'DOW',
   DOU = 'DOU',
   FOR = 'FOR',
+  FOR_EACH = 'FOR_EACH',
   TO = 'TO',
   DOWNTO = 'DOWNTO',
   BY = 'BY',

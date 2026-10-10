@@ -159,8 +159,10 @@ export interface SortaNode {
 
 export interface LoopStatementNode {
   type: 'LoopStatement';
-  loopType: 'dow' | 'dou' | 'for';
+  loopType: 'dow' | 'dou' | 'for' | 'foreach';
   variable?: string;          // Pour for
+  item?: string;              // Pour foreach : variable (ou DS) qui reçoit chaque élément
+  source?: string;            // Pour foreach : tableau parcouru
   condition?: ExpressionNode; // Pour dow/dou
   init?: ExpressionNode;      // Pour for
   limit?: ExpressionNode;     // Pour for

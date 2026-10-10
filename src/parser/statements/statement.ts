@@ -6,7 +6,7 @@ import { parseIfStatement, parseSelectStatement, parseLoop, parseMonitor, parseR
 import { checkCompound, advanceCompound, compoundValue, parseAssignmentOrCall } from './assignment';
 import { parseDsply, parseSQL } from './io';
 import { isOpcode, parseExsr, parseLeavesr } from '../subroutines';
-import { isSorta, parseSorta } from './array-ops';
+import { isSorta, parseSorta, parseForEach } from './array-ops';
 import { parseExpression } from '../expressions/operators';
 
 export function parseStatement(p: ParserState): ASTNode {
@@ -14,6 +14,7 @@ export function parseStatement(p: ParserState): ASTNode {
   if (p.check(TokenType.IF)) return parseIfStatement(p);
   if (p.check(TokenType.SELECT)) return parseSelectStatement(p);
   if (p.check(TokenType.DOW) || p.check(TokenType.DOU) || p.check(TokenType.FOR)) return parseLoop(p);
+  if (p.check(TokenType.FOR_EACH)) return parseForEach(p);
   if (p.check(TokenType.MONITOR)) return parseMonitor(p);
   if (p.check(TokenType.RETURN)) return parseReturn(p);
   if (p.check(TokenType.EXEC_SQL)) return parseSQL(p);

@@ -1,5 +1,6 @@
 import { ExpressionNode } from '../types';
 import { isDataStructure, sameDeclaredType } from '../datatypes';
+import { DsShape } from '../ds-shape';
 import { NotSupportedError } from '../errors';
 import { elementIndex, elementTarget } from './evaluate/element';
 import { InterpreterState } from './state';
@@ -24,6 +25,10 @@ function dsSource(s: InterpreterState, expr: ExpressionNode): DsSource | undefin
   return undefined;
 }
 
+// Mêmes types dans le même ordre (les noms des sous-zones sont indifférents)
+export const sameLayout = (to: DsShape, from: DsShape): boolean =>
+  to.fields.length === from.fields.length && to.fields.every((f, i) => sameDeclaredType(f.type, from.fields[i].type));
+
 // a = b, d(i) = b, a = d(i), d(i) = d(j) entre deux DS de même disposition (mêmes types dans le même ordre, noms
 // indifférents) : copie champ par champ. IBM i copie des octets : toute autre combinaison n'est pas simulée.
 export function assignDataStructure(s: InterpreterState, node: any): void {
@@ -35,8 +40,7 @@ export function assignDataStructure(s: InterpreterState, node: any): void {
   const to = s.runtime.getShape(target);
   const from = s.runtime.getShape(source.name);
   if (!to || !from) throw refuse(`disposition de ${(to ? source.name : target).toUpperCase()} inconnue`);
-  const same = to.fields.length === from.fields.length && to.fields.every((f, i) => sameDeclaredType(f.type, from.fields[i].type));
-  if (!same) throw refuse(`${source.name.toUpperCase()} n'a pas la même disposition (types des sous-zones)`);
+  if (!sameLayout(to, from)) throw refuse(`${source.name.toUpperCase()} n'a pas la même disposition (types des sous-zones)`);
   // Valeurs lues avant toute écriture, puis passage par la coercition normale de chaque sous-zone
   const values = from.fields.map(f => source.read(f.name));
   if (node.target) {

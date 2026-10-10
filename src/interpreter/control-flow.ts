@@ -4,6 +4,7 @@ import { RpgError, incompatibleTypes, matchesStatus } from '../errors';
 import { executeBlock } from './program';
 import { valueFor } from './declarations';
 import { evaluate } from './evaluate/evaluate';
+import { executeForEach } from './foreach';
 import { InterpreterState } from './state';
 import { LeaveSignal, IterSignal, ReturnSignal } from './signals';
 
@@ -90,6 +91,8 @@ export function executeLoop(s: InterpreterState, node: any): void {
       if (!runIteration(s, node.body)) return;
       s.runtime.setVariable(varName, s.runtime.getVariable(varName) + delta);
     }
+  } else if (node.loopType === 'foreach') {
+    executeForEach(s, node);
   } else if (node.loopType === 'dow') {
     while (condition(s, node.condition)) {
       if (!runIteration(s, node.body)) return;
