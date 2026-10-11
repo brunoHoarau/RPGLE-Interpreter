@@ -145,7 +145,7 @@ Format *ISO uniquement : date `2026-10-04`, heure `13.45.00`, timestamp `2026-10
 }
 ```
 
-`exfmt`, `write` et `read` sur un format affichent l'écran et rendent la saisie ; une touche CA/CF déclarée positionne son indicateur. Les zones du format sont des variables du programme. Voir `fichiers_test/ecran_commande.rpgle`. Pour l'instant les saisies sont scriptées (tests) ; le terminal interactif viendra ensuite. Refusés : `likerec` et `extname` d'un format ou fichier écran, `chain`/`update`/`delete`/`setll` sur un format écran, extenseurs, `dcl-f` SPECIAL.
+`exfmt`, `write` et `read` sur un format affichent l'écran et rendent la saisie ; une touche CA/CF déclarée positionne son indicateur. Les zones du format sont des variables du programme. Voir `fichiers_test/ecran_commande.rpgle`. L'exécution depuis VS Code d'un programme WORKSTN n'est pas encore possible (5b) : aujourd'hui seuls les tests, avec un terminal scripté, l'exécutent. Refusés : sous-fichiers, OVERLAY, INFDS, DSPATR/COLOR, DS résultat, `likerec` et `extname` d'un format ou fichier écran, `chain`/`update`/`delete`/`setll` sur un format écran, extenseurs, `dcl-f` SPECIAL.
 
 ## Fichiers natifs
 
@@ -182,7 +182,7 @@ Format *ISO uniquement : date `2026-10-04`, heure `13.45.00`, timestamp `2026-10
 
 ## Limites connues
 
-- Fichiers natifs : pas d'écrans ni d'impressions ; pas d'`extfile` par variable ; la bibliothèque d'`extfile`/`extdesc` est ignorée ; `(E)` seulement sur les opérations de fichier et `dsply`
+- Fichiers écran : mode scripté seulement (le mode interactif viendra), impressions non supportées ; fichiers natifs : pas d'`extfile` par variable ; la bibliothèque d'`extfile`/`extdesc` est ignorée ; `(E)` seulement sur les opérations de fichier et `dsply`
 - Pas de `float` ; tableaux : voir la liste des refus dans « Tableaux »
 - Pas de sous-routines (`BEGSR`/`EXSR`), de `LIKE`, de `/COPY`, ni de paramètres pour le programme principal
 - `ctl-opt` est accepté mais ses options sont ignorées, sauf `DATFMT`/`TIMFMT` (seul `*ISO` est accepté)
