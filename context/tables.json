@@ -2,5 +2,14 @@
   "CUSTOMERS": [
     { "ID": 1, "NAME": "Dupont", "CITY": "Paris", "BALANCE": 1500.50 },
     { "ID": 2, "NAME": "Martin", "CITY": "Lyon", "BALANCE": 230.00 }
-  ]
+  ],
+  "ARTICLE": {
+    "keys": ["CODE"],
+    "unique": true,
+    "schema": { "CODE": "char(6)", "LIBELLE": "char(20)", "PRIX": "DECIMAL(7,2)" },
+    "data": [
+      { "CODE": "A100", "LIBELLE": "Vis inox", "PRIX": 0.15 },
+      { "CODE": "B200", "LIBELLE": "Ecrou laiton", "PRIX": 0.4 }
+    ]
+  }
 }

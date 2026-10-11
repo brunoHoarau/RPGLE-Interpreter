@@ -632,25 +632,57 @@ test('écran : READ sans WRITE : erreur du simulateur', () => {
 });
 
 test('écran : opérations refusées', () => {
-  const refuse = code => assert.throws(() => runScreens(`dcl-f ecran workstn; dcl-ds d qualified; x char(1); end-ds; ${code}`, SAISIE(), [{ format: 'FMT01' }]),
-    /pas encore supporté|écran/i, code);
-  refuse('write ecran;');
-  refuse('read ecran;');
-  refuse('exfmt ecran;');
-  refuse('chain 1 fmt01;');
-  refuse('update fmt01;');
-  refuse('delete fmt01;');
-  refuse('setll 1 fmt01;');
-  refuse('read(e) fmt01;');
-  refuse('write fmt01 d;');
-  refuse('open ecran;');
-  refuse('close ecran;');
-  refuse('exfmt fmt01 d;');
-  refuse('exfmt(e) fmt01;');
-  refuse('exfmt 1 fmt01;');
+  const NS = " : pas encore supporté par l'interpréteur";
+  const refuse = (code, message) => assert.throws(() => runScreens(`dcl-f ecran workstn; dcl-ds d qualified; x char(1); end-ds; ${code}`, SAISIE(), [{ format: 'FMT01' }]),
+    err => err.message === message + NS || err.message === message + NS + ' (ligne 1)', code);
+  const nom = 'sur le fichier écran ECRAN : un nom de format est attendu';
+  refuse('write ecran;', 'WRITE ' + nom);
+  refuse('read ecran;', 'READ ' + nom);
+  refuse('exfmt ecran;', 'EXFMT ' + nom);
+  refuse('chain 1 fmt01;', 'CHAIN sur le format écran FMT01');
+  refuse('update fmt01;', 'UPDATE sur le format écran FMT01');
+  refuse('delete fmt01;', 'DELETE sur le format écran FMT01');
+  refuse('setll 1 fmt01;', 'SETLL sur le format écran FMT01');
+  const plus = 'sur le format écran FMT01 avec un extenseur, une clé ou une structure de données';
+  refuse('read(e) fmt01;', 'READ ' + plus);
+  refuse('write fmt01 d;', 'WRITE ' + plus);
+  refuse('open ecran;', 'OPEN sur le format écran ECRAN');
+  refuse('close ecran;', 'CLOSE sur le format écran ECRAN');
+  const exfmt = 'EXFMT avec une clé, un extenseur ou un opérande de plus (seul EXFMT format; est supporté)';
+  refuse('exfmt fmt01 d;', exfmt);
+  refuse('exfmt(e) fmt01;', exfmt);
+  refuse('exfmt 1 fmt01;', exfmt);
 });
 
 test('EXFMT sur un fichier base : erreur', () => {
   const ctx = { tables: { CLIENT: { columns: [{ name: 'NOM', type: 'char(10)' }], data: [] } }, programs: {} };
   assert.throws(() => runScreens('dcl-f client; dcl-f ecran workstn; exfmt client;', SAISIE(), [], ctx), /EXFMT.*fichier écran/i);
+});
+
+// --- Exemple de bout en bout : fichiers_test/ecran_commande.rpgle avec context/ ---
+
+test('exemple ecran_commande.rpgle : 4 saisies (article, code inconnu, F5, F3)', () => {
+  const fs = require('fs');
+  const { loadContextFromFolder } = require(path.join(__dirname, '..', 'out', 'context'));
+  const root = path.join(__dirname, '..');
+  const context = loadContextFromFolder(path.join(root, 'context'));
+  const source = fs.readFileSync(path.join(root, 'fichiers_test', 'ecran_commande.rpgle'), 'utf8');
+  const { output, shown } = runScreens(source, {}, [
+    { format: 'SAISIE', fields: { CODE: 'A100', QTE: '12' } },
+    { format: 'SAISIE', fields: { CODE: 'Z999', QTE: '1' } },
+    { format: 'SAISIE', key: 'F5' },
+    { format: 'SAISIE', key: 'F3' },
+  ], context);
+  assert.deepEqual(output, ['Commande A100 : Vis inox x 12', 'Lignes saisies : 1']);
+  assert.equal(shown.length, 4);
+  const inconnu = s => s.constants.some(c => c.text === 'Code article inconnu');
+  assert.deepEqual(shown.map(inconnu), [false, false, true, false]);
+  assert.equal(shown[1].fields.find(f => f.name === 'LIBELLE').value.trim(), 'Vis inox');
+  assert.equal(shown[2].fields.find(f => f.name === 'LIBELLE').value.trim(), '');
+  assert.equal(shown[3].fields.find(f => f.name === 'CODE').value.trim(), '');
+});
+
+test('EXFMT FMT02 puis READ FMT01 : le format affiché est FMT02', () => {
+  assert.throws(() => runScreens('dcl-f ecran workstn; exfmt fmt02; read fmt01;', SAISIE(), [{ format: 'FMT02' }]),
+    err => err.message === 'fichier écran ECRAN : READ FMT01 : le format affiché est FMT02 (erreur 01299)');
 });

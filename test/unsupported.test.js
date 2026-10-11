@@ -446,3 +446,28 @@ test('EXFMT : clé, extenseur et opérande de plus refusés', () => {
     assert.throws(() => parse(op), NOT_SUPPORTED, op);
   }
 });
+
+// --- Fichiers écran : LIKEREC et EXTNAME ---
+
+test('fichier écran : LIKEREC et EXTNAME d\'un format ou d\'un fichier écran refusés', () => {
+  const { runScreens, displaysFrom } = require('./helpers');
+  const displays = () => displaysFrom({
+    ECRAN: { formats: { FMT01: { fields: [{ name: 'CODE', usage: 'B', type: 'char(6)', row: 3, col: 10 }] } } },
+  });
+  const refuse = code => assert.throws(() => runScreens(`dcl-f ecran workstn; ${code}`, displays(), []),
+    /fichier écran.*pas encore support/, code);
+  refuse('dcl-ds d likerec(fmt01);');
+  refuse('dcl-ds d likerec(fmt01 : *all);');
+  refuse(`dcl-ds d extname('ECRAN') end-ds;`);
+  refuse(`dcl-ds d extname('ECRAN' : 'FMT01') end-ds;`);
+  refuse(`dcl-ds d extname('ECRAN') qualified; end-ds;`);
+  refuse(`
+    dcl-ds a qualified; x char(1); end-ds;
+    lire(a);
+    dcl-proc lire;
+      dcl-pi *n;
+        p likerec(fmt01);
+      end-pi;
+    end-proc;
+  `);
+});

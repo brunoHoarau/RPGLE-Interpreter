@@ -1,0 +1,20 @@
+{
+  "CDEECRAN": {
+    "keys": { "CA03": "03" },
+    "formats": {
+      "SAISIE": {
+        "keys": { "CF05": "05" },
+        "constants": [
+          { "row": 1, "col": 2, "text": "SAISIE DE COMMANDE" },
+          { "row": 22, "col": 2, "text": "Code article inconnu", "if": "31" },
+          { "row": 23, "col": 2, "text": "F3=Quitter  F5=Reafficher" }
+        ],
+        "fields": [
+          { "name": "CODE", "usage": "B", "type": "char(6)", "row": 5, "col": 15 },
+          { "name": "LIBELLE", "usage": "O", "type": "char(20)", "row": 6, "col": 15 },
+          { "name": "QTE", "usage": "I", "type": "zoned(5:0)", "row": 7, "col": 15 }
+        ]
+      }
+    }
+  }
+}
