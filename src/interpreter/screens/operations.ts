@@ -57,8 +57,11 @@ function write(s: InterpreterState, state: DisplayState, format: string): void {
 
 function read(s: InterpreterState, state: DisplayState, format: string): void {
   const result = call(s, state, 'R', format, currentArea(s, state, format));
-  // Toutes les zones du format, y compris O et H : l'AREA rendue les contient
-  for (const [name, value] of decodeArea(formatFields(state, format), result.area)) s.runtime.setVariable(name, value);
+  // Seules les zones I, B et H reviennent du poste : les zones O ne font pas partie de l'enregistrement d'entrée
+  const returned = new Set(formatFields(state, format).filter(f => f.usage !== 'O').map(f => f.name));
+  for (const [name, value] of decodeArea(formatFields(state, format), result.area)) {
+    if (returned.has(name)) s.runtime.setVariable(name, value);
+  }
   writeIndicators(s, state, result.indicators);
 }
 
@@ -67,6 +70,9 @@ export function executeScreenOperation(s: InterpreterState, node: FileOperationN
   const state = s.displays.get(name);
   const op = node.operation.toUpperCase();
   if (!state) throw new Error(`EXFMT n'est permis que sur un format de fichier écran, pas sur ${name}`);
+  if (node.operation === 'open' || node.operation === 'close') {
+    throw new NotSupportedError(`${op} sur un fichier écran (${state.file})`);
+  }
   if (node.operation !== 'write' && node.operation !== 'read' && node.operation !== 'exfmt') {
     throw new NotSupportedError(`${op} sur le format écran ${name}`);
   }
@@ -77,6 +83,11 @@ export function executeScreenOperation(s: InterpreterState, node: FileOperationN
   if (node.extender || node.resultDs || node.key || node.kds || node.special || node.fields || node.lastKey) {
     throw new NotSupportedError(`${op} sur le format écran ${name} avec un extenseur, une clé ou une structure de données`);
   }
+  const needs = (what: 'input' | 'output', usage: string) => {
+    if (!state.usage[what]) throw new Error(`${op} sur le fichier écran ${state.file} sans USAGE(${usage}) (ligne ${node.line})`);
+  };
+  if (node.operation !== 'read') needs('output', '*OUTPUT');
+  if (node.operation !== 'write') needs('input', '*INPUT');
   if (node.operation !== 'read') write(s, state, format);
   if (node.operation !== 'write') read(s, state, format);
 }

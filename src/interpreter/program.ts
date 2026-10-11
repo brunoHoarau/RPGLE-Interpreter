@@ -75,32 +75,38 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
     }
   }
 
-  checkDisplayIndds(s);
-  openDisplayFiles(s);
-
-  // Deuxième passe : exécuter le code (les verrous de ce programme sont libérés à sa fin)
-  const { mainline, subs } = splitSubroutines(ast.body);
-  s.subroutines.push(subs);
+  let failing = false;
   try {
-    if (subs.has('*inzsr')) executeSubroutine(s, '*inzsr');
-    for (const node of mainline) {
-      if (node.type !== 'VariableDeclaration' &&
-          node.type !== 'ConstantDeclaration' &&
-          node.type !== 'DataStructure' &&
-          node.type !== 'Procedure') {
-        executeNode(s, node);
+    checkDisplayIndds(s);
+    openDisplayFiles(s);
+
+    // Deuxième passe : exécuter le code (les verrous de ce programme sont libérés à sa fin)
+    const { mainline, subs } = splitSubroutines(ast.body);
+    s.subroutines.push(subs);
+    try {
+      if (subs.has('*inzsr')) executeSubroutine(s, '*inzsr');
+      for (const node of mainline) {
+        if (node.type !== 'VariableDeclaration' &&
+            node.type !== 'ConstantDeclaration' &&
+            node.type !== 'DataStructure' &&
+            node.type !== 'Procedure') {
+          executeNode(s, node);
+        }
       }
+    } catch (e) {
+      if (e instanceof LeaveSignal) throw new Error('LEAVE en dehors d\'une boucle');
+      if (e instanceof IterSignal) throw new Error('ITER en dehors d\'une boucle');
+      if (!(e instanceof ReturnSignal)) throw e;
+    } finally {
+      s.subroutines.pop();
+      for (const state of s.files.values()) state.file.release();
     }
   } catch (e) {
-    if (e instanceof LeaveSignal) throw new Error('LEAVE en dehors d\'une boucle');
-    if (e instanceof IterSignal) throw new Error('ITER en dehors d\'une boucle');
-    if (!(e instanceof ReturnSignal)) throw e;
+    failing = true;
+    throw e;
   } finally {
-    s.subroutines.pop();
-    for (const state of s.files.values()) state.file.release();
+    closeDisplayFiles(s, failing);   // appel C des seuls fichiers écran ouverts, même en erreur
   }
-
-  closeDisplayFiles(s);
   return parameters.map(p => s.runtime.lookup(p.name));
 }
 

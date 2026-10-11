@@ -107,6 +107,7 @@ interface ScreenInput { key: string; fields: { [name: string]: string }; } // ke
 - `type` : `char(n)` ou `zoned(p:d)` (forme SQL `NUMERIC(p,d)` acceptée) — les seuls types d'une zone d'écran ;
   tout autre type → erreur.
 - `usage` : `I`, `O`, `B`, `H`. `row`/`col` obligatoires sauf pour `H` ; la zone doit tenir dans 24×80.
+- `lc` (zone char, facultatif, faux par défaut) : `true` conserve la saisie en minuscules (équivalent DDS `CHECK(LC)`) ; refusé sur un `zoned`.
 - `if` (constantes et zones, facultatif) : indicateurs séparés par des blancs, `N` pour la négation, tous vrais (ET).
 - Noms en majuscules ; fichier, format ou zone invalides → erreur au chargement avec le chemin du fichier.
 
@@ -142,7 +143,8 @@ l'écran est réaffiché avec un `message` et la saisie redemandée ; le program
 Avec le terminal scripté, c'est une erreur du scénario.
 
 ### 3.5 Valeurs à l'écran
-- char : valeur complétée à blanc.
+- char : valeur complétée à blanc ; la saisie est convertie en majuscules, sauf zone avec `"lc": true`
+  (DDS sans `CHECK(LC)` : **à vérifier sur IBM i**).
 - numérique sans édition : chiffres avec zéros de tête, sans virgule ; négatif → signe `-` à droite
   (**à vérifier sur IBM i**).
 - saisie numérique : chiffres, un signe `-` (début ou fin), un séparateur `,` ou `.` ; alignée sur les
@@ -175,4 +177,5 @@ résultat sur un écran ; source DDS ; attributs d'affichage (`DSPATR`, `COLOR`)
 ## Points à vérifier sur IBM i
 
 - Représentation à l'écran d'un numérique négatif sans code d'édition.
+- Conversion en majuscules sans CHECK(LC).
 - Valeur d'une zone I non saisie après un premier affichage (supposée blanc / zéro à chaque WRITE).

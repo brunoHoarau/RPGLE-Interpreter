@@ -4,7 +4,7 @@ import type { Screen, ScreenInput, SpecialCall, SpecialRoutine, Terminal } from 
 import { AreaValue, decodeArea, encodeArea, indicatorsString, parseIndicators } from './area';
 import { parseInput } from './input-values';
 
-// Code d'erreur choisi par le simulateur (valeur arbitraire, non IBM) pour tous ses statuts 2
+// 01299 : statut RPG « autre erreur d'E/S », code rendu par le simulateur pour tous ses statuts 2
 const ERROR_CODE = 1299;
 
 interface Displayed {
@@ -81,7 +81,7 @@ export class ScreenSimulator implements SpecialRoutine {
       if (accepted.key === undefined || !accepted.key.startsWith('CA')) {
         p.area = encodeArea(shown.definition.fields, accepted.values);   // CA : AREA inchangée
       }
-      p.indicators = this.responseIndicators(shown, accepted.key);
+      p.indicators = this.responseIndicators(p.indicators, shown, accepted.key);
       return;
     }
   }
@@ -113,9 +113,9 @@ export class ScreenSimulator implements SpecialRoutine {
     return candidates.find(c => format.keys.has(c) || this.definition.keys.has(c)) ?? null;
   }
 
-  // Indicateurs reçus au W, indicateurs de réponse à 0, puis celui de la touche à 1
-  private responseIndicators(shown: Displayed, key: string | undefined): string {
-    const flags = parseIndicators(shown.indicators);
+  // Indicateurs reçus au R (valeurs du programme à cet instant), réponse à 0, puis celui de la touche à 1
+  private responseIndicators(received: string, shown: Displayed, key: string | undefined): string {
+    const flags = parseIndicators(received);
     const maps = [shown.definition.keys, this.definition.keys];
     for (const map of maps) for (const n of map.values()) if (n !== null) flags[n] = false;
     const pressed = key === undefined ? undefined : maps.map(m => m.get(key)).find(n => n !== undefined);

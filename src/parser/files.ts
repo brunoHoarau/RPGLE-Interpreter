@@ -113,6 +113,9 @@ export function parseFileDeclaration(p: ParserState): FileDeclarationNode {
   }
   if (indds !== undefined && !workstn) throw unsupported("INDDS sur un fichier qui n'est pas WORKSTN", indddsToken!);
   if (workstn) {
+    if (usage?.update || usage?.delete) {
+      throw new Error(`USAGE *UPDATE ou *DELETE impossible sur un fichier écran ${key} : *INPUT et *OUTPUT seulement (ligne ${given.get('usage')?.line ?? start.line})`);
+    }
     for (const word of ['keyed', 'extfile', 'extdesc', 'rename', 'prefix', 'usropn']) {
       const token = given.get(word);
       if (token) throw unsupported(`${word.toUpperCase()} sur un fichier écran`, token);

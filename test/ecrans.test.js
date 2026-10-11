@@ -167,7 +167,7 @@ test('simulateur : W sur un format inconnu = statut 2', () => {
 test('simulateur : R ENTER rend les zones I et B saisies, les autres inchangées, indicateurs de réponse à 0', () => {
   const { sim } = setup([{ format: 'FMT01', fields: { CODE: 'ZZ', QTE: '12', PRIX: '1,5' } }]);
   call(sim, 'W', { area: area01(initial), indicators: withInd(5, 7, 25) });
-  const p = call(sim, 'R', { indicators: none });
+  const p = call(sim, 'R', { indicators: withInd(5, 7, 25) });
   assert.equal(p.status, '0');
   assert.deepEqual([...area.decodeArea(fields01, p.area)], [
     ['CODE', 'ZZ    '], ['LIBELLE', 'Stylo     '], ['QTE', 12], ['PRIX', 1.5], ['CLE', 'xyz'], ['ERR', 'oups']]);
@@ -285,7 +285,7 @@ test('saisie numérique : vide ou "-" = zéro, virgule, signe, bornes', () => {
   assert.ok('message' in parseInput(z52, '1,5,5'));
   assert.ok('message' in parseInput(z52, '--1'));
   assert.ok('message' in parseInput(z30, '1,5'));
-  assert.deepEqual(parseInput(char('C', 3), 'ab  '), { value: 'ab' });
+  assert.deepEqual(parseInput(char('C', 3), 'ab  '), { value: 'AB' });
   assert.ok('message' in parseInput(char('C', 3), 'abcd'));
 });
 
@@ -646,8 +646,8 @@ test('écran : opérations refusées', () => {
   const plus = 'sur le format écran FMT01 avec un extenseur, une clé ou une structure de données';
   refuse('read(e) fmt01;', 'READ ' + plus);
   refuse('write fmt01 d;', 'WRITE ' + plus);
-  refuse('open ecran;', 'OPEN sur le format écran ECRAN');
-  refuse('close ecran;', 'CLOSE sur le format écran ECRAN');
+  refuse('open ecran;', 'OPEN sur un fichier écran (ECRAN)');
+  refuse('close ecran;', 'CLOSE sur un fichier écran (ECRAN)');
   const exfmt = 'EXFMT avec une clé, un extenseur ou un opérande de plus (seul EXFMT format; est supporté)';
   refuse('exfmt fmt01 d;', exfmt);
   refuse('exfmt(e) fmt01;', exfmt);
@@ -685,4 +685,97 @@ test('exemple ecran_commande.rpgle : 4 saisies (article, code inconnu, F5, F3)',
 test('EXFMT FMT02 puis READ FMT01 : le format affiché est FMT02', () => {
   assert.throws(() => runScreens('dcl-f ecran workstn; exfmt fmt02; read fmt01;', SAISIE(), [{ format: 'FMT02' }]),
     err => err.message === 'fichier écran ECRAN : READ FMT01 : le format affiché est FMT02 (erreur 01299)');
+});
+
+// --- Relecture finale : READ séparé, majuscules, USAGE, appel C, OPEN/CLOSE ---
+
+test('WRITE puis READ : *IN et zone O modifiés entre-temps ne sont pas écrasés par le READ', () => {
+  const { output } = runScreens(`
+    dcl-f ecran workstn;
+    lib = 'AVANT';
+    write fmt01;
+    *in50 = *on;
+    lib = 'APRES';
+    read fmt01;
+    if *in50;
+      dsply 'ON';
+    endif;
+    dsply lib;
+  `, SAISIE(), [{ format: 'FMT01' }]);
+  assert.deepEqual(output, ['ON', 'APRES']);
+});
+
+test('EXFMT : la zone O n est jamais recopiée de l AREA rendue', () => {
+  const { output } = runScreens(`
+    dcl-f ecran workstn;
+    lib = 'PROG';
+    exfmt fmt01;
+    dsply lib;
+  `, SAISIE(), [{ format: 'FMT01', fields: { CODE: 'X' } }]);
+  assert.deepEqual(output, ['PROG']);
+});
+
+test('saisie char : majuscules sauf "lc": true', () => {
+  const d = (lc) => displaysFrom({ E: { formats: { F: { fields: [
+    { name: 'CODE', usage: 'B', type: 'char(6)', row: 3, col: 10, ...(lc ? { lc: true } : {}) }] } } } });
+  const prog = `dcl-f e workstn; exfmt f; dsply code;`;
+  assert.deepEqual(runScreens(prog, d(false), [{ format: 'F', fields: { CODE: 'abc d' } }]).output, ['ABC D']);
+  assert.deepEqual(runScreens(prog, d(true), [{ format: 'F', fields: { CODE: 'abc d' } }]).output, ['abc d']);
+});
+
+test('displays.json : "lc" booléen, refusé sur un zoned', () => {
+  const f = (extra) => () => displaysFrom({ E: { formats: { F: { fields: [{ name: 'N', usage: 'B', row: 1, col: 1, ...extra }] } } } });
+  assert.throws(f({ type: 'char(3)', lc: 'oui' }), /"lc" doit être vrai ou faux/);
+  assert.throws(f({ type: 'zoned(3:0)', lc: true }), /"lc" n'est permis que sur une zone char/);
+  assert.doesNotThrow(f({ type: 'char(3)', lc: true }));
+});
+
+test('WORKSTN : USAGE incompatible avec l opération refusé', () => {
+  const ref = (usage, op, msg) => assert.throws(
+    () => runScreens(`dcl-f ecran workstn usage(${usage}); ${op}`, SAISIE(), [{ format: 'FMT01' }]), msg, `${usage} ${op}`);
+  assert.throws(() => parse('dcl-f ecran workstn usage(*update);'), /\*UPDATE.*fichier écran/);
+  assert.throws(() => parse('dcl-f ecran workstn usage(*input : *output : *delete);'), /\*DELETE.*fichier écran/);
+  ref('*input', 'write fmt01;', /WRITE.*sans USAGE\(\*OUTPUT\)/);
+  ref('*input', 'exfmt fmt01;', /EXFMT.*sans USAGE\(\*OUTPUT\)/);
+  ref('*output', 'read fmt01;', /READ.*sans USAGE\(\*INPUT\)/);
+  ref('*output', 'exfmt fmt01;', /EXFMT.*sans USAGE\(\*INPUT\)/);
+  assert.deepEqual(runScreens('dcl-f ecran workstn usage(*output); write fmt01; dsply 1;', SAISIE(), []).output, ['1']);
+  assert.deepEqual(runScreens('dcl-f ecran workstn usage(*input:*output); exfmt fmt01; dsply 1;', SAISIE(), [{ format: 'FMT01' }]).output, ['1']);
+});
+
+const journal = (log, over = {}) => () => ({ call(p) { log.push(p.option); over.call?.(p); } });
+const deuxEcrans = () => displaysFrom({
+  E1: { formats: { F1: { fields: [] } } },
+  E2: { formats: { F2: { fields: [] } } },
+});
+
+test('appel C : fin en erreur, fichiers ouverts seulement', () => {
+  const log = [];
+  const ctx = { tables: {}, programs: {}, displays: deuxEcrans() };
+  assert.throws(() => run('dcl-f e1 workstn; dcl-s a int(10); dcl-s b int(10); b = 1 / a;', ctx, { screens: journal(log) }), /zéro|division/i);
+  assert.deepEqual(log, ['O', 'C']);
+  log.length = 0;
+  run('dcl-f e1 workstn; dcl-f e2 workstn; dsply 1;', ctx, { screens: journal(log) });
+  assert.deepEqual(log, ['O', 'O', 'C', 'C']);
+});
+
+test('appel C : échec de O du 2e écran, le 1er est fermé', () => {
+  const log = [];
+  let n = 0;
+  const screens = () => { const id = ++n; return { call(p) { log.push(`${id}${p.option}`); if (id === 2 && p.option === 'O') { p.status = '2'; p.message = 'KO'; } } }; };
+  assert.throws(() => run('dcl-f e1 workstn; dcl-f e2 workstn;', { tables: {}, programs: {}, displays: deuxEcrans() }, { screens }), /KO/);
+  assert.deepEqual(log, ['1O', '2O', '1C']);
+});
+
+test('appel C : l erreur d origine l emporte sur un échec de C', () => {
+  const screens = () => ({ call(p) { if (p.option === 'C') { p.status = '2'; p.message = 'C KO'; } } });
+  const ctx = { tables: {}, programs: {}, displays: deuxEcrans() };
+  assert.throws(() => run('dcl-f e1 workstn; dcl-s a int(10); dcl-s b int(10); b = 1 / a;', ctx, { screens }), err => !/C KO/.test(err.message));
+});
+
+test('OPEN, CLOSE et %OPEN sur un fichier écran : refus explicite', () => {
+  for (const code of ['open ecran;', 'close ecran;', 'dsply %open(ecran);']) {
+    assert.throws(() => runScreens(`dcl-f ecran workstn; ${code}`, SAISIE(), []),
+      /sur un fichier écran \(ECRAN\)( : pas encore supporté)?/i, code);
+  }
 });

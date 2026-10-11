@@ -5,7 +5,8 @@ export type ParsedInput = { value: string | number } | { message: string };
 
 export function parseInput(field: DisplayField, text: string): ParsedInput {
   if (field.type.typeName !== 'zoned') {
-    const value = text.replace(/\s+$/, '');
+    const trimmed = text.replace(/\s+$/, '');
+    const value = field.lc ? trimmed : trimmed.toUpperCase();   // sans CHECK(LC), le poste met en majuscules
     if (value.length > field.length) {
       return { message: `Zone ${field.name} : valeur trop longue (${field.length} caractères au plus)` };
     }

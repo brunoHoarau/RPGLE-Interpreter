@@ -29,6 +29,9 @@ export function checkFileChanges(s: InterpreterState, node: any): void {
       throw new Error(`${node.operation.toUpperCase()} attend le nom du fichier ${state.file.name}, pas le format ${state.file.format}`);
     }
   }
+  if (node.type === 'Expression' && node.valueType === 'file' && s.displays.has(String(node.value).toUpperCase())) {
+    throw new NotSupportedError(`%OPEN, %EOF, %FOUND ou %EQUAL sur un fichier écran (${String(node.value).toUpperCase()})`);
+  }
   if (node.type === 'Expression' && node.valueType === 'file') fileState(s, String(node.value));
   for (const value of Object.values(node)) {
     if (value !== null && typeof value === 'object') checkFileChanges(s, value);

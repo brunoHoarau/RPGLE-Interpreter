@@ -34,7 +34,8 @@ export function declareDisplayFile(s: InterpreterState, node: FileDeclarationNod
   for (const format of formats) {
     for (const field of definition.formats[format].fields) declareFileField(s, field.name, field.type, name, parameters);
   }
-  const state = { file: name, definition, routine: s.options.screens(name, definition), indds: node.indds };
+  const state = { file: name, definition, routine: s.options.screens(name, definition), indds: node.indds,
+    usage: { input: node.usage.input, output: node.usage.output } };
   s.displays.set(name, state);
   for (const format of formats) s.displays.set(format, state);
 }
@@ -60,10 +61,24 @@ export function inddsPositions(s: InterpreterState, state: DisplayState): Map<nu
 
 // Appel O de chaque fichier écran, une fois toutes les déclarations contrôlées (sinon un fichier ouvert ne serait jamais fermé)
 export function openDisplayFiles(s: InterpreterState): void {
-  for (const state of new Set(s.displays.values())) callSpecial(s, state.file, 'O');
+  for (const state of new Set(s.displays.values())) {
+    callSpecial(s, state.file, 'O');
+    state.opened = true;
+  }
 }
 
-// Fin de programme : un appel C par fichier écran
-export function closeDisplayFiles(s: InterpreterState): void {
-  for (const state of new Set(s.displays.values())) callSpecial(s, state.file, 'C');
+// Fin de programme : un appel C par fichier écran effectivement ouvert. Si une erreur remonte déjà (fin en
+// erreur, échec d'un O), un échec de C ne la masque pas.
+export function closeDisplayFiles(s: InterpreterState, failing: boolean): void {
+  let failure: unknown;
+  for (const state of new Set(s.displays.values())) {
+    if (!state.opened) continue;
+    state.opened = false;
+    try {
+      callSpecial(s, state.file, 'C');
+    } catch (e) {
+      failure = failure ?? e;
+    }
+  }
+  if (failure !== undefined && !failing) throw failure;
 }

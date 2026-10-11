@@ -18,6 +18,7 @@ export interface DisplayField {
   col?: number;
   length: number;
   condition?: Condition;
+  lc?: boolean;                    // saisie char conservée en minuscules (équivalent DDS CHECK(LC))
 }
 
 export interface DisplayFormat { keys: KeyMap; constants: DisplayConstant[]; fields: DisplayField[] }
@@ -140,6 +141,11 @@ function normalizeField(raw: any, where: string): DisplayField {
     throw new Error(`${here} : longueur invalide pour le type '${raw.type}' (char : 1 ou plus ; zoned : 1 à 63 chiffres, décimales <= chiffres)`);
   }
   const field: DisplayField = { name: raw.name, type, usage: raw.usage, length, condition: condition(raw.if, here) };
+  if (raw.lc !== undefined) {
+    if (typeof raw.lc !== 'boolean') throw new Error(`${here} : "lc" doit être vrai ou faux`);
+    if (type.typeName !== 'char') throw new Error(`${here} : "lc" n'est permis que sur une zone char`);
+    if (raw.lc) field.lc = true;
+  }
   if (raw.usage !== 'H') {
     if (raw.row === undefined || raw.col === undefined) throw new Error(`${here} : "row" et "col" sont obligatoires (sauf usage H)`);
     Object.assign(field, position(raw, length, here));
