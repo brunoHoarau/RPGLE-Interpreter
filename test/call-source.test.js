@@ -133,3 +133,22 @@ test('dcl-pi du programme appelé avec paramètre DS : pas encore supporté', ()
     return;
   ` })), /pas encore supporté/i);
 });
+
+test('%PARMS dans le programme appelé : nombre de paramètres reçus', () => {
+  const caller = `
+  dcl-pr appele extpgm('APPELE');
+    a char(1) const;
+    b char(1) const options(*nopass);
+  end-pr;
+  appele('x');
+  appele('x' : 'y');`;
+  const callee = `
+  dcl-pi *n;
+    a char(1) const;
+    b char(1) const options(*nopass);
+  end-pi;
+  dsply %char(%parms);
+  *inlr = *on;`;
+  const out = run(caller, undefined, sources({ APPELE: callee })).filter(l => !l.startsWith('[APPEL]'));
+  assert.deepEqual(out, ['1', '2']);
+});

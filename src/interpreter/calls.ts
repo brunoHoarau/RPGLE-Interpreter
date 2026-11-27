@@ -53,6 +53,7 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
   const { mainline, subs } = splitSubroutines(proc.body);
   s.subroutines.push(subs);
   s.runtime.pushFrame(proc.name);
+  s.parmCounts.push(argExprs.length);
   s.returnTypes.push(proc.returnType);
   try {
     params.forEach((p, i) => {
@@ -76,6 +77,7 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
     s.subroutines.pop();
     s.returnTypes.pop();
     s.runtime.popFrame();
+    s.parmCounts.pop();
   }
 
   byReference.forEach((isRef, i) => {
@@ -94,6 +96,13 @@ export function declaredType(s: InterpreterState, expr: ExpressionNode | undefin
   if (expr?.valueType === 'call') {
     const name = expr.value.name.toLowerCase();
     return (s.procedures.get(name) ?? s.prototypes.get(name))?.returnType;
+  }
+  // %DEC(x : p : d) et %DECH(x : p : d) sont de type packed(p : d)
+  if (expr?.valueType === 'builtin' && ['%dec', '%dech'].includes(expr.value.name.toLowerCase())) {
+    const [p, d] = (expr.value.args ?? []).slice(1);
+    if (p?.valueType === 'number' && d?.valueType === 'number') {
+      return { typeName: 'packed', length: Number(p.value), decimals: Number(d.value) } as DataTypeNode;
+    }
   }
   return undefined;
 }

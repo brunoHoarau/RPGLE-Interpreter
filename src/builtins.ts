@@ -3,7 +3,7 @@
 
 import { DateTimeKind, DurationUnit, RpgDate, RpgDuration, RpgTime, RpgTimestamp, diffDateTime, fromClock, isDateTime, kindOf, parseIso, subdt, unitFromName } from './datetime';
 import { describeValue } from './datatypes';
-import { NotSupportedError, RpgError, STATUS_INVALID_DATE, STATUS_INVALID_NUMERIC, incompatibleTypes } from './errors';
+import { NotSupportedError, RpgError, STATUS_INVALID_DATE, STATUS_INVALID_NUMERIC, STATUS_STRING_RANGE, incompatibleTypes } from './errors';
 
 // %INT et %DEC sur un texte : il doit être numérique, sinon RNX0105
 // Grammaire IBM : blancs n'importe où, un signe en tête ou en queue, un seul séparateur décimal (. ou ,), un chiffre au moins
@@ -29,6 +29,34 @@ function truncateDecimals(n: number, decimals: number): number {
   const [int, frac = ''] = text.split('.');
   const result = Number(decimals > 0 ? `${int}.${frac.slice(0, decimals)}` : int);
   return n < 0 && result !== 0 ? -result : result;   // jamais -0
+}
+
+// %INTH / %DECH : arrondi demi vers l'extérieur, calculé sur le texte décimal (1.005 donne 1.01 à 2 décimales)
+function halfAdjust(n: number, decimals: number): number {
+  let text = Math.abs(n).toPrecision(15);
+  if (/e/i.test(text)) text = Math.abs(n).toFixed(20);
+  const [int, frac = ''] = text.split('.');
+  const padded = frac.padEnd(decimals + 1, '0');
+  let digits = BigInt(int + padded.slice(0, decimals));
+  if (padded[decimals] >= '5') digits += 1n;
+  const str = digits.toString().padStart(decimals + 1, '0');
+  const result = Number(decimals > 0 ? `${str.slice(0, -decimals)}.${str.slice(-decimals)}` : str);
+  return n < 0 && result !== 0 ? -result : result;   // jamais -0
+}
+
+// %DEC / %DECH : contrôles communs de précision ; round choisit troncature ou arrondi
+function toDecimal(name: string, value: any, precision: number | undefined, decimals: number | undefined, round: boolean): number {
+  const num = numericText(value);
+  // Précision demandée supérieure à 15 et texte de plus de 15 chiffres significatifs : non exact
+  if (precision !== undefined && precision > 15 && typeof value === 'string' && value.replace(/\D/g, '').replace(/^0+/, '').length > 15) {
+    throw new NotSupportedError(`${name} d'une valeur de plus de 15 chiffres`);
+  }
+  const result = decimals === undefined ? num : round ? halfAdjust(num, decimals) : truncateDecimals(num, decimals);
+  // La partie entière doit tenir dans precision - decimals chiffres ; sinon le comportement IBM n'est pas vérifié
+  if (precision !== undefined && String(Math.trunc(Math.abs(result))).replace(/^0$/, '').length > precision - (decimals ?? 0)) {
+    throw new NotSupportedError(`${name} : valeur dont la partie entière dépasse la précision demandée`);
+  }
+  return result;
 }
 
 export interface BuiltinContext {
@@ -95,8 +123,40 @@ function fileBuiltin(name: string): Builtin {
   return () => { throw new Error(`${name} doit être évalué par l'interpréteur`); };
 }
 
+// Plage [start, start + length) d'une chaîne, contrôlée comme sur IBM i (statut 00100 sinon)
+function stringRange(name: string, str: string, start: number = 1, length?: number): [number, number] {
+  const len = length ?? str.length - start + 1;
+  if (!Number.isInteger(start) || start < 1 || start > str.length || len < 0 || start - 1 + len > str.length) {
+    throw new RpgError(STATUS_STRING_RANGE, `${name} : position ${start} ou longueur ${len} hors de la chaîne`);
+  }
+  return [start - 1, start - 1 + len];
+}
+
+// %XLATE(from : to : chaîne {: début}) : un caractère répété dans from prend sa première correspondance ;
+// les caractères de from au-delà de la longueur de to ne sont pas traduits
+function xlate(from: any, to: any, source: any, start?: number): string {
+  const str = String(source);
+  const [begin] = stringRange('%XLATE', str, start);
+  const map = new Map<string, string>();
+  const f = String(from), t = String(to);
+  for (let i = 0; i < Math.min(f.length, t.length); i++) {
+    if (!map.has(f[i])) map.set(f[i], t[i]);
+  }
+  return str.slice(0, begin) + Array.from(str.slice(begin), c => map.get(c) ?? c).join('');
+}
+
+// %SCANRPL(cherché : remplacement : chaîne {: début {: longueur}}) : occurrences non chevauchantes, de gauche à droite
+function scanrpl(scan: any, replacement: any, source: any, start?: number, length?: number): string {
+  const str = String(source), s = String(scan);
+  if (s.length === 0) throw new NotSupportedError('%SCANRPL avec une chaîne cherchée vide');
+  const [begin, end] = stringRange('%SCANRPL', str, start, length);
+  return str.slice(0, begin) + str.slice(begin, end).split(s).join(String(replacement)) + str.slice(end);
+}
+
 export const BUILTINS: { [name: string]: Builtin } = {
   '%status': ctx => ctx.status,
+  '%xlate': (_, from: any, to: any, source: any, start?: number) => xlate(from, to, source, start),
+  '%scanrpl': (_, scan: any, rpl: any, source: any, start?: number, length?: number) => scanrpl(scan, rpl, source, start, length),
   // %ERROR dépend de la dernière opération à extenseur (E) : l'interpréteur la traite lui-même
   '%error': fileBuiltin('%ERROR'),
   // %EOF, %FOUND, %EQUAL et %OPEN dépendent de l'état des fichiers : l'interpréteur les traite lui-même
@@ -117,6 +177,11 @@ export const BUILTINS: { [name: string]: Builtin } = {
   '%diff': (_, a: any, b: any, unit: string) => diff(a, b, unit),
   '%subdt': (_, value: any, unit: string) => subdtBuiltin(value, unit),
   '%len': (_, str: any) => String(str).length,
+  '%size': () => { throw new NotSupportedError('%SIZE hors évaluation'); }, // évalué dans interpreter/evaluate/type-builtins.ts
+  '%parms': () => { throw new NotSupportedError('%PARMS hors évaluation'); },
+  '%editw': () => { throw new NotSupportedError('%EDITW hors évaluation'); },
+  '%hival': () => { throw new NotSupportedError('%HIVAL hors évaluation'); },
+  '%loval': () => { throw new NotSupportedError('%LOVAL hors évaluation'); },
   '%elem': (_, count: number) => count, // le nombre d'éléments est lu sur le tableau par l'évaluation
   '%lookup': (_, index: number) => index, // la recherche est faite par l'évaluation (src/interpreter/array-ops.ts)
   '%trim': (_, str: any) => String(str).trim(),
@@ -128,18 +193,9 @@ export const BUILTINS: { [name: string]: Builtin } = {
     return length !== undefined ? str.substr(startPos, length) : str.substr(startPos);
   },
   '%int': (_, value: any) => Math.trunc(numericText(value)),
-  '%dec': (_, value: any, precision?: number, decimals?: number) => {
-    const num = numericText(value);
-    // Précision demandée supérieure à 15 et texte de plus de 15 chiffres significatifs : non exact
-    if (precision !== undefined && precision > 15 && typeof value === 'string' && value.replace(/\D/g, '').replace(/^0+/, '').length > 15) {
-      throw new NotSupportedError('%DEC d\'une valeur de plus de 15 chiffres');
-    }
-    // La partie entière doit tenir dans precision - decimals chiffres ; sinon le comportement IBM n'est pas vérifié
-    if (precision !== undefined && String(Math.trunc(Math.abs(num))).replace(/^0$/, '').length > precision - (decimals ?? 0)) {
-      throw new NotSupportedError('%DEC : valeur dont la partie entière dépasse la précision demandée');
-    }
-    return decimals !== undefined ? truncateDecimals(num, decimals) : num;
-  },
+  '%dec': (_, value: any, precision?: number, decimals?: number) => toDecimal('%DEC', value, precision, decimals, false),
+  '%dech': (_, value: any, precision: number, decimals: number) => toDecimal('%DECH', value, precision, decimals, true),
+  '%inth': (_, value: any) => halfAdjust(numericText(value), 0),
   '%char': (_, value: any) => String(value),
   // %EDITC a besoin du type déclaré : évalué dans interpreter/evaluate/evaluate.ts
   '%editc': () => { throw new NotSupportedError('%EDITC hors évaluation'); },

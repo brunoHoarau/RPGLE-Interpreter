@@ -1,3 +1,4 @@
+import { editwBuiltin, limitBuiltin, sizeBuiltin } from './type-builtins';
 import { ExpressionNode } from '../../types';
 import { describeValue, formatChar, isDataStructure } from '../../datatypes';
 import { FigurativeValue, isDateTime, isDuration } from '../../datetime';
@@ -84,6 +85,10 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
     if (builtin === '%elem') return s.runtime.executeBuiltin('%elem', [s.runtime.arrayCount(expr.value.args[0].value)]);
     if (builtin === '%lookup') return s.runtime.executeBuiltin('%lookup', [lookup(s, expr.value.args)]);
     if (builtin === '%editc') return editcBuiltin(s, expr.value.args);
+    if (builtin === '%parms') return s.parmCounts[s.parmCounts.length - 1] ?? 0;
+    if (builtin === '%size') return sizeBuiltin(s, expr.value.args);
+    if (builtin === '%editw') return editwBuiltin(s, expr.value.args, e => evaluate(s, e));
+    if (builtin === '%hival' || builtin === '%loval') return limitBuiltin(s, builtin, expr.value.args);
     const isChar = builtin === '%char';
     // Le 2e argument (*ISO) est un format, inutile à évaluer
     const args = (isChar ? expr.value.args.slice(0, 1) : expr.value.args).map((arg: ExpressionNode) => evaluate(s, arg));

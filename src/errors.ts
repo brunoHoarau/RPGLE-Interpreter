@@ -8,6 +8,7 @@ export class RpgError extends Error {
 }
 
 // Statuts programme utilisés par l'interpréteur
+export const STATUS_STRING_RANGE = 100;     // RNX0100 : position ou longueur hors de la chaîne
 export const STATUS_DIVIDE_BY_ZERO = 102;   // RNX0102
 export const STATUS_OVERFLOW = 103;         // RNX0103
 export const STATUS_INVALID_NUMERIC = 105;  // RNX0105

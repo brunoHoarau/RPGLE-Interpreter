@@ -66,6 +66,7 @@ export class InterpreterState {
   context: ExecutionContext;
   options: InterpreterOptions;
   programDepth = 0; // Niveau d'imbrication des appels de programmes source
+  parmCounts: number[] = []; // %PARMS : nombre de paramètres passés, au programme puis à chaque procédure en cours
   files = new Map<string, FileState>();          // Par nom de fichier et par nom de format, en majuscules
   displays = new Map<string, DisplayState>();    // Fichiers écran, par nom de fichier et par nom de format, en majuscules
   fileFields = new Map<string, { type: DataTypeNode; file: string }>(); // Zones des fichiers, en minuscules
