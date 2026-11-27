@@ -5,6 +5,7 @@ import { parseDateTimeSpecial } from '../declarations/variables';
 import { requireFile } from '../files';
 import { parseExpression } from '../expressions/operators';
 import { parseElement, elementExpression, refuseUnindexed } from '../expressions/element';
+import { isSubstringTarget, parseSubstringAssignment } from './substring';
 
 // IBM i refuse à la compilation d'affecter une constante ou un paramètre CONST
 export function checkWritable(p: ParserState, name: string, line: number): void {
@@ -44,6 +45,7 @@ export function parseAssignmentOrCall(p: ParserState): ASTNode {
   }
 
   // EVAL var = expr ; les extenseurs (H, M, R) ne sont pas supportés
+  if (lower === 'eval' && isSubstringTarget(p)) return parseSubstringAssignment(p, false);
   if (lower === 'eval' && (p.isName() || p.check(TokenType.LPAREN))) {
     if (p.check(TokenType.LPAREN)) {
       const extender = p.peekNext();
@@ -54,7 +56,7 @@ export function parseAssignmentOrCall(p: ParserState): ASTNode {
 
   // EVALR{(MR)} var = expr : affectation cadrée à droite (cible char fixe, contrôlée à l'exécution).
   // M et R ne portent que sur la précision numérique : sans effet sur un résultat caractère.
-  if (lower === 'evalr' && (p.isName() || p.check(TokenType.LPAREN))) {
+  if (lower === 'evalr' && (p.isName() || p.check(TokenType.LPAREN) || isSubstringTarget(p))) {
     if (p.check(TokenType.LPAREN)) {
       const { text, end } = p.parenText();
       if (!/^[mr]$/i.test(text) || p.tokens[end]?.type !== TokenType.RPAREN) {
@@ -62,6 +64,7 @@ export function parseAssignmentOrCall(p: ParserState): ASTNode {
       }
       p.pos = end + 1;
     }
+    if (isSubstringTarget(p)) return parseSubstringAssignment(p, true);
     if (compoundBeforeEquals(p)) {
       throw new Error(`EVALR n'admet que l'affectation simple (=), pas +=, -=, *=, /= ni **= (ligne ${nameToken.line})`);
     }

@@ -9,8 +9,10 @@ import { formatFloat } from '../float';
 import { floatLength } from './float';
 import { formatNumericDsply } from './dsply-format';
 import { InterpreterState } from './state';
+import { assignSubstring } from './substring';
 
 export function executeAssignment(s: InterpreterState, node: any): void {
+  if (node.substring) return assignSubstring(s, node);
   if (node.rightAdjust) return assignRightAdjusted(s, node);
   if (node.target) return assignElement(s, node);
   if (s.runtime.isArray(node.variable)) throw s.runtime.wholeArray(node.variable);

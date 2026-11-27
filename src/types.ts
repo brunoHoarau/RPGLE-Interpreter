@@ -137,6 +137,7 @@ export interface AssignmentNode {
   target?: ElementRef;   // cible arr(index) = ... (sinon la cible est `variable`)
   value: ExpressionNode;
   rightAdjust?: boolean; // EVALR
+  substring?: { start: ExpressionNode; length?: ExpressionNode; current: ExpressionNode }; // %SUBST(cible:…) = …
 }
 
 export interface IfStatementNode {

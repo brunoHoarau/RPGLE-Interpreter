@@ -4,6 +4,7 @@ import { FILE_OPERATION_TOKENS, INDICATOR, unsupported, COMPOUND_OPERATORS } fro
 import { isFileKeywordNameUse, parseFileOperation } from '../files';
 import { parseIfStatement, parseSelectStatement, parseLoop, parseMonitor, parseReturn } from './control';
 import { checkCompound, advanceCompound, compoundValue, parseAssignmentOrCall } from './assignment';
+import { isSubstringTarget, parseSubstringAssignment } from './substring';
 import { parseDsply, parseSQL } from './io';
 import { isOpcode, parseExsr, parseLeavesr } from '../subroutines';
 import { isSorta, parseSorta, parseForEach } from './array-ops';
@@ -68,6 +69,7 @@ export function parseStatement(p: ParserState): ASTNode {
     return { type: 'Assignment', variable, value };
   }
 
+  if (isSubstringTarget(p)) return parseSubstringAssignment(p, false);
   if (token.type === TokenType.BUILTIN && token.value.toLowerCase() === '%elem') {
     throw unsupported("L'affectation de %ELEM", token);
   }

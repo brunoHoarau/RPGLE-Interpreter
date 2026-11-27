@@ -64,3 +64,10 @@ test('%SCANRPL : position ou longueur hors de la chaîne → statut 00100', () =
   assert.deepEqual(statusOf(`%scanrpl('a':'b':'abc':2:3)`), '100');
   assert.deepEqual(statusOf(`%scanrpl('a':'b':'abc':0)`), '100');
 });
+
+test('%SUBST lu : position ou longueur hors de la chaîne → statut 00100', () => {
+  assert.deepEqual(statusOf(`%subst('abc':0)`), '100');
+  assert.deepEqual(statusOf(`%subst('abc':4)`), '100');
+  assert.deepEqual(statusOf(`%subst('abc':2:3)`), '100');
+  assert.deepEqual(run(`dsply %subst('Hello World':5+2:10-7);`), ['Wor']);
+});
