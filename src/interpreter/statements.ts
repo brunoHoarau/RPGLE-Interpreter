@@ -33,9 +33,9 @@ function assignRightAdjusted(s: InterpreterState, node: any): void {
   const target = node.target ? (node.target.field ? `${node.target.name}.${node.target.field}` : node.target.name) : node.variable;
   if (s.runtime.isArray(target) && !node.target) throw s.runtime.wholeArray(target);
   const type = s.runtime.getType(target);
-  if (type?.typeName === 'varchar') throw new NotSupportedError(`EVALR vers ${target.toUpperCase()} de longueur variable`);
+  // IBM i : la cible d'EVALR est une zone caractère, graphique ou UCS-2 de longueur fixe
   if (type?.typeName !== 'char') {
-    throw new Error(`EVALR exige une cible caractère : ${target.toUpperCase()} est ${type ? describeType(type) : 'une structure de données'}`);
+    throw new Error(`EVALR exige une cible caractère de longueur fixe : ${target.toUpperCase()} est ${type ? describeType(type) : 'une structure de données'}`);
   }
   const length = type.length ?? 1;
   const text = String(valueFor(s, node.value, type, target));

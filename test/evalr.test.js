@@ -59,13 +59,33 @@ test('EVALR vers une cible non caractère est refusé', () => {
   assert.throws(() => run(`dcl-s n int(10); evalr n = 5;`), /EVALR/);
 });
 
-test('EVALR vers un varchar est refusé', () => {
-  assert.throws(() => run(`dcl-s v varchar(5); evalr v = 'a';`), NOT_SUPPORTED);
+test('EVALR vers un varchar est une erreur (cible de longueur fixe exigée)', () => {
+  assert.throws(() => run(`dcl-s v varchar(5); evalr v = 'a';`), /longueur fixe/);
 });
 
-test('EVALR avec un extenseur ou un opérateur composé est refusé', () => {
-  assert.throws(() => parse(`dcl-s c char(5); evalr(m) c = 'a';`), NOT_SUPPORTED);
-  assert.throws(() => parse(`dcl-s c char(5); evalr c += 'a';`), NOT_SUPPORTED);
+test('EVALR(M) et EVALR(R) sont sans effet sur un résultat caractère', () => {
+  assert.deepEqual(run(`
+    dcl-s c char(4);
+    evalr(m) c = 'a';
+    ${show('c')}
+    evalr(r) c = 'bc';
+    ${show('c')}
+  `), ['[   a]', '[  bc]']);
+});
+
+test('EVALR(H) et les opérateurs composés sont des erreurs', () => {
+  assert.throws(() => parse(`dcl-s c char(5); evalr(h) c = 'a';`), /M et R/);
+  assert.throws(() => parse(`dcl-s c char(5); evalr c += 'a';`), /affectation simple/);
+});
+
+test('exemple IBM : EVALR de Johann Strauss et de Mozart dans un char(20)', () => {
+  assert.deepEqual(run(`
+    dcl-s name char(20);
+    evalr name = 'Johann Strauss';
+    ${show('name')}
+    evalr name = 'Wolfgang Amadeus Mozart';
+    ${show('name')}
+  `), ['[      Johann Strauss]', '[fgang Amadeus Mozart]']);
 });
 
 test('evalr reste utilisable comme nom de variable', () => {

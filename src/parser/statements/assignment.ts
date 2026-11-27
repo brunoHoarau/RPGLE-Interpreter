@@ -52,13 +52,19 @@ export function parseAssignmentOrCall(p: ParserState): ASTNode {
     return parseAssignmentOrCall(p);
   }
 
-  // EVALR var = expr : affectation cadrée à droite (cible caractère, contrôlée à l'exécution)
+  // EVALR{(MR)} var = expr : affectation cadrée à droite (cible char fixe, contrôlée à l'exécution).
+  // M et R ne portent que sur la précision numérique : sans effet sur un résultat caractère.
   if (lower === 'evalr' && (p.isName() || p.check(TokenType.LPAREN))) {
     if (p.check(TokenType.LPAREN)) {
-      const extender = p.peekNext();
-      throw unsupported(`EVALR(${(extender?.value ?? '').toUpperCase()})`, nameToken);
+      const { text, end } = p.parenText();
+      if (!/^[mr]$/i.test(text) || p.tokens[end]?.type !== TokenType.RPAREN) {
+        throw new Error(`EVALR(${text.toUpperCase()}) : EVALR n'admet que les extenseurs M et R (ligne ${nameToken.line})`);
+      }
+      p.pos = end + 1;
     }
-    if (compoundBeforeEquals(p)) throw unsupported('Un opérateur composé (+=, -=…) avec EVALR', nameToken);
+    if (compoundBeforeEquals(p)) {
+      throw new Error(`EVALR n'admet que l'affectation simple (=), pas +=, -=, *=, /= ni **= (ligne ${nameToken.line})`);
+    }
     const node = parseAssignmentOrCall(p);
     if (node.type !== 'Assignment') throw new Error(`EVALR attend une affectation à la ligne ${nameToken.line}`);
     return { ...node, rightAdjust: true } as ASTNode;
