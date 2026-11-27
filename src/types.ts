@@ -152,9 +152,9 @@ export interface SelectStatementNode {
   otherBlock?: ASTNode[];
 }
 
-// CLEAR cible : nom (ou 'ds.champ', '*in05'), ou élément tab(i) / ds(i) / ds(i).champ
+// CLEAR ou RESET cible : nom (ou 'ds.champ', '*in05'), ou élément tab(i) / ds(i) / ds(i).champ
 export interface ClearNode {
-  type: 'Clear';
+  type: 'Clear' | 'Reset';
   name: string;
   target?: ElementRef;
   line: number;

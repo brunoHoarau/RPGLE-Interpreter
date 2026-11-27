@@ -13,6 +13,7 @@ import { splitSubroutines } from './subroutines';
 import { checkAliasedArguments } from './alias-check';
 import { DsArgument, checkDsParameters, copyBackDs, declareDsParameter, dsArgument } from './ds-params';
 import { LeaveSignal, IterSignal, ReturnSignal } from './signals';
+import { rememberParameter } from './reset';
 
 // Appelle une procédure utilisateur, sinon une procédure du runtime.
 // Les arguments restent des expressions : un paramètre passé par référence
@@ -58,6 +59,7 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
       if (dsArgs[i]) declareDsParameter(s, p, dsArgs[i]!);
       else s.runtime.declareVariable(p.name, args[i], p.dataType);
       if (p.isConst) s.runtime.markReadOnly(p.name);
+      rememberParameter(s, p.name);
     });
     try {
       executeBlock(s, mainline);

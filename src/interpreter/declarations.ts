@@ -7,6 +7,7 @@ import { formatLayout, tableLayout } from './files/layout';
 import { evaluate } from './evaluate/evaluate';
 import { DsOrigin } from '../ds-shape';
 import { InterpreterState } from './state';
+import { rememberInitial } from './reset';
 
 export const isZeroOrBlank = (expr: ExpressionNode | undefined) =>
   expr?.valueType === 'special' && /^\*(zero|blank)s?$/.test(expr.value);
@@ -30,6 +31,7 @@ export function executeVariableDeclaration(s: InterpreterState, node: any): void
   } else {
     s.runtime.declareVariable(node.name, initial, node.dataType);
   }
+  rememberInitial(s, [node.name]);
 }
 
 // Valeur de INZ ; INZ(*SYS) et INZ(*JOB) lisent l'horloge (*JOB : date du jour, faute de travail IBM i)
@@ -71,7 +73,14 @@ export function executeConstantDeclaration(s: InterpreterState, node: any): void
   s.runtime.setConstant(node.name, evaluate(s, node.value), node.value);
 }
 
+// DS : sa valeur de RESET, et celle de chaque sous-zone d'une DS non qualifiée (nommée seule)
 export function executeDataStructure(s: InterpreterState, node: any): void {
+  declareDataStructure(s, node);
+  const fields = node.isQualified ? [] : s.runtime.getShape(node.name)!.fields.map(f => f.name);
+  rememberInitial(s, [node.name, ...fields]);
+}
+
+function declareDataStructure(s: InterpreterState, node: any): void {
   refuseFileFieldName(s, node.name);
   if (node.like) return declareLikeDataStructure(s, node.name, node.isQualified, node.like, node.dim);
   if (!node.isQualified) for (const field of node.fields) refuseFileFieldName(s, field.name, field.dataType);

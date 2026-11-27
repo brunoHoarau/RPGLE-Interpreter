@@ -1,5 +1,6 @@
 import { executeSorta } from './array-ops';
 import { executeClear } from './clear';
+import { executeReset, rememberGlobals, rememberParameter } from './reset';
 import { ASTNode, ProgramNode, FileOperationNode } from '../types';
 import { describeValue } from '../datatypes';
 import { NotSupportedError } from '../errors';
@@ -28,6 +29,8 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
   s.fileFields.clear();
   s.lastIndicators = { eof: false, found: false, equal: false };
   s.lastError = false;
+  s.initialValues.clear();
+  s.initializing = false;
 
   // Déclarer SQLCOD et SQLSTT par défaut
   s.runtime.declareVariable('SQLCOD', 0, { type: 'DataType', typeName: 'int', length: 10 });
@@ -54,6 +57,7 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
     }
     s.runtime.declareVariable(p.name, args[i], p.dataType);
     if (p.isConst) s.runtime.markReadOnly(p.name);
+    rememberParameter(s, p.name);
   });
 
   // Fichiers : avant les autres déclarations, leurs zones sont des variables globales
@@ -85,7 +89,12 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
     const { mainline, subs } = splitSubroutines(ast.body);
     s.subroutines.push(subs);
     try {
-      if (subs.has('*inzsr')) executeSubroutine(s, '*inzsr');
+      if (subs.has('*inzsr')) {
+        s.initializing = true;
+        executeSubroutine(s, '*inzsr');
+        s.initializing = false;
+      }
+      rememberGlobals(s);
       for (const node of mainline) {
         if (node.type !== 'VariableDeclaration' &&
             node.type !== 'ConstantDeclaration' &&
@@ -129,6 +138,8 @@ export function executeNode(s: InterpreterState, node: ASTNode): any {
       return executeLoop(s, node as any);
     case 'Clear':
       return executeClear(s, node as any);
+    case 'Reset':
+      return executeReset(s, node as any);
     case 'Sorta':
       return executeSorta(s, node as any);
     case 'ProcedureCall':

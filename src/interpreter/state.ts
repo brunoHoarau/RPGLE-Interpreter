@@ -70,7 +70,9 @@ export class InterpreterState {
   displays = new Map<string, DisplayState>();    // Fichiers écran, par nom de fichier et par nom de format, en majuscules
   fileFields = new Map<string, { type: DataTypeNode; file: string }>(); // Zones des fichiers, en minuscules
   lastIndicators = { eof: false, found: false, equal: false }; // %EOF, %FOUND, %EQUAL sans argument
-  lastError = false; // %ERROR : dernière opération avec extenseur (E), indicateur global au programme
+  lastError = false;
+  initialValues = new Map<string, Map<string, any>>(); // Valeurs de RESET : '' globales, sinon par procédure (reset.ts)
+  initializing = false; // *INZSR en cours : RESET d'une globale interdit (00109) // %ERROR : dernière opération avec extenseur (E), indicateur global au programme
 
   constructor(context?: ExecutionContext, options: InterpreterOptions = {}) {
     this.context = context ?? emptyContext();
