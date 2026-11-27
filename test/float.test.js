@@ -39,6 +39,7 @@ test('INZ d\'un flottant, %CHAR sur 23 caractères (8 octets) ou 14 (4 octets)',
   assert.equal(f4, '+1.5000000E+03');
   assert.equal(f4.length, 14);
   assert.equal(show('dcl-s f float(4) inz(-1234.5);', 'f'), '-1.2345000E+03');
+  assert.equal(show('dcl-s f float(8) inz(1234.567890123456);', 'f'), '+1.234567890123456E+003');
   assert.equal(show('dcl-s f float(8) inz(1.5);', 'f * 2'), '+3.000000000000000E+000');
   assert.equal(show('dcl-s f float(4) inz(1.5);', 'f * 2').length, 23);
   assert.equal(show('dcl-s x char(1);', '%float(1)'), '+1.000000000000000E+000');
