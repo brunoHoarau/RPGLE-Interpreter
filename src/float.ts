@@ -7,14 +7,15 @@ export function checkFloat(value: number): number {
   return value;
 }
 
-// Format externe IBM i : signe toujours écrit, mantisse normalisée, E, signe, 3 chiffres d'exposant
-//   float(8) : 23 caractères, 16 chiffres significatifs ; float(4) : 14 caractères, 7 chiffres
+// Format externe IBM i : signe toujours écrit, mantisse normalisée, E, signe de l'exposant
+//   float(8) : 23 caractères, 16 chiffres significatifs, exposant sur 3 chiffres (+1.000000000000000E+000)
+//   float(4) : 14 caractères, 8 chiffres significatifs, exposant sur 2 chiffres (+1.2345678E+03)
 export function formatFloat(value: number, length: 4 | 8): string {
   checkFloat(value);
-  const [mantissa, exponent] = Math.abs(value).toExponential(length === 4 ? 6 : 15).split('e');
+  const [mantissa, exponent] = Math.abs(value).toExponential(length === 4 ? 7 : 15).split('e');
   const exp = Number(exponent);
   const sign = value < 0 ? '-' : '+';
-  return `${sign}${mantissa}E${exp < 0 ? '-' : '+'}${String(Math.abs(exp)).padStart(3, '0')}`;
+  return `${sign}${mantissa}E${exp < 0 ? '-' : '+'}${String(Math.abs(exp)).padStart(length === 4 ? 2 : 3, '0')}`;
 }
 
 // %FLOAT d'un texte : blancs ignorés, signe, point ou virgule, exposant E permis ; sinon RNX0105
