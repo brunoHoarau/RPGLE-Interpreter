@@ -56,12 +56,26 @@ export function lookup(s: InterpreterState, args: ExpressionNode[]): number {
   return 0;
 }
 
+// Éléments désignés par %SUBARR(name : début {: nombre}) (tous sans début), bornés par %ELEM :
+// début de 1 à %ELEM, nombre de 1 aux éléments restants, sinon 00121
+export function subarrRange(s: InterpreterState, name: string, start?: ExpressionNode, count?: ExpressionNode): [number, number] {
+  const elements = s.runtime.arrayCount(name);
+  if (!start) return [1, elements];
+  const label = `%SUBARR(${name.toUpperCase()})`;
+  const from = elementIndexValue(evaluate(s, start), `${label}, début`);
+  const number = count ? elementIndexValue(evaluate(s, count), `${label}, nombre`) : elements - from + 1;
+  if (from < 1 || from > elements || number < 1 || from + number - 1 > elements) {
+    throw new RpgError(STATUS_ARRAY_INDEX, `${label} : début ${from}${count ? ` et nombre ${number}` : ''} hors des ${elements} éléments du tableau (RNX0121)`);
+  }
+  return [from, from + number - 1];
+}
+
 // SORTA[(A|D)] tab | d(*).champ : tri stable des éléments courants (ordre de compare, donc EBCDIC) ; les DS sont déplacées entières
 export function executeSorta(s: InterpreterState, node: any): void {
   operandType(s, node, 'SORTA');
-  const store = s.runtime.array(node.name);
-  const items = materialize(store);
+  const [from, to] = subarrRange(s, node.name, node.start, node.count);
+  const items = materialize(s.runtime.array(node.name));
   const key = (item: any) => (node.field ? item[node.field.toLowerCase()] : item);
-  const sorted = [...items].sort((a, b) => (node.descending ? -1 : 1) * compare(key(a), key(b)));
-  sorted.forEach((item, i) => { items[i] = item; });
+  const sorted = items.slice(from - 1, to).sort((a, b) => (node.descending ? -1 : 1) * compare(key(a), key(b)));
+  sorted.forEach((item, i) => { items[from - 1 + i] = item; });
 }

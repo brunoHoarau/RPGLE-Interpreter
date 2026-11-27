@@ -4,6 +4,7 @@ import { INDICATOR, unsupported } from '../constants';
 import { isOpcode } from '../subroutines';
 import { checkWritable } from './assignment';
 import { parseElement, wholeDsArray } from '../expressions/element';
+import { parseWholeSubarr } from '../expressions/array-operand';
 
 // CLEAR/RESET cible ; : le mot est un code opération et non une variable (clear = 1) ni un appel (clear(x))
 export const isClear = (p: ParserState): boolean => isOpcode(p, 'clear') || isOpcode(p, 'reset');
@@ -24,6 +25,12 @@ export function parseClear(p: ParserState): ASTNode {
     p.advance();
     p.expect(TokenType.SEMICOLON);
     return { type, name: word, line } as ASTNode;
+  }
+  if (token.type === TokenType.BUILTIN && token.value.toLowerCase() === '%subarr') {
+    const { name, start, count } = parseWholeSubarr(p, op);
+    checkWritable(p, name, line);
+    p.expect(TokenType.SEMICOLON);
+    return { type, name, range: { start, count }, line } as ASTNode;
   }
   if (!p.isName()) throw new Error(`${op} attend un nom de variable (ligne ${token.line})`);
   const nameToken = p.advance();

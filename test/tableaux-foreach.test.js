@@ -165,7 +165,7 @@ test('FOR-EACH : catégorie incompatible, disposition différente', () => {
 test('FOR-EACH : refus et erreurs de compilation', () => {
   const decl = 'dcl-s t int(10) dim(3); dcl-s x int(10); dcl-s s char(5);';
   assert.throws(() => parse(`${decl} for-each(h) x in t; endfor;`), NOT_SUPPORTED);
-  for (const src of ['%subarr(t : 1 : 2)', '%list(1 : 2)', "%split('a b')", '%range(1 : 3)']) {
+  for (const src of ['%list(1 : 2)', "%split('a b')", '%range(1 : 3)']) {
     assert.throws(() => parse(`${decl} for-each x in ${src}; endfor;`), NOT_SUPPORTED, src);
   }
   assert.throws(() => parse(`${decl} for-each x in s; endfor;`), err => !NOT_SUPPORTED.test(err.message) && /tableau/i.test(err.message));

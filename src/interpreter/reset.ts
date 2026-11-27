@@ -4,6 +4,7 @@ import { elementTarget } from './evaluate/element';
 import { assignTo } from './statements';
 import { shapeOf, checkTarget } from './clear';
 import { InterpreterState } from './state';
+import { subarrRange } from './array-ops';
 
 // Valeurs de RESET : celles de fin d'initialisation (INZ, puis *INZSR) pour le programme principal,
 // celles du premier appel avant ses calculs pour les variables locales d'une procédure.
@@ -52,6 +53,15 @@ export function rememberGlobals(s: InterpreterState): void {
   }
 }
 
+// tab(i), ds(i), ds(i).champ : l'élément enregistré, ou la valeur initiale d'un élément au-delà
+function resetElement(s: InterpreterState, name: string, saved: any[], at: number | '*next', field?: string): void {
+  const runtime = s.runtime;
+  const element = at !== '*next' && at <= saved.length ? copy(saved[at - 1]) : runtime.array(name).fresh();
+  if (field) return runtime.setElementFields(name, at, [[field, element[field.toLowerCase()]]]);
+  if (runtime.isDsArray(name)) return runtime.setElementFields(name, at, Object.entries(element));
+  runtime.setElement(name, at, element);
+}
+
 export function executeReset(s: InterpreterState, node: any): void {
   const { name, target } = node;
   const runtime = s.runtime;
@@ -66,14 +76,11 @@ export function executeReset(s: InterpreterState, node: any): void {
   if (saved === PARAMETER) throw new NotSupportedError(`RESET du paramètre ${name.toUpperCase()}`);
   if (saved === undefined) throw new NotSupportedError(`RESET de ${name.toUpperCase()} (pas de valeur d'initialisation connue)`);
 
-  if (target) {
-    // tab(i), ds(i), ds(i).champ
-    const store = runtime.array(name);
-    const at = elementTarget(s, target);
-    const element = at !== '*next' && at <= saved.length ? copy(saved[at - 1]) : store.fresh();
-    if (target.field) return runtime.setElementFields(name, at, [[target.field, element[target.field.toLowerCase()]]]);
-    if (runtime.isDsArray(name)) return runtime.setElementFields(name, at, Object.entries(element));
-    return runtime.setElement(name, at, element);
+  if (target) return resetElement(s, name, saved, elementTarget(s, target), target.field);
+  if (node.range) {
+    const [from, to] = subarrRange(s, name, node.range.start, node.range.count);
+    for (let i = from; i <= to; i++) resetElement(s, name, saved, i);
+    return;
   }
   if (runtime.isArray(name)) {
     const values = runtime.array(name).values;

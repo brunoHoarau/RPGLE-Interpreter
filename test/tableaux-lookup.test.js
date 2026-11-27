@@ -95,7 +95,6 @@ test('%LOOKUP : refus et erreurs de compilation', () => {
   assert.throws(() => parse(`${decl} x = %lookupge(1 : t);`), NOT_SUPPORTED);
   assert.throws(() => parse(`${decl} x = %lookup(1 : x);`), err => !NOT_SUPPORTED.test(err.message) && /tableau/i.test(err.message));
   assert.throws(() => parse(`${decl} x = %lookup(1 : t(*));`), NOT_SUPPORTED);
-  assert.throws(() => parse(`${decl} x = %lookup(1 : %subarr(t : 1 : 2));`), NOT_SUPPORTED);
   assert.throws(() => parse(`${decl} x = %lookup(1 : d);`), /d/i);
   assert.throws(() => parse(`${decl} x = %lookup(1);`), /LOOKUP/i);
 });
@@ -181,7 +180,6 @@ test('SORTA d(*).champ déplace les structures entières', () => {
 
 test('SORTA : refus et erreurs de compilation', () => {
   const decl = 'dcl-s t int(10) dim(3); dcl-s x int(10); dcl-ds d qualified dim(2); a int(10); end-ds;';
-  assert.throws(() => parse(`${decl} sorta %subarr(t : 1 : 2);`), NOT_SUPPORTED);
   assert.throws(() => parse(`${decl} sorta(e) t;`), /SORTA/i);
   assert.throws(() => parse(`${decl} sorta x;`), err => !NOT_SUPPORTED.test(err.message) && /tableau/i.test(err.message));
   assert.throws(() => parse(`${decl} sorta d;`), /d/i);
