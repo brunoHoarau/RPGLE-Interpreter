@@ -108,7 +108,7 @@ test('un appel récursif de sous-routine est refusé, direct ou indirect', () =>
 });
 
 test('les autres codes opération non supportés sont refusés', () => {
-  for (const op of ['clear ds;', 'reset ds;', 'eval-corr a = b;']) {
+  for (const op of ['reset ds;', 'eval-corr a = b;']) {
     assert.throws(() => parse(op), NOT_SUPPORTED, op);
   }
 });

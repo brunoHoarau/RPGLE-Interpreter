@@ -7,6 +7,7 @@ import { checkCompound, advanceCompound, compoundValue, parseAssignmentOrCall } 
 import { parseDsply, parseSQL } from './io';
 import { isOpcode, parseExsr, parseLeavesr } from '../subroutines';
 import { isSorta, parseSorta, parseForEach } from './array-ops';
+import { isClear, parseClear } from './clear';
 import { parseExpression } from '../expressions/operators';
 
 export function parseStatement(p: ParserState): ASTNode {
@@ -28,6 +29,7 @@ export function parseStatement(p: ParserState): ASTNode {
     p.expect(TokenType.SEMICOLON);
     return { type: 'Iter' } as any;
   }
+  if (isClear(p)) return parseClear(p);
   if (isSorta(p)) return parseSorta(p);
   if (isOpcode(p, 'exsr')) return parseExsr(p);
   if (isOpcode(p, 'leavesr')) return parseLeavesr(p);

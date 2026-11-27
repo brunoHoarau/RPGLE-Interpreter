@@ -20,6 +20,7 @@ export type ASTNode =
   | SelectStatementNode
   | LoopStatementNode
   | SortaNode
+  | ClearNode
   | ProcedureCallNode
   | ReturnNode
   | MonitorNode
@@ -149,6 +150,14 @@ export interface SelectStatementNode {
   type: 'SelectStatement';
   whenBlocks: { condition: ExpressionNode; block: ASTNode[] }[];
   otherBlock?: ASTNode[];
+}
+
+// CLEAR cible : nom (ou 'ds.champ', '*in05'), ou élément tab(i) / ds(i) / ds(i).champ
+export interface ClearNode {
+  type: 'Clear';
+  name: string;
+  target?: ElementRef;
+  line: number;
 }
 
 export interface SortaNode {
