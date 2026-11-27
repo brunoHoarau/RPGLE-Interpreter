@@ -2,6 +2,7 @@ import { ExpressionNode, DataTypeNode } from '../../types';
 import { byteLength } from '../../datatypes';
 import { DsShape } from '../../ds-shape';
 import { NotSupportedError } from '../../errors';
+import { highValue, lowValue } from '../../datetime';
 import { declaredType } from '../calls';
 import { InterpreterState } from '../state';
 
@@ -43,4 +44,29 @@ export function sizeBuiltin(s: InterpreterState, args: ExpressionNode[]): number
     return typeSize(declaredType(s, operand), `${String(ref.name).toUpperCase()}(…)`);
   }
   throw new NotSupportedError(`%SIZE d'un littéral numérique ou d'une expression`);
+}
+
+// %HIVAL / %LOVAL(zone) : plus grande / plus petite valeur du type déclaré de la zone
+export function limitBuiltin(s: InterpreterState, name: '%hival' | '%loval', args: ExpressionNode[]): any {
+  const operand = args[0];
+  const type = operand?.valueType === 'identifier' || operand?.valueType === 'element' ? declaredType(s, operand) : undefined;
+  const high = name === '%hival';
+  const what = `${name.toUpperCase()} de ${type ? type.typeName.toUpperCase() : 'une expression'}`;
+  if (!type) throw new NotSupportedError(what);
+  if (type.typeName === 'date' || type.typeName === 'time' || type.typeName === 'timestamp') {
+    return high ? highValue(type.typeName) : lowValue(type.typeName);
+  }
+  if (type.typeName === 'packed' || type.typeName === 'zoned') {
+    const digits = type.length ?? 0, decimals = type.decimals ?? 0;
+    if (digits > 15) throw new NotSupportedError(`${what} de plus de 15 chiffres`);
+    const max = Number(`${'9'.repeat(digits - decimals) || '0'}.${'9'.repeat(decimals) || '0'}`);
+    return high ? max : -max;
+  }
+  if (type.typeName === 'int' || type.typeName === 'uns') {
+    const bits = byteLength(type) * 8;
+    if (bits > 32) throw new NotSupportedError(`${what}(20)`);
+    if (type.typeName === 'uns') return high ? 2 ** bits - 1 : 0;
+    return high ? 2 ** (bits - 1) - 1 : -(2 ** (bits - 1));
+  }
+  throw new NotSupportedError(what);
 }

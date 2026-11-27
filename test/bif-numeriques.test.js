@@ -44,3 +44,40 @@ test('%CHAR de %DEC(x : p : d) garde les décimales du type packed(p : d)', () =
   assert.equal(show('%dec(10:5:2)'), '10.00');
   assert.equal(show('%dec(-0.5:5:2)'), '-.50');
 });
+
+test('%HIVAL et %LOVAL d\'une zone packée ou zonée', () => {
+  assert.deepEqual(run(`dcl-s p packed(5:2);
+dcl-s z zoned(3:0);
+dsply %char(%hival(p));
+dsply %char(%loval(p));
+dsply %char(%hival(z));
+dsply %char(%loval(z));`), ['999.99', '-999.99', '999', '-999']);
+});
+
+test('%HIVAL et %LOVAL d\'un entier signé ou non signé', () => {
+  assert.deepEqual(run(`dcl-s i int(5);
+dcl-s b int(3);
+dcl-s u uns(10);
+dsply %char(%hival(i));
+dsply %char(%loval(i));
+dsply %char(%loval(b));
+dsply %char(%hival(u));
+dsply %char(%loval(u));`), ['32767', '-32768', '-128', '4294967295', '0']);
+});
+
+test('%HIVAL et %LOVAL d\'une date, d\'une sous-zone, d\'un élément', () => {
+  assert.deepEqual(run(`dcl-s d date;
+dcl-ds s qualified;
+  n packed(3:1);
+end-ds;
+dcl-s t int(10) dim(2);
+dsply %char(%hival(d));
+dsply %char(%loval(s.n));
+dsply %char(%hival(t(1)));`), ['9999-12-31', '-99.9', '2147483647']);
+});
+
+test('%HIVAL et %LOVAL encore refusés : caractère, entier de 20 chiffres, expression', () => {
+  assert.throws(() => run(`dcl-s c char(3);\ndsply %char(%hival(c));`), /pas encore supporté/);
+  assert.throws(() => run(`dcl-s i int(20);\ndsply %char(%hival(i));`), /pas encore supporté/);
+  assert.throws(() => run(`dsply %char(%loval(1 + 2));`), /pas encore supporté/);
+});
