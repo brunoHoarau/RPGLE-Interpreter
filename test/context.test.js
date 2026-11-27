@@ -45,13 +45,13 @@ test('charge tables.json au format schema + data', () => {
 test('un dossier sans tables.json donne un contexte vide', () => {
   const dir = folderWith({});
   const { result, calls } = silently(() => loadContextFromFolder(dir));
-  assert.deepEqual(result, { tables: {}, programs: {} });
+  assert.deepEqual(result, { tables: {}, programs: {}, displays: {} });
   assert.deepEqual(calls, []);
 });
 
 test('un dossier inexistant donne un contexte vide', () => {
   const ctx = loadContextFromFolder(path.join(os.tmpdir(), 'rpgle-ctx-inexistant-' + Date.now()));
-  assert.deepEqual(ctx, { tables: {}, programs: {} });
+  assert.deepEqual(ctx, { tables: {}, programs: {}, displays: {} });
 });
 
 test('un tables.json invalide est une erreur qui nomme le fichier', () => {
@@ -109,4 +109,104 @@ test('tables.json : option unique', () => {
   assert.equal(loadContextFromFolder(ok).tables.T.unique, true);
   const bad = folderWith({ 'tables.json': '{ "T": { "schema": { "a": "int(10)" }, "keys": ["a"], "unique": "oui", "data": [] } }' });
   assert.throws(() => loadContextFromFolder(bad), /"unique" doit être vrai ou faux/);
+});
+
+// --- displays.json (fichiers écran) ---
+
+const DISPLAYS_OK = {
+  ECRAN01: {
+    indara: true,
+    keys: { CA03: '03', CA12: null, ROLLDOWN: '07' },
+    formats: {
+      FMT01: {
+        keys: { CF05: '05', ROLLUP: '25' },
+        constants: [
+          { row: 1, col: 30, text: 'Saisie commande' },
+          { row: 22, col: 2, text: 'Code article inconnu', if: '31 N32' },
+        ],
+        fields: [
+          { name: 'CODE', type: 'char(6)', usage: 'B', row: 4, col: 20 },
+          { name: 'QTE', type: 'NUMERIC(5,2)', usage: 'I', row: 6, col: 20, if: 'N10' },
+          { name: 'CLE', type: 'zoned(7:0)', usage: 'H' },
+        ],
+      },
+    },
+  },
+};
+
+function displaysContext(raw) {
+  return loadContextFromFolder(folderWith({ 'displays.json': JSON.stringify(raw) }));
+}
+
+function withDisplay(patch) {
+  const raw = JSON.parse(JSON.stringify(DISPLAYS_OK));
+  patch(raw.ECRAN01, raw.ECRAN01.formats.FMT01);
+  return raw;
+}
+
+test('displays.json : un fichier écran valide est normalisé', () => {
+  const file = displaysContext(DISPLAYS_OK).displays.ECRAN01;
+  assert.equal(file.indara, true);
+  assert.deepEqual([...file.keys], [['CA03', 3], ['CA12', null], ['PAGEUP', 7]]);
+  const fmt = file.formats.FMT01;
+  assert.deepEqual([...fmt.keys], [['CF05', 5], ['PAGEDOWN', 25]]);
+  assert.deepEqual(fmt.constants.map(c => [c.row, c.col, c.text, c.condition]), [
+    [1, 30, 'Saisie commande', undefined],
+    [22, 2, 'Code article inconnu', [{ indicator: 31, negated: false }, { indicator: 32, negated: true }]],
+  ]);
+  assert.deepEqual(fmt.fields.map(f => [f.name, f.type.typeName, f.type.length, f.type.decimals, f.usage, f.row, f.col, f.length]), [
+    ['CODE', 'char', 6, undefined, 'B', 4, 20, 6],
+    ['QTE', 'zoned', 5, 2, 'I', 6, 20, 5],
+    ['CLE', 'zoned', 7, 0, 'H', undefined, undefined, 7],
+  ]);
+  assert.deepEqual(fmt.fields[1].condition, [{ indicator: 10, negated: true }]);
+});
+
+test('displays.json absent : aucun fichier écran', () => {
+  assert.deepEqual(loadContextFromFolder(folderWith({})).displays, {});
+});
+
+test('displays.json : indara absent vaut faux', () => {
+  const ctx = displaysContext({ E: { keys: {}, formats: {} } });
+  assert.equal(ctx.displays.E.indara, false);
+});
+
+test('displays.json : chaque erreur de validation cite le chemin', () => {
+  const cases = [
+    [{ ecran01: DISPLAYS_OK.ECRAN01 }, /displays\.json.*'ecran01'.*majuscules/],
+    [withDisplay((f, m) => { f.formats = { fmt01: m }; }), /displays\.json.*format 'fmt01'.*majuscules/],
+    [withDisplay((f, m) => { m.fields[0].name = 'code'; }), /displays\.json.*zone 'code'.*majuscules/],
+    [withDisplay((f, m) => { m.fields[0].usage = 'X'; }), /displays\.json.*zone 'CODE'.*usage 'X'/],
+    [withDisplay((f, m) => { delete m.fields[0].row; }), /displays\.json.*zone 'CODE'.*"row" et "col"/],
+    [withDisplay((f, m) => { m.fields[0].col = 78; }), /displays\.json.*zone 'CODE'.*24 lignes/],
+    [withDisplay((f, m) => { m.fields[0].row = 25; }), /displays\.json.*zone 'CODE'.*24 lignes/],
+    [withDisplay((f, m) => { m.constants[0].col = 70; }), /displays\.json.*constante.*24 lignes/],
+    [withDisplay((f, m) => { m.fields[0].type = 'varchar(6)'; }), /displays\.json.*zone 'CODE'.*char\(n\) ou zoned/],
+    [withDisplay((f, m) => { m.fields[0].type = 'packed(5:0)'; }), /displays\.json.*zone 'CODE'.*char\(n\) ou zoned/],
+    [withDisplay((f, m) => { m.fields[0].type = 'n'; }), /displays\.json.*zone 'CODE'.*type/],
+    [withDisplay((f, m) => { m.fields[0].type = 'char(0)'; }), /displays\.json.*zone 'CODE'.*longueur invalide/],
+    [withDisplay((f, m) => { m.fields[0].type = 'zoned(0)'; }), /displays\.json.*zone 'CODE'.*longueur invalide/],
+    [withDisplay((f, m) => { m.fields[0].type = 'zoned(64:0)'; }), /displays\.json.*zone 'CODE'.*longueur invalide/],
+    [withDisplay((f, m) => { m.fields[0].type = 'zoned(5:7)'; }), /displays\.json.*zone 'CODE'.*longueur invalide/],
+    [withDisplay((f, m) => { f.keys.constructor = null; }), /displays\.json.*touche 'constructor' inconnue/],
+    [withDisplay((f, m) => { f.keys.CA25 = null; }), /displays\.json.*touche 'CA25'/],
+    [withDisplay((f, m) => { f.keys.F3 = null; }), /displays\.json.*touche 'F3'/],
+    [withDisplay((f, m) => { f.keys.CA03 = '00'; }), /displays\.json.*touche 'CA03'.*01.*99/],
+    [withDisplay((f, m) => { f.keys.CA03 = '100'; }), /displays\.json.*touche 'CA03'.*01.*99/],
+    [withDisplay((f, m) => { m.keys.CA03 = '04'; }), /displays\.json.*touche 'CA03'.*fichier et au format/],
+    [withDisplay((f, m) => { m.keys.PAGEUP = '04'; }), /displays\.json.*touche 'PAGEUP'.*fichier et au format/],
+    [withDisplay((f, m) => { m.constants[1].if = 'X1'; }), /displays\.json.*constante.*"if"/],
+    [withDisplay((f, m) => { m.constants[1].if = ''; }), /displays\.json.*constante.*"if"/],
+    [withDisplay((f, m) => { m.constants[1].if = 5; }), /displays\.json.*constante.*"if"/],
+    [withDisplay((f, m) => { m.fields[0].if = '31 N'; }), /displays\.json.*zone 'CODE'.*"if"/],
+    [withDisplay((f, m) => { m.constants[1].if = '00'; }), /displays\.json.*constante.*indicateur.*01.*99/],
+    [withDisplay((f, m) => { m.fields[0].if = '100'; }), /displays\.json.*zone 'CODE'.*indicateur.*01.*99/],
+    [withDisplay((f, m) => { m.fields.push({ name: 'CODE', type: 'char(2)', usage: 'O', row: 9, col: 1 }); }), /displays\.json.*zone 'CODE'.*en double/],
+    [withDisplay((f, m) => { f.keys.CF03 = '04'; }), /displays\.json.*CA03.*CF03/],
+    [withDisplay((f, m) => { m.keys.CF12 = '12'; }), /displays\.json.*CA12.*CF12/],
+    [withDisplay((f, m) => { m.keys.CA05 = '06'; }), /displays\.json.*CA05.*CF05/],
+  ];
+  for (const [raw, pattern] of cases) {
+    assert.throws(() => displaysContext(raw), pattern, pattern.source);
+  }
 });

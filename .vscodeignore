@@ -8,3 +8,11 @@ test.rpgle
 **/*.map
 tsconfig.json
 .gitignore
+skills/**
+docs/**
+scripts/**
+repomix-output.xml
+*.vsix
+.claude/**
+.superpowers/**
+CLAUDE.md

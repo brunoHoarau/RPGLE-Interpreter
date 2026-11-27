@@ -3,6 +3,8 @@ import { NativeFile } from '../files';
 import { Runtime } from '../runtime';
 import { ExecutionContext, TableDefinition, emptyContext } from '../context';
 import { ProgramResolver } from '../sources';
+import { DisplayFileDefinition } from '../screens/definition';
+import { SpecialRoutine } from '../screens/protocol';
 
 export interface InterpreterOptions {
   // Nombre total d'itérations de boucle autorisées avant d'arrêter l'exécution
@@ -13,6 +15,8 @@ export interface InterpreterOptions {
   resolveProgram?: ProgramResolver;
   // Horloge de *SYS, *JOB, %DATE()... ; les tests la figent
   clock?: () => Date;
+  // Fabrique de la routine SPECIAL d'un fichier écran (un simulateur par fichier) ; absente : écrans refusés
+  screens?: (file: string, definition: DisplayFileDefinition) => SpecialRoutine;
 }
 
 const DEFAULT_MAX_ITERATIONS = 1_000_000;
@@ -31,6 +35,17 @@ export interface FileState {
   realFormat: string;         // Format de la table (avant RENAME)
 }
 
+// Fichier écran déclaré (DCL-F WORKSTN)
+export interface DisplayState {
+  file: string;                    // nom du fichier, en majuscules
+  definition: DisplayFileDefinition;
+  routine: SpecialRoutine;
+  indds?: string;                  // INDDS(nom), en majuscules
+  usage: { input: boolean; output: boolean };
+  opened?: boolean;                // appel O réussi, appel C encore dû
+  area?: boolean[];                // indicateurs des positions sans sous-zone INDDS (index 1..99), valeur interne du fichier
+}
+
 // État de l'interpréteur, partagé par les fonctions des modules de ce dossier
 export class InterpreterState {
   runtime: Runtime;
@@ -45,6 +60,7 @@ export class InterpreterState {
   options: InterpreterOptions;
   programDepth = 0; // Niveau d'imbrication des appels de programmes source
   files = new Map<string, FileState>();          // Par nom de fichier et par nom de format, en majuscules
+  displays = new Map<string, DisplayState>();    // Fichiers écran, par nom de fichier et par nom de format, en majuscules
   fileFields = new Map<string, { type: DataTypeNode; file: string }>(); // Zones des fichiers, en minuscules
   lastIndicators = { eof: false, found: false, equal: false }; // %EOF, %FOUND, %EQUAL sans argument
   lastError = false; // %ERROR : dernière opération avec extenseur (E), indicateur global au programme

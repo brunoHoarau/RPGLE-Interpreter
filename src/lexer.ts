@@ -316,6 +316,7 @@ export class Lexer {
       'update': TokenType.UPDATE,
       'delete': TokenType.DELETE,
       'write': TokenType.WRITE,
+      'exfmt': TokenType.EXFMT,
       'exec': TokenType.EXEC_SQL,
       'dsply': TokenType.DSPLY,
     };

@@ -79,6 +79,7 @@ export interface DataStructureNode {
     name: string;
     dataType: DataTypeNode;
     initialValue?: ExpressionNode;
+    start?: number;
   }[];
 }
 
@@ -199,6 +200,8 @@ export interface FileDeclarationNode {
   keyed: boolean;
   usropn: boolean;
   usage: { input: boolean; output: boolean; update: boolean; delete: boolean };
+  device?: 'workstn';                              // WORKSTN : fichier écran (absent : DISK)
+  indds?: string;                                  // INDDS(nom) : structure des indicateurs, en majuscules
   rename?: { from: string; to: string };           // RENAME(format:nouveau), majuscules
   prefix?: { text: string; count?: number };       // PREFIX(texte[:n]), texte en majuscules sans apostrophes
   extfile?: string;                                // EXTFILE : nom de table en majuscules, bibliothèque retirée, ou '*EXTDESC'
@@ -208,7 +211,7 @@ export interface FileDeclarationNode {
 
 export interface FileOperationNode {
   type: 'FileOperation';
-  operation: 'read' | 'readp' | 'reade' | 'readpe' | 'chain' | 'setll' | 'setgt' | 'open' | 'close' | 'write' | 'update' | 'delete' | 'unlock';
+  operation: 'read' | 'readp' | 'reade' | 'readpe' | 'chain' | 'setll' | 'setgt' | 'open' | 'close' | 'write' | 'update' | 'delete' | 'unlock' | 'exfmt';
   file: string;                // nom de fichier ou de format, tel qu'écrit
   key?: ExpressionNode[];      // liste de valeurs de clé
   special?: 'start' | 'end';   // *START / *LOVAL, *END / *HIVAL
@@ -282,5 +285,6 @@ export interface DataStructureNode {
     name: string;
     dataType: DataTypeNode;
     initialValue?: ExpressionNode;
+    start?: number;              // position de début (1-based) : POS explicite, sinon octet suivant
   }[];
 }

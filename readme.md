@@ -125,6 +125,28 @@ Format *ISO uniquement : date `2026-10-04`, heure `13.45.00`, timestamp `2026-10
 - `%CHAR(x)` et `%CHAR(x : *ISO)`, `DSPLY` d'une variable date
 - Bouchons : les dates s'écrivent en texte *ISO dans `programs.json` (`"fin": "2026-11-04"`)
 
+## Fichiers écran
+
+`dcl-f ecran workstn;` (avec au besoin `indds(ind)`) est simulé : les écrans sont décrits dans `context/displays.json`, en majuscules, un fichier écran par entrée :
+
+```json
+{
+  "CDEECRAN": {
+    "indara": false,
+    "keys": { "CA03": "03" },
+    "formats": {
+      "SAISIE": {
+        "keys": { "CF05": "05" },
+        "constants": [ { "row": 22, "col": 2, "text": "Code inconnu", "if": "31" } ],
+        "fields": [ { "name": "CODE", "usage": "B", "type": "char(6)", "row": 5, "col": 15 } ]
+      }
+    }
+  }
+}
+```
+
+`exfmt`, `write` et `read` sur un format affichent l'écran et rendent la saisie ; une touche CA/CF déclarée positionne son indicateur. Les zones du format sont des variables du programme ; `"lc": true` sur une zone char conserve la saisie en minuscules (sinon elle est convertie en majuscules, comme un DDS sans `CHECK(LC)`). `read` ne rend que les zones I, B et H ; `usage(*update)` et `usage(*delete)` sont refusés sur un fichier écran, `write`/`exfmt` exigent `*output` et `read`/`exfmt` `*input`. Voir `fichiers_test/ecran_commande.rpgle`. L'exécution depuis VS Code d'un programme WORKSTN n'est pas encore possible (5b) : aujourd'hui seuls les tests, avec un terminal scripté, l'exécutent. Refusés : sous-fichiers, OVERLAY, INFDS, DSPATR/COLOR, DS résultat, `likerec` et `extname` d'un format ou fichier écran, `chain`/`update`/`delete`/`setll` sur un format écran, extenseurs, `dcl-f` SPECIAL.
+
 ## Fichiers natifs
 
 `dcl-f` lit et écrit les mêmes données simulées que le SQL : la table de `context/tables.json` portant le nom du fichier. Pour un fichier natif, décrivez la table avec `schema` (les zones, dans l'ordre), et au besoin `keys` et `format` :
@@ -156,13 +178,13 @@ Format *ISO uniquement : date `2026-10-04`, heure `13.45.00`, timestamp `2026-10
 - **Statuts** : opération sur un fichier `usropn` non ouvert : 01211 (RNX1211) ; `open` d'un fichier déjà ouvert : 01215 (RNX1215). `open` remet `%EOF`, `%FOUND` et `%EQUAL` du fichier à `*OFF` et repositionne au début. Ils sont interceptables par `MONITOR`/`ON-ERROR 01211` ou `*FILE`, ou par l'extenseur `(E)` de l'opération (`%ERROR`, `%STATUS`).
 - **Données partagées avec le SQL** : un `INSERT`, `UPDATE` ou `DELETE` est vu par les lectures suivantes. Un programme appelé a sa propre position dans le fichier.
 - **Structures de données et fichiers** : `dcl-ds x likeds(y);` (sous-zones de `y`, `INZ` non repris sauf `INZ(*LIKEDS)`), `likerec(format {: *ALL|*INPUT|*OUTPUT|*KEY})` (zones d'un format de `dcl-f`), `extname('FICHIER' {: 'FORMAT'} {: type})` (zones de la table de `tables.json`) ; affectation de DS entière entre DS de même disposition ; paramètres `likeds`/`likerec` (référence, `const`, `value`) avec contrôle de filiation ; lecture dans une DS (`read f ds;`, `chain k f ds;`, `readp`, `reade`, `readpe` : les zones du programme ne changent pas), `write fmt ds;` et `update fmt ds;` depuis une DS ; `%KDS(ds {: n})` comme clé ; `%FIELDS(z1 : z2)` dans `update`. Non supporté : `likeds` d'une DS tableau, retour `likeds`, `*NULL`/`EXT`/`prefix` sur `extname`, `const`/`value` sans filiation.
-- **Refusé** (« pas encore supporté ») : mots-clés de `dcl-f` autres que ceux décrits plus haut, `extfile(variable)`, `prefix(x : n)` avec `n` plus long qu'un nom de zone, `prefix('DS.')` (zones dans une structure qualifiée), `reade`/`readpe` sans clé avant toute lecture réussie, après `open`/`setll`/`setgt`/`delete`, après un `chain` non trouvé ou une lecture en échec (fin de fichier, `reade`/`readpe` sans correspondance), ou sur un fichier sans clé, extenseurs d'opération autres que `(E)` et `(N)` (`(N)` hors lectures), `callp(e)`, `delete` par clé partielle, `update` ou `delete` sans nouvelle lecture après `setll`/`setgt`, un `delete` par clé, un `write` (effet sur le verrou de l'enregistrement courant non vérifié) ou un `update` en échec 01021, `unlock` d'un fichier sans `*UPDATE`, `update` ou `delete` d'un enregistrement supprimé entre-temps, lecture séquentielle après un `CHAIN` non trouvé, après une fin de fichier, après un `READE`/`READPE` sans correspondance ou après un `delete` par clé, `CHAIN` par numéro d'enregistrement après une suppression (y compris par un programme appelant) ou avec un rang non entier, `setll`/`setgt`/`reade`/`readpe` par valeur sur un fichier sans clé, valeur de clé qui ne tient pas dans la zone clé, `close` d'un fichier déjà fermé, `disk(…)` autre que `*ext`, fichiers écran et impression.
+- **Refusé** (« pas encore supporté ») : mots-clés de `dcl-f` autres que ceux décrits plus haut, `extfile(variable)`, `prefix(x : n)` avec `n` plus long qu'un nom de zone, `prefix('DS.')` (zones dans une structure qualifiée), `reade`/`readpe` sans clé avant toute lecture réussie, après `open`/`setll`/`setgt`/`delete`, après un `chain` non trouvé ou une lecture en échec (fin de fichier, `reade`/`readpe` sans correspondance), ou sur un fichier sans clé, extenseurs d'opération autres que `(E)` et `(N)` (`(N)` hors lectures), `callp(e)`, `delete` par clé partielle, `update` ou `delete` sans nouvelle lecture après `setll`/`setgt`, un `delete` par clé, un `write` (effet sur le verrou de l'enregistrement courant non vérifié) ou un `update` en échec 01021, `unlock` d'un fichier sans `*UPDATE`, `update` ou `delete` d'un enregistrement supprimé entre-temps, lecture séquentielle après un `CHAIN` non trouvé, après une fin de fichier, après un `READE`/`READPE` sans correspondance ou après un `delete` par clé, `CHAIN` par numéro d'enregistrement après une suppression (y compris par un programme appelant) ou avec un rang non entier, `setll`/`setgt`/`reade`/`readpe` par valeur sur un fichier sans clé, valeur de clé qui ne tient pas dans la zone clé, `close` d'un fichier déjà fermé, `disk(…)` autre que `*ext`, fichiers impression.
 
 ## Limites connues
 
-- Fichiers natifs : pas d'écrans ni d'impressions ; pas d'`extfile` par variable ; la bibliothèque d'`extfile`/`extdesc` est ignorée ; `(E)` seulement sur les opérations de fichier et `dsply`
+- Fichiers écran : mode scripté seulement (le mode interactif viendra), impressions non supportées ; fichiers natifs : pas d'`extfile` par variable ; la bibliothèque d'`extfile`/`extdesc` est ignorée ; `(E)` seulement sur les opérations de fichier et `dsply`
 - Pas de `float` ; tableaux : voir la liste des refus dans « Tableaux »
-- Pas de sous-routines (`BEGSR`/`EXSR`), de `LIKE`, de `/COPY`, ni de paramètres pour le programme principal
+- Pas de `LIKE`, de `/COPY`, ni de paramètres pour le programme principal
 - `ctl-opt` est accepté mais ses options sont ignorées, sauf `DATFMT`/`TIMFMT` (seul `*ISO` est accepté)
 - Un programme appelé repart toujours de zéro, comme s'il s'était terminé avec `*INLR = *ON` : ses variables ne sont pas conservées d'un appel à l'autre
 - Seul le dossier du programme exécuté est cherché pour les sources appelés

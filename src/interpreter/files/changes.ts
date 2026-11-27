@@ -19,6 +19,8 @@ export function checkFileChanges(s: InterpreterState, node: any): void {
     return;
   }
   if (node === null || typeof node !== 'object') return;
+  // Fichiers écran : opérations contrôlées à l'exécution (interpreter/screens/operations.ts)
+  if (node.type === 'FileOperation' && s.displays.has(String(node.file).toUpperCase())) return;
   if (node.type === 'FileOperation') {
     const state = fileState(s, node.file);
     if (['write', 'update', 'delete', 'unlock'].includes(node.operation)) checkFileChange(s, node, state);
@@ -26,6 +28,9 @@ export function checkFileChanges(s: InterpreterState, node: any): void {
     if ((node.operation === 'open' || node.operation === 'close') && String(node.file).toUpperCase() !== state.file.name) {
       throw new Error(`${node.operation.toUpperCase()} attend le nom du fichier ${state.file.name}, pas le format ${state.file.format}`);
     }
+  }
+  if (node.type === 'Expression' && node.valueType === 'file' && s.displays.has(String(node.value).toUpperCase())) {
+    throw new NotSupportedError(`%OPEN, %EOF, %FOUND ou %EQUAL sur un fichier écran (${String(node.value).toUpperCase()})`);
   }
   if (node.type === 'Expression' && node.valueType === 'file') fileState(s, String(node.value));
   for (const value of Object.values(node)) {

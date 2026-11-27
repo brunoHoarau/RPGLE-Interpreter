@@ -115,6 +115,7 @@ export enum TokenType {
   UPDATE = 'UPDATE',
   DELETE = 'DELETE',
   WRITE = 'WRITE',
+  EXFMT = 'EXFMT',
   DSPLY = 'DSPLY',
 
   EOF = 'EOF'

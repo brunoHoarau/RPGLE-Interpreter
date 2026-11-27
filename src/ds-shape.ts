@@ -11,7 +11,7 @@ export interface DsOrigin {
 
 // Ce que le runtime retient d'une structure de données déclarée
 export interface DsShape {
-  fields: { name: string; type: DataTypeNode }[]; // Disposition : sous-zones dans l'ordre déclaré
+  fields: { name: string; type: DataTypeNode; start: number }[]; // Disposition : sous-zones dans l'ordre déclaré ; start = position de début 1-based
   initial: { [field: string]: any };              // Valeurs de déclaration (INZ ou défauts), clés en minuscules
   origin?: DsOrigin;                              // Fichier d'origine (LIKEREC, EXTNAME), hérité par LIKEDS
   root: number;                                   // Filiation : deux DS liées par LIKEDS ont la même racine

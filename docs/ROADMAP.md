@@ -79,7 +79,7 @@ Il définit les priorités, les fonctionnalités à implémenter, les estimation
 
 | ID | Fonctionnalité | Description | Complexité | Estimation | Dépendances |
 |----|---------------|-------------|------------|------------|-------------|
-| 3.1 | **Fichiers écran** | Support basique des fichiers écran (`dcl-f` avec `workstn`). Simulation des `EXFMT`, `WRITE`, `READ` | ⭐⭐⭐ | 10-14 jours | Système I/O existant |
+| 3.1 | **Fichiers écran** | Support basique des fichiers écran (`dcl-f` avec `workstn`). Simulation des `EXFMT`, `WRITE`, `READ`. **5a fait** : WORKSTN, EXFMT/WRITE/READ, `displays.json` ; 5b (terminal interactif) et `DCL-F` SPECIAL à venir | ⭐⭐⭐ | 10-14 jours | Système I/O existant |
 | 3.2 | **Fichiers impression** | Support des fichiers impression avec `OVRPRTF`, `WRITE` vers imprimante. Génération de PDF/texte | ⭐⭐⭐ | 8-10 jours | 3.1 |
 | 3.3 | **Type `float`** | Support du type floating point (`float(8)`). Gestion des précisions et conversions | ⭐ | 3-5 jours | Moteur types |
 | 3.4 | **Paramètres programme** | Support des paramètres pour le programme principal : `dcl-pi *entry parm1 parm2` | ⭐⭐ | 5-7 jours | 1.2 |

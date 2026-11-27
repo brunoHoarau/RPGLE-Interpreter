@@ -58,4 +58,21 @@ function customersContext() {
   };
 }
 
-module.exports = { parse, run, runRaw, parseTerminates, customersContext };
+// Fichiers écran : displays (description normalisée) ; un ScreenSimulator par fichier, tous branchés sur UN
+// ScriptedTerminal(inputs) partagé. Renvoie les lignes DSPLY et les écrans affichés.
+function runScreens(code, displays, inputs, context) {
+  const { ScreenSimulator } = require(path.join(OUT, 'screens', 'simulator'));
+  const { ScriptedTerminal } = require(path.join(OUT, 'screens', 'scripted-terminal'));
+  const terminal = new ScriptedTerminal(inputs ?? []);
+  const base = context ?? { tables: {}, programs: {} };
+  const full = { ...base, displays: { ...(base.displays ?? {}), ...displays } };
+  const screens = (file, definition) => new ScreenSimulator(file, definition, terminal);
+  return { output: run(code, full, { screens }), shown: terminal.shown };
+}
+
+// Description de fichiers écran écrite comme displays.json, validée et normalisée
+function displaysFrom(raw) {
+  return require(path.join(OUT, 'screens', 'definition')).normalizeDisplays(raw, 'displays.json');
+}
+
+module.exports = { runScreens, displaysFrom, parse, run, runRaw, parseTerminates, customersContext };

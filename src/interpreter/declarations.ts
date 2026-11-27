@@ -78,6 +78,7 @@ export function executeDataStructure(s: InterpreterState, node: any): void {
   s.runtime.declareDataStructure(node.name, node.fields.map((field: any) => ({
     name: field.name,
     type: field.dataType,
+    start: field.start,
     value: initialValue(s, field.initialValue, field.dataType, `${node.name}.${field.name}`),
   })), node.isQualified, {}, node.dim);
 }

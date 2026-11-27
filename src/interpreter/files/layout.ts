@@ -2,6 +2,7 @@ import { DataTypeNode, DsLike } from '../../types';
 import { parseFieldType } from '../../files';
 import { TableDefinition } from '../../context';
 import { DsOrigin } from '../../ds-shape';
+import { NotSupportedError } from '../../errors';
 import { InterpreterState } from '../state';
 
 // Zones d'un format ou d'une table : noms (en majuscules, après PREFIX pour un fichier déclaré) et types
@@ -42,6 +43,7 @@ function select(fields: FieldLayout[], keys: string[], usage: DsLike['usage'], w
 
 // LIKEREC(format {: usage}) : zones du format d'un DCL-F du programme, sous leurs noms de programme (PREFIX)
 export function formatLayout(s: InterpreterState, format: string, usage: DsLike['usage']): FormatLayout {
+  if (s.displays.has(format)) throw new NotSupportedError(`LIKEREC(${format}) : ${format} est un format de fichier écran`);
   const state = s.files.get(format);
   if (!state || state.file.format !== format) {
     throw new Error(`LIKEREC(${format}) : ${format} n'est pas le format d'un fichier déclaré par DCL-F`);
@@ -57,6 +59,10 @@ export function formatLayout(s: InterpreterState, format: string, usage: DsLike[
 
 // EXTNAME(table {: format} {: usage}) : zones de la table de tables.json, sans PREFIX
 export function tableLayout(s: InterpreterState, tableName: string, format: string | undefined, usage: DsLike['usage']): FormatLayout {
+  const displays = Object.keys(s.context.displays ?? {});
+  if (displays.includes(tableName.toUpperCase())) {
+    throw new NotSupportedError(`EXTNAME('${tableName}') : ${tableName.toUpperCase()} est un fichier écran`);
+  }
   const table = findTable(s, tableName);
   const real = (table.format ?? tableName + 'F').toUpperCase();
   if (format !== undefined && format !== real) {
