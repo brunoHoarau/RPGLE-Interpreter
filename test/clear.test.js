@@ -250,3 +250,19 @@ test('CLEAR sans opérande ou avec un opérande invalide est une erreur', () => 
   assert.throws(() => parse(`dcl-s a char(1); clear 'x';`));
   assert.throws(() => parse(`dcl-s a char(1); clear *on;`));
 });
+
+// Confirmé sur IBM i : CLEAR d'un tableau DIM(*AUTO) remet %ELEM à 0 (comme %ELEM(tab) = 0)
+test('CLEAR d\'un tableau DIM(*AUTO) entier : %ELEM repasse à 0, *NEXT repart de 1', () => {
+  assert.deepEqual(run(`
+    dcl-s tab char(10) dim(*auto : 10);
+    tab(*next) = 'UN';
+    tab(*next) = 'DEUX';
+    tab(*next) = 'TROIS';
+    clear tab(2);
+    dsply (%char(%elem(tab)) + '[' + tab(2) + ']');
+    clear tab;
+    dsply %char(%elem(tab));
+    tab(*next) = 'QUATRE';
+    dsply (%char(%elem(tab)) + ' ' + tab(1));
+  `), ['3[          ]', '0', '1 QUATRE']);
+});

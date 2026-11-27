@@ -34,7 +34,8 @@ export function executeClear(s: InterpreterState, node: any): void {
     return runtime.setElement(name, at, defaultValue(runtime.array(name).type));
   }
   if (runtime.isArray(name)) {
-    if (runtime.isAutoArray(name)) throw new NotSupportedError(`CLEAR du tableau DIM(*AUTO) ${name.toUpperCase()}`);
+    // DIM(*AUTO) : CLEAR remet le nombre d'éléments à 0, comme %ELEM(tab) = 0 (confirmé sur IBM i)
+    if (runtime.isAutoArray(name)) { runtime.array(name).values.length = 0; return; }
     const items = materialize(runtime.array(name));
     if (runtime.isDsArray(name)) {
       const shape = shapeOf(s, name);
