@@ -1,3 +1,6 @@
+import { editfltBuiltin, floatToNumber } from './float-builtins';
+import { floatLength } from '../float';
+import { formatFloat } from '../../float';
 import { editwBuiltin, limitBuiltin, sizeBuiltin } from './type-builtins';
 import { ExpressionNode } from '../../types';
 import { describeValue, formatChar, isDataStructure } from '../../datatypes';
@@ -87,9 +90,11 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
     if (builtin === '%editc') return editcBuiltin(s, expr.value.args);
     if (builtin === '%parms') return s.parmCounts[s.parmCounts.length - 1] ?? 0;
     if (builtin === '%size') return sizeBuiltin(s, expr.value.args);
+    if (builtin === '%editflt') return editfltBuiltin(s, expr.value.args);
     if (builtin === '%editw') return editwBuiltin(s, expr.value.args, e => evaluate(s, e));
     if (builtin === '%hival' || builtin === '%loval') return limitBuiltin(s, builtin, expr.value.args);
     const isChar = builtin === '%char';
+    if ((builtin === '%int' || builtin === '%dec') && floatLength(s, expr.value.args[0])) return floatToNumber(s, builtin, expr.value.args);
     // Le 2e argument (*ISO) est un format, inutile à évaluer
     const args = (isChar ? expr.value.args.slice(0, 1) : expr.value.args).map((arg: ExpressionNode) => evaluate(s, arg));
     // L'argument d'une durée doit être un entier garanti, quelle que soit sa valeur
@@ -106,6 +111,8 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
         throw incompatibleTypes(`%CHAR(${describeValue(args[0])} : *ISO)`);
       }
       // Le format dépend du type déclaré : variable, ou valeur de retour d'une procédure
+      const floating = typeof args[0] === 'number' ? floatLength(s, expr.value.args[0]) : undefined;
+      if (floating) return formatFloat(args[0], floating);
       return formatChar(args[0], declaredType(s, expr.value.args[0]));
     }
     return s.runtime.executeBuiltin(expr.value.name, args);

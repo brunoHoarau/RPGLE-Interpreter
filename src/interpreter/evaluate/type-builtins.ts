@@ -8,7 +8,7 @@ import { declaredType } from '../calls';
 import { InterpreterState } from '../state';
 
 // Types dont la taille en octets est connue sans ambiguïté (dates : dépend de DATFMT, non simulé)
-const SIZED_TYPES = new Set(['char', 'varchar', 'ind', 'int', 'uns', 'packed', 'zoned']);
+const SIZED_TYPES = new Set(['char', 'varchar', 'ind', 'int', 'uns', 'packed', 'zoned', 'float']);
 
 function typeSize(type: DataTypeNode | undefined, what: string): number {
   if (!type || !SIZED_TYPES.has(type.typeName)) throw new NotSupportedError(`%SIZE de ${what}`);

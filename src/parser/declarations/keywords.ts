@@ -77,6 +77,9 @@ export function parseDataType(p: ParserState): any {
     p.expect(TokenType.RPAREN);
   }
 
+  if (typeToken.type === TokenType.FLOAT && ((length !== 4 && length !== 8) || decimals !== undefined)) {
+    throw new Error(`FLOAT exige une longueur de 4 ou 8 octets (ligne ${typeToken.line})`);
+  }
   return { type: 'DataType', typeName, length, decimals, format };
 }
 

@@ -61,7 +61,7 @@ test('LIKE est refusé sur dcl-s', () => {
 });
 
 test('les types sans sémantique sont refusés', () => {
-  for (const decl of ['dcl-s f float(8);', 'dcl-s p pointer;']) {
+  for (const decl of ['dcl-s p pointer;']) {
     assert.throws(() => parse(decl), NOT_SUPPORTED, decl);
   }
 });

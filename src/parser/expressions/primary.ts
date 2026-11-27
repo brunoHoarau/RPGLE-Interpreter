@@ -39,6 +39,10 @@ export function parsePrimary(p: ParserState): ExpressionNode {
   if (p.check(TokenType.NUMBER)) {
     const text = p.advance().value;
     const node: ExpressionNode = { type: 'Expression', value: parseFloat(text), valueType: 'number' };
+    if (/e/i.test(text)) {
+      node.isFloat = true;
+      return node;
+    }
     if (text.includes('.')) {
       node.hasDecimalPoint = true;
       node.decimals = text.length - text.indexOf('.') - 1;

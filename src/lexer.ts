@@ -203,6 +203,13 @@ export class Lexer {
       this.advance();
     }
 
+    // Exposant d'un littéral flottant : E ou e, signe facultatif, chiffres (1.5E3, 1.2e-3, 5E+2)
+    const exponent = /^[eE][+-]?[0-9]+/.exec(this.code.slice(this.pos, this.pos + 12));
+    if (exponent) {
+      value += exponent[0];
+      this.advance(exponent[0].length);
+    }
+
     this.addToken(TokenType.NUMBER, value);
   }
 
@@ -307,6 +314,7 @@ export class Lexer {
       'varchar': TokenType.VARCHAR,
       'packed': TokenType.PACKED,
       'zoned': TokenType.ZONED,
+      'float': TokenType.FLOAT,
       'int': TokenType.INT,
       'uns': TokenType.UNS,
       'date': TokenType.DATE,

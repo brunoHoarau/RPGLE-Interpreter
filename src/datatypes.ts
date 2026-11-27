@@ -1,6 +1,7 @@
 // Sémantique des types RPG : valeurs par défaut, conversion à l'affectation, %CHAR
 import { DataTypeNode } from './types';
 import { DateTimeKind, FigurativeValue, isDateTime, isDateTimeType, isDuration, kindOf, lowValue, resolveFigurative } from './datetime';
+import { checkFloat } from './float';
 import { NotSupportedError, RpgError, STATUS_INVALID_NUMERIC, STATUS_OVERFLOW, incompatibleTypes } from './errors';
 
 const INT_BITS: { [digits: number]: number } = { 3: 8, 5: 16, 10: 32, 20: 64 };
@@ -9,7 +10,7 @@ export function defaultValue(type: DataTypeNode): any {
   switch (type.typeName) {
     case 'char': return ' '.repeat(type.length ?? 0);
     case 'varchar': return '';
-    case 'packed': case 'zoned': case 'int': case 'uns': return 0;
+    case 'packed': case 'zoned': case 'int': case 'uns': case 'float': return 0;
     case 'ind': return false;
     case 'date': case 'time': case 'timestamp': return lowValue(type.typeName as DateTimeKind);
     default: return null;
@@ -55,6 +56,10 @@ export function coerce(value: any, type: DataTypeNode | undefined, target: strin
       if (Math.abs(n) >= 10 ** (digits - decimals)) throw overflow(value, type, target);
       return n;
     }
+    case 'float': {
+      const n = checkFloat(toNumber(value, target));
+      return type.length === 4 ? checkFloat(Math.fround(n)) : n;
+    }
     case 'ind':
       if (value === '1') return true;
       if (value === '0') return false;
@@ -77,7 +82,7 @@ export function checkAssignable(value: any, type: DataTypeNode | undefined, targ
     case 'char': case 'varchar':
       if (typeof value === 'number') refuse();
       return;
-    case 'int': case 'uns': case 'packed': case 'zoned':
+    case 'int': case 'uns': case 'packed': case 'zoned': case 'float':
       if (typeof value !== 'number') refuse();
       return;
     case 'ind':
@@ -131,7 +136,7 @@ export function byteLength(type: DataTypeNode): number {
       return digits <= 3 ? 1 : digits <= 5 ? 2 : digits <= 10 ? 4 : 8;
     }
     case 'packed': return Math.floor(n / 2) + 1;
-    case 'zoned': return n;
+    case 'zoned': case 'float': return n;
     case 'date': return 10;
     case 'time': return 8;
     case 'timestamp': return 26;
