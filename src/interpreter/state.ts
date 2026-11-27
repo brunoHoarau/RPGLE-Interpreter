@@ -3,6 +3,7 @@ import { NativeFile } from '../files';
 import { Runtime } from '../runtime';
 import { ExecutionContext, TableDefinition, emptyContext } from '../context';
 import { ProgramResolver } from '../sources';
+import { CopyResolver } from '../copybooks';
 import { DisplayFileDefinition } from '../screens/definition';
 import { SpecialRoutine } from '../screens/protocol';
 
@@ -13,6 +14,10 @@ export interface InterpreterOptions {
   maxCallDepth?: number;
   // Source des programmes appelés par EXTPGM sans bouchon
   resolveProgram?: ProgramResolver;
+  // Membres /COPY et /INCLUDE des programmes appelés (par défaut : sur disque, à côté de leur source)
+  resolveCopy?: CopyResolver;
+  // RPGPPOPT de CRTSQLRPGI pour les programmes appelés (*NONE par défaut)
+  rpgppopt?: string;
   // Horloge de *SYS, *JOB, %DATE()... ; les tests la figent
   clock?: () => Date;
   // Fabrique de la routine SPECIAL d'un fichier écran (un simulateur par fichier) ; absente : écrans refusés

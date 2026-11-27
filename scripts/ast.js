@@ -8,7 +8,8 @@ const { Lexer } = require(path.join(OUT, 'lexer'));
 const { Parser } = require(path.join(OUT, 'parser'));
 
 const args = process.argv.slice(2);
-const source = args[0] === '--file' ? fs.readFileSync(args[1], 'utf8') : args.join(' ');
+const file = args[0] === '--file' ? path.resolve(args[1]) : undefined;
+const source = file ? fs.readFileSync(file, 'utf8') : args.join(' ');
 if (!source) {
   console.error('Usage : npm run --silent ast -- "<source>"  |  --file <fichier>');
   process.exit(2);
@@ -16,7 +17,7 @@ if (!source) {
 
 const NOISE = new Set(['line', 'column', 'position', 'loc']);
 try {
-  const ast = new Parser(new Lexer(source).tokenize()).parse();
+  const ast = new Parser(new Lexer(source, { path: file }).tokenize()).parse();
   console.log(JSON.stringify(ast, (k, v) => (NOISE.has(k) ? undefined : v), 1));
 } catch (e) {
   console.error(`Erreur : ${e.message}`);

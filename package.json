@@ -19,6 +19,17 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "RPGLE Interpreter",
+      "properties": {
+        "rpgle.rpgppopt": {
+          "type": "string",
+          "enum": ["*NONE", "*LVL1", "*LVL2"],
+          "default": "*NONE",
+          "description": "RPGPPOPT de CRTSQLRPGI : sans *LVL2, le précompilateur SQL ne développe pas /INCLUDE et un EXEC SQL dans un membre /INCLUDE est refusé."
+        }
+      }
+    },
     "commands": [
       {
         "command": "rpgle.execute",

@@ -1,5 +1,6 @@
 import { Token, TokenType, ASTNode, ProgramNode, FileDeclarationNode, ParameterNode } from '../types';
 import { ParserState } from './state';
+import { locateInMember } from '../copybooks';
 import { parseControlOptions, parseVariableDeclaration, parseConstantDeclaration } from './declarations/variables';
 import { parseDataStructure } from './declarations/data-structure';
 import { parseProcedure, parseProcedureInterface, parsePrototype } from './procedures';
@@ -15,6 +16,15 @@ export class Parser {
   }
 
   parse(): ProgramNode {
+    try {
+      return this.parseProgram();
+    } catch (e) {
+      const token = this.state.peek();
+      throw token.member !== undefined ? locateInMember(e, token.member, token.includedAt!) : e;
+    }
+  }
+
+  private parseProgram(): ProgramNode {
     const p = this.state;
     const body: ASTNode[] = [];
     const files: FileDeclarationNode[] = [];

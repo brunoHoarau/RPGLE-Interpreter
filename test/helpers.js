@@ -6,13 +6,13 @@ const { Lexer } = require(path.join(OUT, 'lexer'));
 const { Parser } = require(path.join(OUT, 'parser'));
 const { Interpreter } = require(path.join(OUT, 'interpreter'));
 
-function parse(code) {
-  return new Parser(new Lexer(code).tokenize()).parse();
+function parse(code, options) {
+  return new Parser(new Lexer(code, options).tokenize()).parse();
 }
 
 // Exécute un programme et renvoie les messages DSPLY (sans le préfixe "[DSPLY] ")
 function run(code, context, options) {
-  const output = new Interpreter(context, options).execute(parse(code));
+  const output = new Interpreter(context, options).execute(parse(code, options));
   return output
     .filter(line => line.startsWith('[DSPLY'))
     .map(line => line.replace(/^\[DSPLY[^\]]*\]+ /, ''));
@@ -20,7 +20,7 @@ function run(code, context, options) {
 
 // Exécute un programme et renvoie toute la sortie brute (DSPLY + [SQL])
 function runRaw(code, context, options) {
-  return new Interpreter(context, options).execute(parse(code));
+  return new Interpreter(context, options).execute(parse(code, options));
 }
 
 // Parse chaque source dans un processus séparé : une boucle infinie

@@ -1,4 +1,7 @@
 import { Token, TokenType } from './types';
+import { CopyOptions, compileDirective } from './copybooks';
+
+export type LexerOptions = CopyOptions;
 
 export class Lexer {
   private code: string;
@@ -6,9 +9,11 @@ export class Lexer {
   private line: number = 1;
   private column: number = 1;
   private tokens: Token[] = [];
+  private options: LexerOptions;
 
-  constructor(code: string) {
+  constructor(code: string, options: LexerOptions = {}) {
     this.code = code;
+    this.options = options;
   }
 
   tokenize(): Token[] {
@@ -20,6 +25,11 @@ export class Lexer {
 
       if (this.match('**free')) {
         this.advance(6);
+        continue;
+      }
+
+      if (char === '/' && this.isAlpha(this.peek(1)) && this.atLineStart()) {
+        this.readDirective();
         continue;
       }
 
@@ -322,6 +332,25 @@ export class Lexer {
     };
 
     return keywords[keyword] || null;
+  }
+
+  // Le caractère courant est le premier non blanc de sa ligne
+  private atLineStart(): boolean {
+    for (let i = this.pos - 1; i >= 0 && this.code[i] !== '\n'; i--) {
+      if (!' \t\r'.includes(this.code[i])) return false;
+    }
+    return true;
+  }
+
+  // Directive de compilation (/COPY, /INCLUDE, /EOF…) : le reste de la ligne est consommé
+  private readDirective() {
+    let end = this.code.indexOf('\n', this.pos);
+    if (end < 0) end = this.code.length;
+    const result = compileDirective(this.code.slice(this.pos + 1, end), this.line, this.options,
+      (source, options) => new Lexer(source, options).tokenize());
+    this.advance(end - this.pos);
+    if (result === 'eof') this.pos = this.code.length;
+    else this.tokens.push(...result.filter(t => t.type !== TokenType.EOF));
   }
 
   private addToken(type: TokenType, value: string) {

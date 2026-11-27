@@ -126,5 +126,7 @@ export interface Token {
   value: string;
   line: number;
   column: number;
+  member?: string;      // membre /COPY d'où vient le token (le plus interne)
+  includedAt?: number;  // ligne, dans le source principal, du /COPY qui l'a inclus
 }
 

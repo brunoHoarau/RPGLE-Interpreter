@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { Lexer } from './lexer';
+import { Lexer, LexerOptions } from './lexer';
 import { Parser } from './parser';
 import { Interpreter } from './interpreter';
 import { loadContextFromFolder } from './context';
@@ -34,12 +34,12 @@ export function activate(vscodeContext: vscode.ExtensionContext) {
         ? `Contexte : ${contextPath} (tables : ${tables.join(', ') || 'aucune'} ; bouchons : ${mocks.join(', ') || 'aucun'})`
         : `Contexte : ni tables.json ni programs.json dans ${contextPath}`);
 
-      const ast = new Parser(new Lexer(editor.document.getText()).tokenize()).parse();
+      const ast = new Parser(new Lexer(editor.document.getText(), lexerOptions(editor.document)).tokenize()).parse();
       // Les programmes appelés par EXTPGM sont cherchés à côté du programme exécuté
       const resolveProgram = editor.document.uri.scheme === 'file'
         ? folderProgramResolver(path.dirname(editor.document.uri.fsPath))
         : undefined;
-      const lines = new Interpreter(execContext, { resolveProgram }).execute(ast);
+      const lines = new Interpreter(execContext, { resolveProgram, rpgppopt: rpgppoptSetting() }).execute(ast);
 
       lines.forEach(line => output.appendLine(line));
       vscode.window.showInformationMessage('Exécution terminée avec succès');
@@ -60,7 +60,7 @@ export function activate(vscodeContext: vscode.ExtensionContext) {
     }
 
     try {
-      new Parser(new Lexer(editor.document.getText()).tokenize()).parse();
+      new Parser(new Lexer(editor.document.getText(), lexerOptions(editor.document)).tokenize()).parse();
       vscode.window.showInformationMessage('Syntaxe RPGLE valide ✓');
     } catch (error: any) {
       vscode.window.showErrorMessage(`Erreur de syntaxe: ${error.message}`);
@@ -95,11 +95,22 @@ function findContextFolder(document: vscode.TextDocument): string {
   return path.join(path.dirname(path.dirname(document.uri.fsPath)), 'context');
 }
 
+// Les membres /COPY sont cherchés à partir du dossier du document ; un document non enregistré n'en trouve aucun
+function lexerOptions(document: vscode.TextDocument): LexerOptions {
+  const rpgppopt = rpgppoptSetting();
+  return document.uri.scheme === 'file' ? { path: document.uri.fsPath, rpgppopt } : { resolveCopy: () => undefined, rpgppopt };
+}
+
+// Réglage rpgle.rpgppopt : RPGPPOPT de CRTSQLRPGI (*NONE par défaut, comme sur IBM i)
+function rpgppoptSetting(): string {
+  return vscode.workspace.getConfiguration('rpgle').get<string>('rpgppopt', '*NONE');
+}
+
 function validateDocument(document: vscode.TextDocument, diagnosticCollection: vscode.DiagnosticCollection) {
   const found: vscode.Diagnostic[] = [];
 
   try {
-    new Parser(new Lexer(document.getText()).tokenize()).parse();
+    new Parser(new Lexer(document.getText(), lexerOptions(document)).tokenize()).parse();
   } catch (error: any) {
     const match = error.message.match(/ligne (\d+)/i) || error.message.match(/line (\d+)/i);
     const line = match ? parseInt(match[1]) - 1 : 0;
