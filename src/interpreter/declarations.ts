@@ -68,7 +68,7 @@ export function zeroOrBlankFor(s: InterpreterState, name: string, type: DataType
 
 export function executeConstantDeclaration(s: InterpreterState, node: any): void {
   refuseFileFieldName(s, node.name);
-  s.runtime.setConstant(node.name, evaluate(s, node.value));
+  s.runtime.setConstant(node.name, evaluate(s, node.value), node.value);
 }
 
 export function executeDataStructure(s: InterpreterState, node: any): void {

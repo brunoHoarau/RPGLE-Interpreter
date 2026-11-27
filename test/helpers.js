@@ -10,9 +10,13 @@ function parse(code, options) {
   return new Parser(new Lexer(code, options).tokenize()).parse();
 }
 
+// Les tests comparent la valeur lisible des DSPLY numériques (100.5), pas la présentation IBM i (10050) :
+// celle-ci est vérifiée dans dsply-format.test.js
+const readable = options => ({ readableDsply: true, ...options });
+
 // Exécute un programme et renvoie les messages DSPLY (sans le préfixe "[DSPLY] ")
 function run(code, context, options) {
-  const output = new Interpreter(context, options).execute(parse(code, options));
+  const output = new Interpreter(context, readable(options)).execute(parse(code, options));
   return output
     .filter(line => line.startsWith('[DSPLY'))
     .map(line => line.replace(/^\[DSPLY[^\]]*\]+ /, ''));
@@ -20,7 +24,7 @@ function run(code, context, options) {
 
 // Exécute un programme et renvoie toute la sortie brute (DSPLY + [SQL])
 function runRaw(code, context, options) {
-  return new Interpreter(context, options).execute(parse(code, options));
+  return new Interpreter(context, readable(options)).execute(parse(code, options));
 }
 
 // Parse chaque source dans un processus séparé : une boucle infinie

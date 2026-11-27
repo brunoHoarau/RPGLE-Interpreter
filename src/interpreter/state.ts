@@ -18,6 +18,8 @@ export interface InterpreterOptions {
   resolveCopy?: CopyResolver;
   // RPGPPOPT de CRTSQLRPGI pour les programmes appelés (*NONE par défaut)
   rpgppopt?: string;
+  // DSPLY numérique : valeur lisible (100.5) au lieu de la présentation IBM i (10050) ; pour les tests
+  readableDsply?: boolean;
   // Horloge de *SYS, *JOB, %DATE()... ; les tests la figent
   clock?: () => Date;
   // Fabrique de la routine SPECIAL d'un fichier écran (un simulateur par fichier) ; absente : écrans refusés
