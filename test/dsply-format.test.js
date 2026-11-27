@@ -74,9 +74,47 @@ dsply ('<' + %char(p) + '>');
 `), ['<.00>']);
 });
 
-test('DSPLY d une expression numérique dont la précision n est pas simulée est refusé', () => {
+test('expressions décimales : précision IBM i de * et de +', () => {
+  assert.deepEqual(shown(`
+dcl-s p packed(7:2) inz(1.5);
+dsply (p * 2);
+dsply (p + 1);
+`), ['     300', '     250']);
+});
+
+test('expressions constantes calculées à la compilation : chiffres du résultat', () => {
+  assert.deepEqual(shown(`
+dcl-s t char(1) dim(3);
+dcl-c C 20;
+dsply (1 + 2);
+dsply (C + 1);
+dsply %elem(t);
+dsply %len('abc');
+`), ['3', '21', '3', '3']);
+});
+
+test('uns comme int ; -int et %INT en int(20)', () => {
+  assert.deepEqual(shown(`
+dcl-s u uns(5) inz(7);
+dcl-s i int(10) inz(42);
+dcl-s p packed(7:2) inz(1.5);
+dsply u;
+dsply (-i);
+dsply %int(p);
+`), ['    7', '                  42-', '                   1']);
+});
+
+test('DSPLY d une division : longueur d affichage supérieure au maximum (RNF7030)', () => {
+  assert.throws(() => shown(`
+dcl-s p packed(7:2) inz(1.5);
+dsply (p / 2);
+`), /RNF7030/);
+});
+
+test('DSPLY d une expression numérique dont la précision n est pas connue est refusé', () => {
   assert.throws(() => shown(`
 dcl-s p packed(7:2) inz(1);
-dsply (p * 2);
+dcl-s i int(10) inz(1);
+dsply (p + i);
 `), /DSPLY.*expression numérique.*%CHAR/);
 });
