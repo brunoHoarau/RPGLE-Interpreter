@@ -111,10 +111,22 @@ dsply (p / 2);
 `), /RNF7030/);
 });
 
+test('entier mêlé à un décimal : int(10) compte pour 10 chiffres ; -décimal, %ABS, %DEC, %LEN d un varchar', () => {
+  assert.deepEqual(shown(`
+dcl-s p packed(7:2) inz(1.5);
+dcl-s i int(10) inz(42);
+dcl-s v varchar(10) inz('ab');
+dsply (p + i);
+dsply (-p);
+dsply %len(v);
+dsply %dec(p:5:1);
+dsply %abs(p);
+`), ['         4350', '    150-', '         2', '   15', '    150']);
+});
+
 test('DSPLY d une expression numérique dont la précision n est pas connue est refusé', () => {
   assert.throws(() => shown(`
 dcl-s p packed(7:2) inz(1);
-dcl-s i int(10) inz(1);
-dsply (p + i);
+dsply %scan('b':'abc');
 `), /DSPLY.*expression numérique.*%CHAR/);
 });

@@ -4,7 +4,8 @@
 //   packed(7:2) 100 -> '  10000 '   packed(7:2) -1.5 -> '    150-'   int(10) -42 -> '        42-'
 // Longueur du type : déclarée (variable, élément, sous-zone, retour de procédure) ; écrite pour un littéral ;
 // chiffres du résultat pour une expression constante (calculée à la compilation) ; int(20) pour une
-// expression sur des entiers, -int et %INT ; règles de précision IBM i pour + - * décimaux.
+// expression sur des entiers, -int et %INT ; règles de précision IBM i pour + - * décimaux (un int(n) mêlé
+// à un décimal compte pour n chiffres) ; -décimal et %ABS gardent le format ; %DEC(x:l:d) ; %LEN d'un varchar int(10).
 import { DataTypeNode, ExpressionNode } from '../types';
 import { NotSupportedError } from '../errors';
 import { InterpreterState } from './state';
@@ -49,6 +50,17 @@ function builtinFormat(s: InterpreterState, expr: ExpressionNode): NumericFormat
   const name = expr.value.name.toLowerCase();
   const arg: ExpressionNode | undefined = expr.value.args?.[0];
   if (name === '%int') return INT20;
+  if (name === '%dec' && expr.value.args?.length === 3) {
+    const [digits, decimals] = expr.value.args.slice(1).map((a: ExpressionNode) => evaluate(s, a));
+    return { kind: 'dec', digits, decimals };
+  }
+  if (name === '%abs' && arg) {
+    const operand = formatOf(s, arg);
+    return operand?.kind === 'const' ? foldedFormat(s, expr) : operand?.kind === 'dec' ? operand : undefined;
+  }
+  if (name === '%len' && arg && !arg.operator && arg.valueType === 'identifier' && s.runtime.getType(arg.value)?.typeName === 'varchar') {
+    return { kind: 'int', digits: 10, decimals: 0 };
+  }
   if (name === '%elem' && arg && !arg.operator && typeof arg.value === 'string' && !s.runtime.isAutoArray(arg.value)) {
     return foldedFormat(s, expr);
   }
@@ -59,9 +71,10 @@ function builtinFormat(s: InterpreterState, expr: ExpressionNode): NumericFormat
 // Résultat de a op b selon les règles de précision IBM i
 function combine(operator: string, a: NumericFormat, b: NumericFormat): NumericFormat | undefined {
   if (a.kind === 'int' || b.kind === 'int') {
-    // entier avec entier ou littéral entier : int(20) ; entier avec décimal : non constaté
+    // entier avec entier ou littéral entier : int(20) ; avec un décimal, l'entier int(n) compte pour n chiffres
     const other = a.kind === 'int' ? b : a;
-    return other.kind === 'int' || (other.kind === 'const' && other.decimals === 0) ? INT20 : undefined;
+    if (other.kind === 'int' || (other.kind === 'const' && other.decimals === 0)) return INT20;
+    return combine(operator, { ...a, kind: 'dec' }, { ...b, kind: 'dec' });
   }
   if (operator === '/') return { kind: 'dec', digits: MAX_DIGITS, decimals: 0 };
   if (operator === '*') return { kind: 'dec', digits: a.digits + b.digits, decimals: a.decimals + b.decimals };
@@ -74,7 +87,7 @@ function formatOf(s: InterpreterState, expr: ExpressionNode): NumericFormat | un
     if (!expr.left?.operator && expr.left?.valueType === 'number') return literalFormat(expr.left);
     const operand = formatOf(s, expr.left!);
     if (operand?.kind === 'const') return foldedFormat(s, expr);
-    return operand?.kind === 'int' ? INT20 : undefined;
+    return operand?.kind === 'int' ? INT20 : operand;
   }
   if (expr.operator) {
     if (!['+', '-', '*', '/'].includes(expr.operator)) return undefined;
