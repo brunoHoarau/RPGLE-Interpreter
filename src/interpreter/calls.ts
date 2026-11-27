@@ -53,6 +53,7 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
   const { mainline, subs } = splitSubroutines(proc.body);
   s.subroutines.push(subs);
   s.runtime.pushFrame(proc.name);
+  s.parmCounts.push(argExprs.length);
   s.returnTypes.push(proc.returnType);
   try {
     params.forEach((p, i) => {
@@ -76,6 +77,7 @@ export function callProcedure(s: InterpreterState, name: string, argExprs: Expre
     s.subroutines.pop();
     s.returnTypes.pop();
     s.runtime.popFrame();
+    s.parmCounts.pop();
   }
 
   byReference.forEach((isRef, i) => {

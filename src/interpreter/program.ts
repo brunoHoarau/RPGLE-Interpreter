@@ -31,6 +31,7 @@ export function runProgram(s: InterpreterState, ast: ProgramNode, args: any[]): 
   s.lastError = false;
   s.initialValues.clear();
   s.initializing = false;
+  s.parmCounts = [args.length];
 
   // Déclarer SQLCOD et SQLSTT par défaut
   s.runtime.declareVariable('SQLCOD', 0, { type: 'DataType', typeName: 'int', length: 10 });

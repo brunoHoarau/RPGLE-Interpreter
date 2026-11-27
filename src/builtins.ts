@@ -178,6 +178,7 @@ export const BUILTINS: { [name: string]: Builtin } = {
   '%subdt': (_, value: any, unit: string) => subdtBuiltin(value, unit),
   '%len': (_, str: any) => String(str).length,
   '%size': () => { throw new NotSupportedError('%SIZE hors évaluation'); }, // évalué dans interpreter/evaluate/type-builtins.ts
+  '%parms': () => { throw new NotSupportedError('%PARMS hors évaluation'); },
   '%hival': () => { throw new NotSupportedError('%HIVAL hors évaluation'); },
   '%loval': () => { throw new NotSupportedError('%LOVAL hors évaluation'); },
   '%elem': (_, count: number) => count, // le nombre d'éléments est lu sur le tableau par l'évaluation

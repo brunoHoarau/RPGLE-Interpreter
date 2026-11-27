@@ -236,3 +236,22 @@ test('les variables locales sont réinitialisées à chaque appel', () => {
 
 // --- Flux de contrôle ---
 
+
+test('%PARMS : nombre de paramètres passés à la procédure, et au programme principal', () => {
+  assert.deepEqual(run(`
+dsply %char(%parms());
+compte('a');
+compte('a' : 'b');
+dsply %char(%parms);
+dcl-proc compte;
+  dcl-pi *n;
+    x char(1) const;
+    y char(1) const options(*nopass);
+  end-pi;
+  dsply %char(%parms);
+  interne();
+end-proc;
+dcl-proc interne;
+  dsply 'interne ' + %char(%parms);
+end-proc;`), ['0', '1', 'interne 0', '2', 'interne 0', '0']);
+});

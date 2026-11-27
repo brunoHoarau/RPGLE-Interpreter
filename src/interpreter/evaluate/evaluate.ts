@@ -85,6 +85,7 @@ export function evaluate(s: InterpreterState, expr: ExpressionNode): any {
     if (builtin === '%elem') return s.runtime.executeBuiltin('%elem', [s.runtime.arrayCount(expr.value.args[0].value)]);
     if (builtin === '%lookup') return s.runtime.executeBuiltin('%lookup', [lookup(s, expr.value.args)]);
     if (builtin === '%editc') return editcBuiltin(s, expr.value.args);
+    if (builtin === '%parms') return s.parmCounts[s.parmCounts.length - 1] ?? 0;
     if (builtin === '%size') return sizeBuiltin(s, expr.value.args);
     if (builtin === '%hival' || builtin === '%loval') return limitBuiltin(s, builtin, expr.value.args);
     const isChar = builtin === '%char';
