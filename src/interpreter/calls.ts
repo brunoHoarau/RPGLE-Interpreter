@@ -211,7 +211,7 @@ export function callSourceProgram(s: InterpreterState, proto: PrototypeNode, tar
 
   let ast: ProgramNode;
   try {
-    ast = new Parser(new Lexer(program.source, { path: program.path, resolveCopy: s.options.resolveCopy }).tokenize()).parse();
+    ast = new Parser(new Lexer(program.source, { path: program.path, resolveCopy: s.options.resolveCopy, rpgppopt: s.options.rpgppopt }).tokenize()).parse();
   } catch (e: any) {
     throw new Error(`${target} (${program.path ?? 'source'}) : ${e.message}`);
   }

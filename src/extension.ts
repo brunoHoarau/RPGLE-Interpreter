@@ -39,7 +39,7 @@ export function activate(vscodeContext: vscode.ExtensionContext) {
       const resolveProgram = editor.document.uri.scheme === 'file'
         ? folderProgramResolver(path.dirname(editor.document.uri.fsPath))
         : undefined;
-      const lines = new Interpreter(execContext, { resolveProgram }).execute(ast);
+      const lines = new Interpreter(execContext, { resolveProgram, rpgppopt: rpgppoptSetting() }).execute(ast);
 
       lines.forEach(line => output.appendLine(line));
       vscode.window.showInformationMessage('Exécution terminée avec succès');
@@ -97,7 +97,13 @@ function findContextFolder(document: vscode.TextDocument): string {
 
 // Les membres /COPY sont cherchés à partir du dossier du document ; un document non enregistré n'en trouve aucun
 function lexerOptions(document: vscode.TextDocument): LexerOptions {
-  return document.uri.scheme === 'file' ? { path: document.uri.fsPath } : { resolveCopy: () => undefined };
+  const rpgppopt = rpgppoptSetting();
+  return document.uri.scheme === 'file' ? { path: document.uri.fsPath, rpgppopt } : { resolveCopy: () => undefined, rpgppopt };
+}
+
+// Réglage rpgle.rpgppopt : RPGPPOPT de CRTSQLRPGI (*NONE par défaut, comme sur IBM i)
+function rpgppoptSetting(): string {
+  return vscode.workspace.getConfiguration('rpgle').get<string>('rpgppopt', '*NONE');
 }
 
 function validateDocument(document: vscode.TextDocument, diagnosticCollection: vscode.DiagnosticCollection) {

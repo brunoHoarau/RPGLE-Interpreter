@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ProgramSource } from './sources';
-import { Token } from './types';
+import { Token, TokenType } from './types';
 
 // [bibliothèque/]fichier,membre — ou membre seul — ou chemin IFS
 export interface CopySpec {
@@ -19,7 +19,7 @@ export type CopyResolver = (spec: CopySpec, fromPath: string | undefined) => Pro
 export function describeCopySpec(spec: CopySpec): string {
   if (spec.path !== undefined) return spec.path;
   const file = spec.file !== undefined ? `${spec.library !== undefined ? spec.library + '/' : ''}${spec.file},` : '';
-  return file + spec.member;
+  return (file + spec.member).toUpperCase();
 }
 
 // Analyse le reste de la ligne après /COPY : le premier mot est la désignation, la suite un commentaire
@@ -90,6 +90,19 @@ export interface CopyOptions {
   resolveCopy?: CopyResolver;   // recherche des membres /COPY et /INCLUDE (par défaut : sur disque)
   path?: string;                // chemin du source, point de départ de la recherche des membres
   copyStack?: string[];         // membres en cours d'inclusion (détection des /COPY récursifs)
+  rpgppopt?: string;            // option RPGPPOPT de CRTSQLRPGI : *NONE (défaut), *LVL1, *LVL2
+  underInclude?: string;        // /INCLUDE englobant que le précompilateur SQL ne développe pas
+}
+
+const RPGPPOPT_VALUES = ['*NONE', '*LVL1', '*LVL2'];
+
+// Situe une erreur survenue dans un membre : « ligne M (membre X, ligne N) », M étant la ligne du /COPY
+export function locateInMember(error: unknown, member: string, includedAt: number): unknown {
+  if (!(error instanceof Error)) return error;
+  error.message = /ligne \d+/.test(error.message)
+    ? error.message.replace(/ligne (\d+)/, `ligne ${includedAt} (membre ${member}, ligne $1)`)
+    : `${error.message} (ligne ${includedAt}, membre ${member})`;
+  return error;
 }
 
 type Tokenize = (source: string, options: CopyOptions) => Token[];
@@ -119,5 +132,26 @@ function includeMember(directive: string, rest: string, line: number, options: C
   const stack = options.copyStack ?? (options.path !== undefined ? [options.path.toUpperCase()] : []);
   const key = (member.path ?? label).toUpperCase();
   if (stack.includes(key)) throw new Error(`/${directive} ${label} : inclusion récursive (ligne ${line})`);
-  return tokenize(member.source, { ...options, path: member.path, copyStack: [...stack, key] });
+  const rpgppopt = (options.rpgppopt ?? '*NONE').toUpperCase();
+  if (!RPGPPOPT_VALUES.includes(rpgppopt)) throw new Error(`RPGPPOPT(${rpgppopt}) inconnu : *NONE, *LVL1 ou *LVL2 attendu`);
+  // Sans RPGPPOPT(*LVL2), le précompilateur SQL ne développe pas /INCLUDE : ce qu'il contient n'est pas vu
+  const underInclude = options.underInclude ?? (directive === 'INCLUDE' && rpgppopt !== '*LVL2' ? `/INCLUDE ${label}` : undefined);
+  let tokens: Token[];
+  try {
+    tokens = tokenize(member.source, { ...options, path: member.path, copyStack: [...stack, key], underInclude });
+  } catch (e) {
+    if (!(e instanceof Error)) throw e;
+    const error = e as Error & { copyMember?: string };
+    error.copyMember ??= label;
+    throw options.copyStack === undefined ? locateInMember(error, error.copyMember, line) : error;
+  }
+  for (const token of tokens) {
+    token.member ??= label;
+    token.includedAt = line;
+  }
+  if (underInclude !== undefined && options.underInclude === undefined && tokens.some(t => t.type === TokenType.EXEC_SQL)) {
+    throw new Error(`EXEC SQL dans le membre ${underInclude} : avec RPGPPOPT(${rpgppopt}), le précompilateur SQL `
+      + `ne développe pas /INCLUDE ; utilisez /COPY ou RPGPPOPT(*LVL2) (ligne ${line})`);
+  }
+  return tokens;
 }

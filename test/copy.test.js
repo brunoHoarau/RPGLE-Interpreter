@@ -179,3 +179,45 @@ appele();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('une erreur de syntaxe dans un membre cite la ligne du /COPY, le membre et sa ligne', () => {
+  assert.throws(() => parse('dcl-s a int(10);\n\n/copy protos\n', copies({ PROTOS: 'dcl-s x int(10);\ndcl-s y int(10) # ;' })),
+    /ligne 3 \(membre PROTOS, ligne 2\)/);
+});
+
+test('une erreur du parser dans un membre cite la ligne du /COPY et le membre', () => {
+  assert.throws(() => parse('dcl-s a int(10);\n/copy protos\ndsply a;\n', copies({ PROTOS: '\n\ndcl-s y int(10) inz(;' })),
+    /ligne 2 \(membre PROTOS, ligne 3\)/);
+});
+
+test('une erreur dans un membre imbriqué cite le membre le plus interne et la ligne du premier /COPY', () => {
+  assert.throws(() => parse('\n/copy a\n', copies({ A: '\n\n/copy b', B: '/copy absent' })),
+    /ABSENT introuvable.*ligne 2 \(membre B, ligne 1\)/);
+});
+
+const SQL_MEMBER = { SQLINC: 'dcl-s n int(10);\nexec sql set :n = 1;' };
+
+test('RPGPPOPT(*NONE) par défaut : un EXEC SQL dans un membre /INCLUDE est refusé', () => {
+  assert.throws(() => parse('\n/include sqlinc\n', copies(SQL_MEMBER)),
+    /EXEC SQL.*\/INCLUDE SQLINC.*RPGPPOPT\(\*NONE\).*ligne 2/);
+});
+
+test('RPGPPOPT(*LVL1) : un EXEC SQL dans un membre /INCLUDE est refusé', () => {
+  assert.throws(() => parse('/include sqlinc\n', { ...copies(SQL_MEMBER), rpgppopt: '*LVL1' }), /RPGPPOPT\(\*LVL1\)/);
+});
+
+test('un EXEC SQL dans un membre inclus par un /COPY imbriqué sous /INCLUDE est refusé', () => {
+  assert.throws(() => parse('/include a\n', copies({ A: '/copy sqlinc', ...SQL_MEMBER })), /EXEC SQL.*\/INCLUDE A/);
+});
+
+test('RPGPPOPT(*LVL2) : le membre /INCLUDE est développé avant le précompilateur SQL', () => {
+  assert.doesNotThrow(() => parse('/include sqlinc\n', { ...copies(SQL_MEMBER), rpgppopt: '*LVL2' }));
+});
+
+test('un EXEC SQL dans un membre /COPY est toujours accepté', () => {
+  assert.doesNotThrow(() => parse('/copy sqlinc\n', copies(SQL_MEMBER)));
+});
+
+test('une valeur de RPGPPOPT inconnue est refusée', () => {
+  assert.throws(() => parse('/include sqlinc\n', { ...copies(SQL_MEMBER), rpgppopt: '*LVL3' }), /RPGPPOPT.*\*LVL3/);
+});

@@ -16,6 +16,8 @@ export interface InterpreterOptions {
   resolveProgram?: ProgramResolver;
   // Membres /COPY et /INCLUDE des programmes appelés (par défaut : sur disque, à côté de leur source)
   resolveCopy?: CopyResolver;
+  // RPGPPOPT de CRTSQLRPGI pour les programmes appelés (*NONE par défaut)
+  rpgppopt?: string;
   // Horloge de *SYS, *JOB, %DATE()... ; les tests la figent
   clock?: () => Date;
   // Fabrique de la routine SPECIAL d'un fichier écran (un simulateur par fichier) ; absente : écrans refusés
