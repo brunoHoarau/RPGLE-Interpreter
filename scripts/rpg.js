@@ -24,7 +24,7 @@ const full = path.resolve(file);
 const dir = contextDir ? path.resolve(contextDir) : path.join(path.dirname(path.dirname(full)), 'context');
 try {
   const context = fs.existsSync(dir) ? loadContextFromFolder(dir) : emptyContext();
-  const ast = new Parser(new Lexer(fs.readFileSync(full, 'utf8')).tokenize()).parse();
+  const ast = new Parser(new Lexer(fs.readFileSync(full, 'utf8'), { path: full }).tokenize()).parse();
   const lines = new Interpreter(context, { resolveProgram: folderProgramResolver(path.dirname(full)) }).execute(ast);
   lines.forEach(l => console.log(l));
 } catch (e) {

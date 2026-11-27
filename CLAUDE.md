@@ -36,6 +36,7 @@ source → src/lexer.ts → src/parser/ (AST, types dans src/types.ts) → src/i
 | `src/runtime.ts` | Variables, portée, appel des BIF |
 | `src/files/` | Fichier natif simulé (`NativeFile`) : clés, lecture, écriture, verrous |
 | `src/sql-engine/` | Émulation DB2 pour le SQL embarqué |
+| `src/copybooks.ts` | Directives /COPY, /INCLUDE, /EOF (appelées par le lexer) et recherche des membres sur disque |
 | `src/context.ts`, `src/sources.ts` | Données de test (tables, fichiers) et sources de programmes appelés |
 | `src/extension.ts` | Intégration VS Code |
 
