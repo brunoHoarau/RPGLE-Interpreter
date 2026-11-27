@@ -49,7 +49,7 @@ Le parser et l'interpréteur sont des **fonctions libres** prenant l'état en pr
 
 **Ajouter un mot-clé de déclaration** : `src/parser/declarations/keywords.ts` → prise en compte à l'exécution dans `src/interpreter/declarations.ts`.
 
-**Refuser une construction non supportée** : `unsupported(...)` (`src/parser/constants.ts`) avec un message en français ; test dans `test/unsupported.test.js`.
+**Refuser une construction non supportée** : `unsupported(...)` (`src/parser/constants.ts`) avec un message en français ; test dans `test/unsupported-*.test.js`.
 
 ## Tests (TDD obligatoire)
 
