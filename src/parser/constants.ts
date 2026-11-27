@@ -28,7 +28,7 @@ export const FILE_BUILTINS = new Set(['%eof', '%found', '%equal', '%open']);
 // Codes opération RPG free form non supportés (reconnus quand ils ne sont pas
 // suivis de '=', '.' ou '(' : sinon ce sont des noms de variable ou de procédure)
 export const UNSUPPORTED_OPCODES = new Set([
-  'acq', 'clear', 'commit', 'data-gen', 'data-into', 'dealloc', 'dump',
+  'acq', 'commit', 'data-gen', 'data-into', 'dealloc', 'dump',
   'eval-corr', 'evalr', 'except', 'feod', 'force', 'in', 'next',
   'on-excp', 'on-exit', 'out', 'post', 'readc', 'rel', 'reset',
   'rolbk', 'snd-msg', 'test', 'xml-into', 'xml-sax',
