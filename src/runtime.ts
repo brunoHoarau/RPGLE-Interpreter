@@ -1,6 +1,6 @@
 import { ExecutionContext, emptyContext } from './context';
 import { SQLEngine, SQLResult, HostVariables } from './sql-engine';
-import { DataTypeNode } from './types';
+import { DataTypeNode, ExpressionNode } from './types';
 import { coerce, byteLength } from './datatypes';
 import { BUILTINS } from './builtins';
 import { DsShape, DsOrigin } from './ds-shape';
@@ -14,6 +14,7 @@ const DS_ELEMENT_TYPE: DataTypeNode = { type: 'DataType', typeName: 'ds' };
 interface Scope {
   variables: Map<string, any>;
   constants: Map<string, any>;
+  literals: Map<string, ExpressionNode>; // Expression de déclaration de chaque constante (présentation DSPLY)
   types: Map<string, DataTypeNode>; // Clés : 'var' ou 'ds.champ', en minuscules
   aliases: Map<string, string>;     // Champ de DS non qualifiée -> nom de la DS
   readOnly: Set<string>;            // Paramètres CONST de l'appel (minuscules)
@@ -21,7 +22,7 @@ interface Scope {
   arrays: Map<string, ArrayStore>;  // Tableaux DIM (minuscules) ; leur type d'élément est dans `types`
 }
 
-const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), types: new Map(), aliases: new Map(), readOnly: new Set(), shapes: new Map(), arrays: new Map() });
+const newScope = (): Scope => ({ variables: new Map(), constants: new Map(), literals: new Map(), types: new Map(), aliases: new Map(), readOnly: new Set(), shapes: new Map(), arrays: new Map() });
 
 // Un nom visible est une variable, ou un champ de DS non qualifiée (dsName renseigné)
 interface Resolved {
@@ -297,9 +298,12 @@ export class Runtime {
     return this.resolve(name)?.scope.readOnly.has(name.toLowerCase()) ?? false;
   }
 
-  setConstant(name: string, value: any): void {
+  setConstant(name: string, value: any, literal?: ExpressionNode): void {
     this.currentScope.constants.set(name.toLowerCase(), value);
+    if (literal) this.currentScope.literals.set(name.toLowerCase(), literal);
   }
+
+  getConstantLiteral(name: string): ExpressionNode | undefined { return this.findScope('constants', name)?.literals.get(name.toLowerCase()); }
 
   getConstant(name: string): any {
     const value = this.findScope('constants', name)?.constants.get(name.toLowerCase());

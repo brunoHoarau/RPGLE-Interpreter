@@ -5,6 +5,7 @@ import { NotSupportedError, incompatibleTypes } from '../errors';
 import { valueFor } from './declarations';
 import { evaluate } from './evaluate/evaluate';
 import { elementTarget } from './evaluate/element';
+import { formatNumericDsply } from './dsply-format';
 import { InterpreterState } from './state';
 
 export function executeAssignment(s: InterpreterState, node: any): void {
@@ -54,7 +55,8 @@ export function executeDsply(s: InterpreterState, node: any): void {
     // Les blancs de fin d'un char sont invisibles à l'écran
     const value = evaluate(s, node.message);
     if (isDuration(value)) throw incompatibleTypes(`DSPLY ${describeValue(value)}`);
-    msg = String(value).trimEnd();
+    const numeric = (typeof value === 'number' || typeof value === 'bigint') && !s.options.readableDsply;
+    msg = (numeric ? formatNumericDsply(s, node.message, value) : String(value)).trimEnd();
   }
 
   let queueInfo = '';

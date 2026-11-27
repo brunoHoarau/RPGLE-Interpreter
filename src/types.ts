@@ -276,6 +276,7 @@ export interface ExpressionNode {
   right?: ExpressionNode;
   value?: any;
   hasDecimalPoint?: boolean; // littéral numérique écrit avec un point décimal
+  decimals?: number;         // nombre de décimales écrites de ce littéral
   valueType?: 'number' | 'string' | 'boolean' | 'identifier' | 'builtin' | 'special' | 'call' | 'datetime' | 'file' | 'element' | 'array' | 'arrayref';
 }
 

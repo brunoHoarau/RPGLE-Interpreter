@@ -158,7 +158,7 @@ test('dossier : membre voisin, sous-dossier du fichier source et chemin IFS rela
     const { Parser } = require('../out/parser');
     const { Interpreter } = require('../out/interpreter');
     const ast = new Parser(new Lexer(fs.readFileSync(main, 'utf8'), { path: main }).tokenize()).parse();
-    assert.deepEqual(new Interpreter().execute(ast).filter(l => l.startsWith('[DSPLY')), ['[DSPLY] 10']);
+    assert.deepEqual(new Interpreter(undefined, { readableDsply: true }).execute(ast).filter(l => l.startsWith('[DSPLY')), ['[DSPLY] 10']);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
