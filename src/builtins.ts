@@ -31,6 +31,34 @@ function truncateDecimals(n: number, decimals: number): number {
   return n < 0 && result !== 0 ? -result : result;   // jamais -0
 }
 
+// %INTH / %DECH : arrondi demi vers l'extérieur, calculé sur le texte décimal (1.005 donne 1.01 à 2 décimales)
+function halfAdjust(n: number, decimals: number): number {
+  let text = Math.abs(n).toPrecision(15);
+  if (/e/i.test(text)) text = Math.abs(n).toFixed(20);
+  const [int, frac = ''] = text.split('.');
+  const padded = frac.padEnd(decimals + 1, '0');
+  let digits = BigInt(int + padded.slice(0, decimals));
+  if (padded[decimals] >= '5') digits += 1n;
+  const str = digits.toString().padStart(decimals + 1, '0');
+  const result = Number(decimals > 0 ? `${str.slice(0, -decimals)}.${str.slice(-decimals)}` : str);
+  return n < 0 && result !== 0 ? -result : result;   // jamais -0
+}
+
+// %DEC / %DECH : contrôles communs de précision ; round choisit troncature ou arrondi
+function toDecimal(name: string, value: any, precision: number | undefined, decimals: number | undefined, round: boolean): number {
+  const num = numericText(value);
+  // Précision demandée supérieure à 15 et texte de plus de 15 chiffres significatifs : non exact
+  if (precision !== undefined && precision > 15 && typeof value === 'string' && value.replace(/\D/g, '').replace(/^0+/, '').length > 15) {
+    throw new NotSupportedError(`${name} d'une valeur de plus de 15 chiffres`);
+  }
+  const result = decimals === undefined ? num : round ? halfAdjust(num, decimals) : truncateDecimals(num, decimals);
+  // La partie entière doit tenir dans precision - decimals chiffres ; sinon le comportement IBM n'est pas vérifié
+  if (precision !== undefined && String(Math.trunc(Math.abs(result))).replace(/^0$/, '').length > precision - (decimals ?? 0)) {
+    throw new NotSupportedError(`${name} : valeur dont la partie entière dépasse la précision demandée`);
+  }
+  return result;
+}
+
 export interface BuiltinContext {
   status: number; // Pour %STATUS
   now(): Date;    // Pour %DATE(), %TIME(), %TIMESTAMP()
@@ -160,18 +188,9 @@ export const BUILTINS: { [name: string]: Builtin } = {
     return length !== undefined ? str.substr(startPos, length) : str.substr(startPos);
   },
   '%int': (_, value: any) => Math.trunc(numericText(value)),
-  '%dec': (_, value: any, precision?: number, decimals?: number) => {
-    const num = numericText(value);
-    // Précision demandée supérieure à 15 et texte de plus de 15 chiffres significatifs : non exact
-    if (precision !== undefined && precision > 15 && typeof value === 'string' && value.replace(/\D/g, '').replace(/^0+/, '').length > 15) {
-      throw new NotSupportedError('%DEC d\'une valeur de plus de 15 chiffres');
-    }
-    // La partie entière doit tenir dans precision - decimals chiffres ; sinon le comportement IBM n'est pas vérifié
-    if (precision !== undefined && String(Math.trunc(Math.abs(num))).replace(/^0$/, '').length > precision - (decimals ?? 0)) {
-      throw new NotSupportedError('%DEC : valeur dont la partie entière dépasse la précision demandée');
-    }
-    return decimals !== undefined ? truncateDecimals(num, decimals) : num;
-  },
+  '%dec': (_, value: any, precision?: number, decimals?: number) => toDecimal('%DEC', value, precision, decimals, false),
+  '%dech': (_, value: any, precision: number, decimals: number) => toDecimal('%DECH', value, precision, decimals, true),
+  '%inth': (_, value: any) => halfAdjust(numericText(value), 0),
   '%char': (_, value: any) => String(value),
   // %EDITC a besoin du type déclaré : évalué dans interpreter/evaluate/evaluate.ts
   '%editc': () => { throw new NotSupportedError('%EDITC hors évaluation'); },

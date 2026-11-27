@@ -95,6 +95,13 @@ export function declaredType(s: InterpreterState, expr: ExpressionNode | undefin
     const name = expr.value.name.toLowerCase();
     return (s.procedures.get(name) ?? s.prototypes.get(name))?.returnType;
   }
+  // %DEC(x : p : d) et %DECH(x : p : d) sont de type packed(p : d)
+  if (expr?.valueType === 'builtin' && ['%dec', '%dech'].includes(expr.value.name.toLowerCase())) {
+    const [p, d] = (expr.value.args ?? []).slice(1);
+    if (p?.valueType === 'number' && d?.valueType === 'number') {
+      return { typeName: 'packed', length: Number(p.value), decimals: Number(d.value) } as DataTypeNode;
+    }
+  }
   return undefined;
 }
 

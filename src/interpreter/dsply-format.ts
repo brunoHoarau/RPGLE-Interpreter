@@ -49,8 +49,8 @@ function foldedFormat(s: InterpreterState, expr: ExpressionNode): NumericFormat 
 function builtinFormat(s: InterpreterState, expr: ExpressionNode): NumericFormat | undefined {
   const name = expr.value.name.toLowerCase();
   const arg: ExpressionNode | undefined = expr.value.args?.[0];
-  if (name === '%int') return INT20;
-  if (name === '%dec' && expr.value.args?.length === 3) {
+  if (name === '%int' || name === '%inth') return INT20;
+  if ((name === '%dec' || name === '%dech') && expr.value.args?.length === 3) {
     const [digits, decimals] = expr.value.args.slice(1).map((a: ExpressionNode) => evaluate(s, a));
     return { kind: 'dec', digits, decimals };
   }
