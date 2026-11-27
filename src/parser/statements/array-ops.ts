@@ -4,7 +4,7 @@ import { isOpcode } from '../subroutines';
 import { unsupported } from '../constants';
 import { checkWritable } from './assignment';
 import { parseStatement } from './statement';
-import { parseArrayOperand } from '../expressions/array-operand';
+import { parseArrayOperand, parseWholeSubarr } from '../expressions/array-operand';
 
 const OPERAND_START = [TokenType.IDENTIFIER, TokenType.BUILTIN];
 
@@ -27,9 +27,9 @@ export function parseSorta(p: ParserState): ASTNode {
     descending = lower === 'd';
     p.expect(TokenType.RPAREN);
   }
-  const operand = parseArrayOperand(p, 'SORTA');
+  const { name, field, start, count } = parseArrayOperand(p, 'SORTA', { subarr: true }).value;
   p.expect(TokenType.SEMICOLON);
-  return { type: 'Sorta', name: operand.value.name, field: operand.value.field, descending };
+  return { type: 'Sorta', name, field, start, count, descending };
 }
 
 // FOR-EACH item IN tableau ; … ENDFOR ; : l'élément est copié dans item à chaque tour
@@ -50,7 +50,12 @@ export function parseForEach(p: ParserState): ASTNode {
     throw new Error(`FOR-EACH attend IN après ${item.toUpperCase()} (ligne ${p.peek().line})`);
   }
   p.advance();
-  if (p.check(TokenType.BUILTIN)) throw unsupported(`FOR-EACH … IN ${p.peek().value.toUpperCase()}`, p.peek());
+  if (p.check(TokenType.BUILTIN)) {
+    if (p.peek().value.toLowerCase() !== '%subarr') throw unsupported(`FOR-EACH … IN ${p.peek().value.toUpperCase()}`, p.peek());
+    const { name, start, count } = parseWholeSubarr(p, 'FOR-EACH … IN');
+    p.expect(TokenType.SEMICOLON);
+    return { type: 'LoopStatement', loopType: 'foreach', item, source: name, start, count, body: parseForEachBody(p, forToken) };
+  }
   const sourceToken = p.expectName();
   if (!p.arrayNames.has(sourceToken.value.toLowerCase())) {
     throw new Error(`FOR-EACH … IN attend un tableau : ${sourceToken.value.toUpperCase()} n'en est pas un (ligne ${sourceToken.line})`);
@@ -59,6 +64,10 @@ export function parseForEach(p: ParserState): ASTNode {
     throw unsupported(`FOR-EACH … IN ${sourceToken.value.toUpperCase()}(…) : seul le tableau entier est accepté`, sourceToken);
   }
   p.expect(TokenType.SEMICOLON);
+  return { type: 'LoopStatement', loopType: 'foreach', item, source: sourceToken.value, body: parseForEachBody(p, forToken) };
+}
+
+function parseForEachBody(p: ParserState, forToken: { line: number }): ASTNode[] {
   const body: ASTNode[] = [];
   while (!p.check(TokenType.ENDFOR)) {
     if (p.isAtEnd()) throw new Error(`FOR-EACH sans ENDFOR (ligne ${forToken.line})`);
@@ -66,5 +75,5 @@ export function parseForEach(p: ParserState): ASTNode {
   }
   p.expect(TokenType.ENDFOR);
   p.expect(TokenType.SEMICOLON);
-  return { type: 'LoopStatement', loopType: 'foreach', item, source: sourceToken.value, body };
+  return body;
 }

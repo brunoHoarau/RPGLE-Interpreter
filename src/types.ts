@@ -152,11 +152,12 @@ export interface SelectStatementNode {
   otherBlock?: ASTNode[];
 }
 
-// CLEAR cible : nom (ou 'ds.champ', '*in05'), ou élément tab(i) / ds(i) / ds(i).champ
+// CLEAR ou RESET cible : nom (ou 'ds.champ', '*in05'), ou élément tab(i) / ds(i) / ds(i).champ
 export interface ClearNode {
-  type: 'Clear';
+  type: 'Clear' | 'Reset';
   name: string;
   target?: ElementRef;
+  range?: { start: ExpressionNode; count?: ExpressionNode }; // %SUBARR(name : début {: nombre})
   line: number;
 }
 
@@ -164,6 +165,8 @@ export interface SortaNode {
   type: 'Sorta';
   name: string;
   field?: string;       // SORTA d(*).champ
+  start?: ExpressionNode; // SORTA %SUBARR(… : début {: nombre})
+  count?: ExpressionNode;
   descending: boolean;  // SORTA(D)
 }
 
@@ -173,6 +176,8 @@ export interface LoopStatementNode {
   variable?: string;          // Pour for
   item?: string;              // Pour foreach : variable (ou DS) qui reçoit chaque élément
   source?: string;            // Pour foreach : tableau parcouru
+  start?: ExpressionNode;     // Pour foreach IN %SUBARR(source : début {: nombre})
+  count?: ExpressionNode;
   condition?: ExpressionNode; // Pour dow/dou
   init?: ExpressionNode;      // Pour for
   limit?: ExpressionNode;     // Pour for
