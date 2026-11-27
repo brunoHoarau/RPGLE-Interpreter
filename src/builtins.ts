@@ -177,6 +177,7 @@ export const BUILTINS: { [name: string]: Builtin } = {
   '%diff': (_, a: any, b: any, unit: string) => diff(a, b, unit),
   '%subdt': (_, value: any, unit: string) => subdtBuiltin(value, unit),
   '%len': (_, str: any) => String(str).length,
+  '%size': () => { throw new NotSupportedError('%SIZE hors évaluation'); }, // évalué dans interpreter/evaluate/size.ts
   '%elem': (_, count: number) => count, // le nombre d'éléments est lu sur le tableau par l'évaluation
   '%lookup': (_, index: number) => index, // la recherche est faite par l'évaluation (src/interpreter/array-ops.ts)
   '%trim': (_, str: any) => String(str).trim(),

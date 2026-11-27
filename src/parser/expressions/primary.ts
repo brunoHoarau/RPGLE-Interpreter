@@ -95,6 +95,7 @@ export function parsePrimary(p: ParserState): ExpressionNode {
       return { type: 'Expression', value: { name, args }, valueType: 'builtin' };
     }
     if (name.toLowerCase() === '%lookup') return parseLookup(p, name, token.line);
+    if (name.toLowerCase() === '%size') return parseSize(p, name, token.line);
     // %ELEM(tableau) : l'argument est un nom de tableau, non évalué
     if (name.toLowerCase() === '%elem') {
       p.expect(TokenType.LPAREN);
@@ -183,4 +184,26 @@ function checkEditCode(arg: ExpressionNode, token: Token): void {
   if (arg.valueType !== 'string' || !EDIT_CODE.test(String(arg.value))) {
     throw new Error(`%EDITC : code d'édition invalide, un littéral parmi 1-4, A-D, J-Q, X, Y, Z est attendu (ligne ${token.line})`);
   }
+}
+
+// %SIZE(zone {: *ALL}) : un tableau entier est accepté (taille d'un élément, ou de tous avec *ALL)
+function parseSize(p: ParserState, name: string, line: number): ExpressionNode {
+  p.expect(TokenType.LPAREN);
+  const next = p.peek();
+  const after = p.peekNext();
+  const wholeArray = p.arrayNames.has(String(next.value).toLowerCase())
+    && after !== undefined && after.type !== TokenType.LPAREN;
+  const args: ExpressionNode[] = [wholeArray
+    ? { type: 'Expression', value: String(p.advance().value), valueType: 'array' }
+    : parseExpression(p)];
+  if (p.check(TokenType.COLON)) {
+    p.advance();
+    const all = p.advance();
+    if (String(all.value).toLowerCase() !== '*all') {
+      throw new Error(`%SIZE : le 2e argument ne peut être que *ALL (ligne ${line})`);
+    }
+    args.push({ type: 'Expression', value: '*all', valueType: 'special' });
+  }
+  p.expect(TokenType.RPAREN);
+  return { type: 'Expression', value: { name, args }, valueType: 'builtin' };
 }

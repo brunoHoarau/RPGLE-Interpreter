@@ -1,0 +1,46 @@
+import { ExpressionNode, DataTypeNode } from '../../types';
+import { byteLength } from '../../datatypes';
+import { DsShape } from '../../ds-shape';
+import { NotSupportedError } from '../../errors';
+import { declaredType } from '../calls';
+import { InterpreterState } from '../state';
+
+// Types dont la taille en octets est connue sans ambiguïté (dates : dépend de DATFMT, non simulé)
+const SIZED_TYPES = new Set(['char', 'varchar', 'ind', 'int', 'uns', 'packed', 'zoned']);
+
+function typeSize(type: DataTypeNode | undefined, what: string): number {
+  if (!type || !SIZED_TYPES.has(type.typeName)) throw new NotSupportedError(`%SIZE de ${what}`);
+  return byteLength(type);
+}
+
+// Taille d'une DS : fin de la sous-zone qui va le plus loin
+function dsSize(shape: DsShape, name: string): number {
+  return Math.max(0, ...shape.fields.map(f => f.start - 1 + typeSize(f.type, `la sous-zone ${name.toUpperCase()}.${f.name.toUpperCase()}`)));
+}
+
+// %SIZE(zone {: *ALL}) : taille en octets ; pour un tableau, d'un élément, ou de tous avec *ALL
+export function sizeBuiltin(s: InterpreterState, args: ExpressionNode[]): number {
+  const [operand, all] = args;
+  const name = typeof operand.value === 'string' ? operand.value : '';
+  if (operand.valueType === 'array') {
+    const shape = s.runtime.getShape(name);
+    const element = s.runtime.isDsArray(name) && shape ? dsSize(shape, name) : typeSize(s.runtime.getType(name), name.toUpperCase());
+    return all ? element * s.runtime.array(name).max : element;
+  }
+  if (all) throw new Error(`%SIZE(${name.toUpperCase() || 'expression'} : *ALL) : le 1er argument doit être un tableau`);
+  if (operand.valueType === 'string') return String(operand.value).length;
+  if (operand.valueType === 'identifier') {
+    const shape = s.runtime.getShape(name);
+    if (shape) return dsSize(shape, name);
+    return typeSize(s.runtime.getType(name), name.toUpperCase());
+  }
+  if (operand.valueType === 'element') {
+    const ref = operand.value;
+    if (!ref.field && s.runtime.isDsArray(ref.name)) {
+      const shape = s.runtime.getShape(ref.name);
+      if (shape) return dsSize(shape, ref.name);
+    }
+    return typeSize(declaredType(s, operand), `${String(ref.name).toUpperCase()}(…)`);
+  }
+  throw new NotSupportedError(`%SIZE d'un littéral numérique ou d'une expression`);
+}
