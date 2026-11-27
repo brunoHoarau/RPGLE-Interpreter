@@ -52,6 +52,18 @@ export function parseAssignmentOrCall(p: ParserState): ASTNode {
     return parseAssignmentOrCall(p);
   }
 
+  // EVALR var = expr : affectation cadrée à droite (cible caractère, contrôlée à l'exécution)
+  if (lower === 'evalr' && (p.isName() || p.check(TokenType.LPAREN))) {
+    if (p.check(TokenType.LPAREN)) {
+      const extender = p.peekNext();
+      throw unsupported(`EVALR(${(extender?.value ?? '').toUpperCase()})`, nameToken);
+    }
+    if (compoundBeforeEquals(p)) throw unsupported('Un opérateur composé (+=, -=…) avec EVALR', nameToken);
+    const node = parseAssignmentOrCall(p);
+    if (node.type !== 'Assignment') throw new Error(`EVALR attend une affectation à la ligne ${nameToken.line}`);
+    return { ...node, rightAdjust: true } as ASTNode;
+  }
+
   // UNLOCK(E) fichier : seul l'extenseur E est accepté (N ne vaut que pour les lectures)
   let unlockExtender: FileOperationNode['extender'];
   if (lower === 'unlock' && p.check(TokenType.LPAREN)) {
@@ -121,6 +133,20 @@ export function parseAssignmentOrCall(p: ParserState): ASTNode {
   }
 
   throw new Error(`Instruction non reconnue '${name}' à la ligne ${nameToken.line}`);
+}
+
+// Le premier opérateur d'affectation de l'instruction (hors parenthèses) est-il composé ?
+function compoundBeforeEquals(p: ParserState): boolean {
+  let depth = 0;
+  for (let i = p.pos; i < p.tokens.length; i++) {
+    const type = p.tokens[i].type;
+    if (type === TokenType.SEMICOLON) return false;
+    if (type === TokenType.LPAREN) depth++;
+    else if (type === TokenType.RPAREN) depth--;
+    else if (depth === 0 && type === TokenType.EQUALS) return false;
+    else if (depth === 0 && COMPOUND_OPERATORS.has(type)) return true;
+  }
+  return false;
 }
 
 // Un appel de procédure se trouve-t-il dans l'expression ?

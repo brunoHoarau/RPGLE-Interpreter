@@ -29,7 +29,7 @@ export const FILE_BUILTINS = new Set(['%eof', '%found', '%equal', '%open']);
 // suivis de '=', '.' ou '(' : sinon ce sont des noms de variable ou de procédure)
 export const UNSUPPORTED_OPCODES = new Set([
   'acq', 'commit', 'data-gen', 'data-into', 'dealloc', 'dump',
-  'eval-corr', 'evalr', 'except', 'feod', 'force', 'in', 'next',
+  'eval-corr', 'except', 'feod', 'force', 'in', 'next',
   'on-excp', 'on-exit', 'out', 'post', 'readc', 'rel',
   'rolbk', 'snd-msg', 'test', 'xml-into', 'xml-sax',
 ]);
