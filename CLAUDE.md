@@ -6,7 +6,7 @@ Fidélité au comportement IBM i ; tout ce qui n'est pas supporté est **refusé
 ## Règle d'or : ne lire que ce qu'on modifie
 
 Ne jamais lire un dossier entier. Utiliser la carte ci-dessous, puis `grep -n` pour trouver la ligne, puis lire une tranche.
-Aucun fichier de `src/` ne dépasse 400 lignes (contrôlé par `npm run check-size`) : si un fichier grossit au-delà, le découper.
+Aucun fichier de `src/` ni de `test/*.test.js` ne dépasse 400 lignes (contrôlé par `npm run check-size`) : si un fichier grossit au-delà, le découper.
 
 ## Carte du code
 
@@ -54,14 +54,22 @@ Le parser et l'interpréteur sont des **fonctions libres** prenant l'état en pr
 ## Tests (TDD obligatoire)
 
 - Helpers : `const { run, runRaw, parse } = require('./helpers')` ; `run(source)` renvoie les lignes affichées par DSPLY.
-- Un fichier `test/<domaine>.test.js` par domaine ; ajouter au fichier existant du domaine.
+- Fichiers `test/<domaine>[-<sous-domaine>].test.js` ; ajouter au fichier du thème (en créer un si > 380 lignes).
 - Le test rouge d'abord, puis le code, puis le vert.
+- **Ne jamais lire un fichier de test en entier** (sauf réécriture) : `grep -n "^test(" fichier` pour la structure, lire UN test voisin comme modèle, ajouter.
+- Pendant le développement, ne lancer que ce qui est concerné :
+  - `node scripts/check.js test/ecrans*.test.js` — compile + ces fichiers seulement, sortie minimale ;
+  - `node --test --test-name-pattern="EXFMT" test/ecrans-operations.test.js` — un seul test (après compilation).
+- Vérifier un comportement sans lire de code : `npm run --silent rpg -- fichier.rpgle [--context dossier]` (sortie DSPLY ou erreur) ;
+  voir ce que produit le parser : `npm run --silent ast -- "dcl-s x int(10);"` (ou `--file f.rpgle`).
 
-## Contrôles mécaniques (avant tout commit)
+## Contrôles mécaniques (avant tout commit de code)
 
 ```
-npm run check     # compile (out/ nettoyé), tous les tests, contrôle de taille
+npm run --silent check   # compile, tous les tests, taille — 1 ligne si vert, sinon le 1er échec tronqué
 ```
+
+Commit sans code (doc, config) : pas de contrôle.
 
 Ces contrôles remplacent une relecture par un modèle pour tout ce qu'ils couvrent. Une relecture humaine/modèle ne porte que sur la fidélité au comportement RPG.
 
@@ -80,6 +88,23 @@ Ces contrôles remplacent une relecture par un modèle pour tout ce qu'ils couvr
 
 - Processus proportionné : plan court (≤ 150 lignes) pour un incrément ; pas de plan pour une BIF ou un petit opcode.
 - Références RPG locales : `skills/INDEX.md` (jamais committé) ; grep avant de lire.
+- Sous-agent seulement pour une implémentation longue et spécifiée ; quelques appels d'outils → les faire soi-même.
+  Pour une session d'implémentation, préférer `/model sonnet` dans la session principale ; `/compact` dès qu'elle s'allonge.
+- Pas de relecture finale par un modèle ; relecture ciblée seulement sur un point de sémantique IBM i douteux.
+
+### Sorties et lectures
+
+- Filtrer toute commande bavarde : `git diff --stat`, `git log --oneline -5`, `npm run --silent`, `| tail -n 20`.
+  Filet : `.claude/settings.json` plafonne la sortie des commandes (`bashOutputMaxChars`).
+- `grep` en deux temps : fichiers ou nombre de correspondances d'abord, lignes ensuite (avec limite).
+- Ne jamais relire un fichier qu'on vient de modifier ni un fichier déjà lu dans la conversation.
+- Specs et plans : grep de la section utile, pas de lecture complète.
+- Ne pas recopier dans le chat le code écrit dans les fichiers.
+
+### Réponses
+
+- Courtes par défaut (10 à 15 lignes en discussion) ; pas de tableaux ni d'exemples de code non demandés ;
+  pas de reformulation de la demande ; questions groupées en une fois.
 
 ## Git
 

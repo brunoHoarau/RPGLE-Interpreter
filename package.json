@@ -73,7 +73,9 @@
     "test": "node --test \"test/**/*.test.js\"",
     "package": "npx --yes @vscode/vsce package --no-dependencies",
     "check-size": "node scripts/check-size.js",
-    "check": "npm test && npm run check-size"
+    "check": "node scripts/check.js",
+    "rpg": "node scripts/rpg.js",
+    "ast": "node scripts/ast.js"
   },
   "devDependencies": {
     "@types/node": "^16.18.126",

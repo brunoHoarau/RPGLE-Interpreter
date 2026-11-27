@@ -3,15 +3,16 @@ const fs = require('fs');
 const path = require('path');
 
 const MAX_LINES = 400;
-const ROOT = path.join(__dirname, '..', 'src');
+const BASE = path.join(__dirname, '..');
 
-function walk(dir) {
+function walk(dir, suffix) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap(e =>
-    e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith('.ts') ? [path.join(dir, e.name)] : []);
+    e.isDirectory() ? walk(path.join(dir, e.name), suffix) : e.name.endsWith(suffix) ? [path.join(dir, e.name)] : []);
 }
 
-const tooLong = walk(ROOT)
-  .map(f => ({ f: path.relative(path.join(__dirname, '..'), f), n: fs.readFileSync(f, 'utf8').split('\n').length }))
+// src/*.ts et test/*.test.js : un fichier court se lit par tranche sans coût
+const tooLong = [...walk(path.join(BASE, 'src'), '.ts'), ...walk(path.join(BASE, 'test'), '.test.js')]
+  .map(f => ({ f: path.relative(BASE, f), n: fs.readFileSync(f, 'utf8').split('\n').length }))
   .filter(x => x.n > MAX_LINES);
 
 for (const x of tooLong) console.error(`${x.f} : ${x.n} lignes (max ${MAX_LINES})`);
