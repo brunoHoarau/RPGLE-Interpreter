@@ -3,6 +3,7 @@ import { byteLength } from '../../datatypes';
 import { DsShape } from '../../ds-shape';
 import { NotSupportedError } from '../../errors';
 import { highValue, lowValue } from '../../datetime';
+import { editw } from '../../editw';
 import { declaredType } from '../calls';
 import { InterpreterState } from '../state';
 
@@ -69,4 +70,19 @@ export function limitBuiltin(s: InterpreterState, name: '%hival' | '%loval', arg
     return high ? 2 ** (bits - 1) - 1 : -(2 ** (bits - 1));
   }
   throw new NotSupportedError(what);
+}
+
+// %EDITW(zone : mot d'édition) : chiffres et décimales viennent du type déclaré ; le mot d'édition est une constante
+export function editwBuiltin(s: InterpreterState, args: ExpressionNode[], evaluate: (e: ExpressionNode) => any): string {
+  const [operand, wordExpr] = args;
+  const literal = wordExpr?.valueType === 'identifier' ? s.runtime.getConstantLiteral(wordExpr.value) : wordExpr;
+  if (literal?.valueType !== 'string') throw new Error(`%EDITW : le mot d'édition doit être un littéral ou une constante caractère`);
+  const type = operand?.valueType === 'identifier' || operand?.valueType === 'element' ? declaredType(s, operand) : undefined;
+  if (type?.typeName === 'packed' || type?.typeName === 'zoned') {
+    return editw(evaluate(operand), type.length ?? 0, type.decimals ?? 0, String(literal.value));
+  }
+  if (type?.typeName === 'int' || type?.typeName === 'uns') {
+    return editw(evaluate(operand), type.length ?? 10, 0, String(literal.value));
+  }
+  throw new NotSupportedError(`%EDITW d'une valeur sans type numérique déclaré (littéral, expression)`);
 }

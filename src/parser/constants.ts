@@ -47,7 +47,7 @@ export const UNIT_ARGUMENT = new Map([['%diff', 2], ['%subdt', 1]]);
 // Nombre exact d'arguments des fonctions de dates
 export const BUILTIN_ARITY: { [name: string]: number } = {
   '%diff': 3, '%subdt': 2, '%years': 1, '%months': 1, '%days': 1,
-  '%editc': 2, '%dech': 3, '%inth': 1, '%hival': 1, '%loval': 1, '%parms': 0, '%hours': 1, '%minutes': 1, '%seconds': 1, '%mseconds': 1,
+  '%editc': 2, '%dech': 3, '%inth': 1, '%hival': 1, '%loval': 1, '%parms': 0, '%editw': 2, '%hours': 1, '%minutes': 1, '%seconds': 1, '%mseconds': 1,
 };
 
 export function unsupported(what: string, token: Token): Error {
