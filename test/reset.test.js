@@ -64,6 +64,42 @@ test('RESET pendant *INZSR : erreur 00109', () => {
   `), ['interceptée']);
 });
 
+test('RESET pendant *INZSR, appel indirect : sous-routine, procédure ; permis après', () => {
+  assert.throws(() => run(`
+    dcl-s x int(10) inz(1);
+    *inlr = *on;
+    begsr *inzsr;
+      exsr init;
+    endsr;
+    begsr init;
+      reset x;
+    endsr;
+  `), /RNX0109/);
+  assert.throws(() => run(`
+    dcl-s x int(10) inz(1);
+    *inlr = *on;
+    begsr *inzsr;
+      p();
+    endsr;
+    dcl-proc p;
+      reset x;
+    end-proc;
+  `), /RNX0109/);
+  assert.deepEqual(run(`
+    dcl-s x int(10) inz(1);
+    x = 5;
+    exsr init;
+    dsply %char(x);
+    *inlr = *on;
+    begsr *inzsr;
+      x = 2;
+    endsr;
+    begsr init;
+      reset x;
+    endsr;
+  `), ['2']);
+});
+
 test('RESET *INnn : indicateur à sa valeur de fin d initialisation', () => {
   assert.deepEqual(run(`
     *in05 = *on;
