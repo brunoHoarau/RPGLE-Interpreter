@@ -3,7 +3,7 @@
 
 import { DateTimeKind, DurationUnit, RpgDate, RpgDuration, RpgTime, RpgTimestamp, diffDateTime, fromClock, isDateTime, kindOf, parseIso, subdt, unitFromName } from './datetime';
 import { describeValue } from './datatypes';
-import { NotSupportedError, RpgError, STATUS_INVALID_DATE, STATUS_INVALID_NUMERIC, incompatibleTypes } from './errors';
+import { NotSupportedError, RpgError, STATUS_INVALID_DATE, STATUS_INVALID_NUMERIC, STATUS_STRING_RANGE, incompatibleTypes } from './errors';
 
 // %INT et %DEC sur un texte : il doit être numérique, sinon RNX0105
 // Grammaire IBM : blancs n'importe où, un signe en tête ou en queue, un seul séparateur décimal (. ou ,), un chiffre au moins
@@ -95,8 +95,40 @@ function fileBuiltin(name: string): Builtin {
   return () => { throw new Error(`${name} doit être évalué par l'interpréteur`); };
 }
 
+// Plage [start, start + length) d'une chaîne, contrôlée comme sur IBM i (statut 00100 sinon)
+function stringRange(name: string, str: string, start: number = 1, length?: number): [number, number] {
+  const len = length ?? str.length - start + 1;
+  if (!Number.isInteger(start) || start < 1 || start > str.length || len < 0 || start - 1 + len > str.length) {
+    throw new RpgError(STATUS_STRING_RANGE, `${name} : position ${start} ou longueur ${len} hors de la chaîne`);
+  }
+  return [start - 1, start - 1 + len];
+}
+
+// %XLATE(from : to : chaîne {: début}) : un caractère répété dans from prend sa première correspondance ;
+// les caractères de from au-delà de la longueur de to ne sont pas traduits
+function xlate(from: any, to: any, source: any, start?: number): string {
+  const str = String(source);
+  const [begin] = stringRange('%XLATE', str, start);
+  const map = new Map<string, string>();
+  const f = String(from), t = String(to);
+  for (let i = 0; i < Math.min(f.length, t.length); i++) {
+    if (!map.has(f[i])) map.set(f[i], t[i]);
+  }
+  return str.slice(0, begin) + Array.from(str.slice(begin), c => map.get(c) ?? c).join('');
+}
+
+// %SCANRPL(cherché : remplacement : chaîne {: début {: longueur}}) : occurrences non chevauchantes, de gauche à droite
+function scanrpl(scan: any, replacement: any, source: any, start?: number, length?: number): string {
+  const str = String(source), s = String(scan);
+  if (s.length === 0) throw new NotSupportedError('%SCANRPL avec une chaîne cherchée vide');
+  const [begin, end] = stringRange('%SCANRPL', str, start, length);
+  return str.slice(0, begin) + str.slice(begin, end).split(s).join(String(replacement)) + str.slice(end);
+}
+
 export const BUILTINS: { [name: string]: Builtin } = {
   '%status': ctx => ctx.status,
+  '%xlate': (_, from: any, to: any, source: any, start?: number) => xlate(from, to, source, start),
+  '%scanrpl': (_, scan: any, rpl: any, source: any, start?: number, length?: number) => scanrpl(scan, rpl, source, start, length),
   // %ERROR dépend de la dernière opération à extenseur (E) : l'interpréteur la traite lui-même
   '%error': fileBuiltin('%ERROR'),
   // %EOF, %FOUND, %EQUAL et %OPEN dépendent de l'état des fichiers : l'interpréteur les traite lui-même
