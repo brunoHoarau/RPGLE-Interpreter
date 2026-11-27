@@ -54,6 +54,7 @@ export enum TokenType {
   VARCHAR = 'VARCHAR',
   PACKED = 'PACKED',
   ZONED = 'ZONED',
+  FLOAT = 'FLOAT',
   INT = 'INT',
   UNS = 'UNS',
   DATE = 'DATE',

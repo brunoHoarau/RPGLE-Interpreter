@@ -5,6 +5,8 @@ import { NotSupportedError, incompatibleTypes } from '../errors';
 import { valueFor } from './declarations';
 import { evaluate } from './evaluate/evaluate';
 import { elementTarget } from './evaluate/element';
+import { formatFloat } from '../float';
+import { floatLength } from './float';
 import { formatNumericDsply } from './dsply-format';
 import { InterpreterState } from './state';
 
@@ -56,7 +58,8 @@ export function executeDsply(s: InterpreterState, node: any): void {
     const value = evaluate(s, node.message);
     if (isDuration(value)) throw incompatibleTypes(`DSPLY ${describeValue(value)}`);
     const numeric = (typeof value === 'number' || typeof value === 'bigint') && !s.options.readableDsply;
-    msg = (numeric ? formatNumericDsply(s, node.message, value) : String(value)).trimEnd();
+    const floating = typeof value === 'number' ? floatLength(s, node.message) : undefined;
+    msg = (floating ? formatFloat(value, floating) : numeric ? formatNumericDsply(s, node.message, value) : String(value)).trimEnd();
   }
 
   let queueInfo = '';

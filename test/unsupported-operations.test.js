@@ -139,6 +139,6 @@ test('un indice de tableau est refusé', () => {
 
 
 test('une fonction intégrée inconnue est refusée à l\'analyse', () => {
-  assert.throws(() => parse(`dcl-s x char(10); if 1 = 2; x = %char(%float(1)); endif;`),
-    err => NOT_SUPPORTED.test(err.message) && /%FLOAT/i.test(err.message));
+  assert.throws(() => parse(`dcl-s x char(10); if 1 = 2; x = %char(%bitand(1:2)); endif;`),
+    err => NOT_SUPPORTED.test(err.message) && /%BITAND/i.test(err.message));
 });

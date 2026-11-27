@@ -1,3 +1,5 @@
+import { floatLength } from './float';
+import { truncateExact } from '../float';
 import { ExpressionNode, DataTypeNode, DsLike, DimNode } from '../types';
 import { checkAssignable, defaultValue, describeType } from '../datatypes';
 import { fromClock, isDateTime, isDateTimeType, parseIso } from '../datetime';
@@ -53,6 +55,10 @@ export function valueFor(s: InterpreterState, expr: ExpressionNode, type: DataTy
     value = evaluate(s, expr);
   }
   checkAssignable(value, type, target, expr.valueType === 'string');
+  // Flottant vers décimal ou entier : troncature de la valeur binaire exacte
+  if (typeof value === 'number' && type && ['int', 'uns', 'packed', 'zoned'].includes(type.typeName) && floatLength(s, expr)) {
+    return truncateExact(value, type.decimals ?? 0);
+  }
   return value;
 }
 

@@ -2,6 +2,7 @@
 // le runtime les exécute, le parser refuse dès l'analyse celles qui n'y sont pas.
 
 import { DateTimeKind, DurationUnit, RpgDate, RpgDuration, RpgTime, RpgTimestamp, diffDateTime, fromClock, isDateTime, kindOf, parseIso, subdt, unitFromName } from './datetime';
+import { checkFloat, floatFromText } from './float';
 import { describeValue } from './datatypes';
 import { NotSupportedError, RpgError, STATUS_INVALID_DATE, STATUS_INVALID_NUMERIC, STATUS_STRING_RANGE, incompatibleTypes } from './errors';
 
@@ -197,6 +198,8 @@ export const BUILTINS: { [name: string]: Builtin } = {
   '%dech': (_, value: any, precision: number, decimals: number) => toDecimal('%DECH', value, precision, decimals, true),
   '%inth': (_, value: any) => halfAdjust(numericText(value), 0),
   '%char': (_, value: any) => String(value),
+  '%float': (_, value: any) => typeof value === 'number' ? checkFloat(value) : floatFromText(value),
+  '%editflt': () => { throw new NotSupportedError('%EDITFLT hors évaluation'); }, // évalué dans interpreter/evaluate/float-builtins.ts
   // %EDITC a besoin du type déclaré : évalué dans interpreter/evaluate/evaluate.ts
   '%editc': () => { throw new NotSupportedError('%EDITC hors évaluation'); },
   '%scan': (_, search: any, source: any) => {

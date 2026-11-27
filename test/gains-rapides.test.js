@@ -139,7 +139,6 @@ test('variables, champs et paramètres nommés comme un type', () => {
 
 test('un mot de type reste un type en position de type', () => {
   assert.throws(() => parse(`dcl-s p pointer;`), NOT_SUPPORTED);
-  assert.throws(() => parse(`dcl-s x float(8);`), NOT_SUPPORTED);
 });
 
 test('affectation composée sur un élément de tableau : refusée explicitement', () => {
