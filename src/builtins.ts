@@ -125,7 +125,7 @@ function fileBuiltin(name: string): Builtin {
 }
 
 // Plage [start, start + length) d'une chaîne, contrôlée comme sur IBM i (statut 00100 sinon)
-function stringRange(name: string, str: string, start: number = 1, length?: number): [number, number] {
+export function stringRange(name: string, str: string, start: number = 1, length?: number): [number, number] {
   const len = length ?? str.length - start + 1;
   if (!Number.isInteger(start) || start < 1 || start > str.length || len < 0 || start - 1 + len > str.length) {
     throw new RpgError(STATUS_STRING_RANGE, `${name} : position ${start} ou longueur ${len} hors de la chaîne`);
@@ -190,8 +190,8 @@ export const BUILTINS: { [name: string]: Builtin } = {
   '%triml': (_, str: any) => String(str).trimStart(),
   '%subst': (_, source: any, start: number, length?: number) => {
     const str = String(source);
-    const startPos = start - 1;
-    return length !== undefined ? str.substr(startPos, length) : str.substr(startPos);
+    const [begin, end] = stringRange('%SUBST', str, start, length);
+    return str.slice(begin, end);
   },
   '%int': (_, value: any) => Math.trunc(numericText(value)),
   '%dec': (_, value: any, precision?: number, decimals?: number) => toDecimal('%DEC', value, precision, decimals, false),

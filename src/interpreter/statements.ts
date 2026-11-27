@@ -9,8 +9,11 @@ import { formatFloat } from '../float';
 import { floatLength } from './float';
 import { formatNumericDsply } from './dsply-format';
 import { InterpreterState } from './state';
+import { assignSubstring } from './substring';
 
 export function executeAssignment(s: InterpreterState, node: any): void {
+  if (node.substring) return assignSubstring(s, node);
+  if (node.rightAdjust) return assignRightAdjusted(s, node);
   if (node.target) return assignElement(s, node);
   if (s.runtime.isArray(node.variable)) throw s.runtime.wholeArray(node.variable);
   if (!node.variable.includes('.') && isDataStructure(s.runtime.lookup(node.variable))) return assignDataStructure(s, node);
@@ -27,6 +30,21 @@ function assignElement(s: InterpreterState, node: any): void {
   else s.runtime.setElement(name, at, value);
 }
 
+// EVALR : la valeur caractère est cadrée à droite dans la cible (blancs à gauche, troncature à gauche)
+function assignRightAdjusted(s: InterpreterState, node: any): void {
+  const target = node.target ? (node.target.field ? `${node.target.name}.${node.target.field}` : node.target.name) : node.variable;
+  if (s.runtime.isArray(target) && !node.target) throw s.runtime.wholeArray(target);
+  const type = s.runtime.getType(target);
+  // IBM i : la cible d'EVALR est une zone caractère, graphique ou UCS-2 de longueur fixe
+  if (type?.typeName !== 'char') {
+    throw new Error(`EVALR exige une cible caractère de longueur fixe : ${target.toUpperCase()} est ${type ? describeType(type) : 'une structure de données'}`);
+  }
+  const length = type.length ?? 1;
+  const text = String(valueFor(s, node.value, type, target));
+  const adjusted = text.length >= length ? text.slice(text.length - length) : text.padStart(length, ' ');
+  const rest = { ...node, rightAdjust: false, value: { type: 'Expression', valueType: 'string', value: adjusted } };
+  executeAssignment(s, rest);
+}
 
 export function assignTo(s: InterpreterState, variable: string, value: any): void {
   if (!variable.includes('.') && isDataStructure(s.runtime.lookup(variable))) throw dataStructureAsValue(s, variable);

@@ -5,6 +5,7 @@ import { parseDateTimeSpecial } from '../declarations/variables';
 import { requireFile } from '../files';
 import { parseExpression } from '../expressions/operators';
 import { parseElement, elementExpression, refuseUnindexed } from '../expressions/element';
+import { isSubstringTarget, parseSubstringAssignment } from './substring';
 
 // IBM i refuse à la compilation d'affecter une constante ou un paramètre CONST
 export function checkWritable(p: ParserState, name: string, line: number): void {
@@ -44,12 +45,32 @@ export function parseAssignmentOrCall(p: ParserState): ASTNode {
   }
 
   // EVAL var = expr ; les extenseurs (H, M, R) ne sont pas supportés
+  if (lower === 'eval' && isSubstringTarget(p)) return parseSubstringAssignment(p, false);
   if (lower === 'eval' && (p.isName() || p.check(TokenType.LPAREN))) {
     if (p.check(TokenType.LPAREN)) {
       const extender = p.peekNext();
       throw unsupported(`EVAL(${(extender?.value ?? '').toUpperCase()})`, nameToken);
     }
     return parseAssignmentOrCall(p);
+  }
+
+  // EVALR{(MR)} var = expr : affectation cadrée à droite (cible char fixe, contrôlée à l'exécution).
+  // M et R ne portent que sur la précision numérique : sans effet sur un résultat caractère.
+  if (lower === 'evalr' && (p.isName() || p.check(TokenType.LPAREN) || isSubstringTarget(p))) {
+    if (p.check(TokenType.LPAREN)) {
+      const { text, end } = p.parenText();
+      if (!/^[mr]$/i.test(text) || p.tokens[end]?.type !== TokenType.RPAREN) {
+        throw new Error(`EVALR(${text.toUpperCase()}) : EVALR n'admet que les extenseurs M et R (ligne ${nameToken.line})`);
+      }
+      p.pos = end + 1;
+    }
+    if (isSubstringTarget(p)) return parseSubstringAssignment(p, true);
+    if (compoundBeforeEquals(p)) {
+      throw new Error(`EVALR n'admet que l'affectation simple (=), pas +=, -=, *=, /= ni **= (ligne ${nameToken.line})`);
+    }
+    const node = parseAssignmentOrCall(p);
+    if (node.type !== 'Assignment') throw new Error(`EVALR attend une affectation à la ligne ${nameToken.line}`);
+    return { ...node, rightAdjust: true } as ASTNode;
   }
 
   // UNLOCK(E) fichier : seul l'extenseur E est accepté (N ne vaut que pour les lectures)
@@ -121,6 +142,20 @@ export function parseAssignmentOrCall(p: ParserState): ASTNode {
   }
 
   throw new Error(`Instruction non reconnue '${name}' à la ligne ${nameToken.line}`);
+}
+
+// Le premier opérateur d'affectation de l'instruction (hors parenthèses) est-il composé ?
+function compoundBeforeEquals(p: ParserState): boolean {
+  let depth = 0;
+  for (let i = p.pos; i < p.tokens.length; i++) {
+    const type = p.tokens[i].type;
+    if (type === TokenType.SEMICOLON) return false;
+    if (type === TokenType.LPAREN) depth++;
+    else if (type === TokenType.RPAREN) depth--;
+    else if (depth === 0 && type === TokenType.EQUALS) return false;
+    else if (depth === 0 && COMPOUND_OPERATORS.has(type)) return true;
+  }
+  return false;
 }
 
 // Un appel de procédure se trouve-t-il dans l'expression ?
