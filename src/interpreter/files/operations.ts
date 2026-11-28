@@ -22,6 +22,9 @@ export function fileState(s: InterpreterState, name: string): FileState {
 // Les opérandes (clé, numéro d'enregistrement) sont évalués avant : (E) n'intercepte que les erreurs
 // de l'opération elle-même, pas celles d'une procédure appelée dans la clé.
 export function executeFileOperation(s: InterpreterState, node: FileOperationNode): void {
+  if (node.operation === 'readc' && !s.displays.has(node.file.toUpperCase())) {
+    throw new Error(`READC n'est permis que sur un format sous-fichier d'un fichier écran, pas sur ${node.file.toUpperCase()}`);
+  }
   if (s.displays.has(node.file.toUpperCase()) || node.operation === 'exfmt') {
     executeScreenOperation(s, node);
     return;

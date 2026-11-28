@@ -159,8 +159,10 @@ programme (« écran fermé par l'utilisateur »). La sortie DSPLY est envoyée 
 
 ## 5. Refusé explicitement (message en français, test dans `test/unsupported.test.js`)
 
-Sous-fichiers (SFL/SFLCTL, `READC`, `CHAIN`/`UPDATE` sur un format écran) et leur pagination
-automatique ; `OVERLAY` et superposition de formats ; `INFDS` et octet AID ; `READ` sur le nom de
+Sous-fichiers de messages (`SFLMSGRCD`…) et mots-clés de sous-fichier hors spec « sous-fichiers »
+(`SFLLIN`, `SFLRNA`, `SFLCSRRRN`…) ; `CHAIN`/`UPDATE`/`READC` sur un format qui n'est pas un sous-fichier
+(les sous-fichiers « tels qu'écrits sur IBM i » sont faits : `2026-11-28-sous-fichiers-design.md`, avec `OVERLAY`) ;
+`INFDS` et octet AID ; `READ` sur le nom de
 fichier écran (sans format) ; extenseur `(E)` et `%ERROR` sur opérations écran ; `WRITE`/`READ` d'une DS
 résultat sur un écran ; source DDS ; attributs d'affichage (`DSPATR`, `COLOR`) et codes d'édition ;
 `PRINTER` et `SPECIAL` restent refusés.
