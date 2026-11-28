@@ -1,5 +1,7 @@
 // Stockage d'un sous-fichier 5250 : lignes par rang, drapeau « modifié », position de READC
 import type { AreaValue } from './area';
+import type { DisplayFormat } from './definition';
+import type { ControlSpec } from './definition-subfile';
 
 export interface SubfileRecord { values: Map<string, AreaValue>; indicators: string; changed: boolean }
 
@@ -65,4 +67,15 @@ export class Subfile {
     for (let rrn = first; rrn < first + this.page; rrn++) if (this.lines.has(rrn)) result.push(rrn);
     return result;
   }
+}
+
+// État d'un sous-fichier dans le simulateur (créé avec le fichier écran, un par format contrôle)
+export interface SubfileState {
+  name: string;                  // format sous-fichier
+  format: DisplayFormat;
+  control: ControlSpec;
+  sf: Subfile;
+  lastRrn?: number;              // dernière ligne lue par CHAIN ou READC (cible d'UPDATE)
+  page: number;                  // page affichée (1...)
+  folded: boolean;               // forme tronquée (SFLDROP) ; initialement vraie si "drop" est déclaré
 }
