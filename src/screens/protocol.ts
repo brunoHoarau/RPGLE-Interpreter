@@ -31,10 +31,15 @@ export interface ScreenSubfile {
   rows: { rrn: number; fields: Screen['fields'] }[];
   end?: string;                    // texte de SFLEND (A suivre... / Fin / +)
   folded: boolean;                 // forme tronquée (SFLDROP)
+  loaded: { rrn: number; values: { [name: string]: string } }[];   // toutes les lignes chargées (valeurs affichées, zones H comprises) : le scénario y cherche ses lignes
 }
 
 // key : ENTER, F1…F24, PAGEUP, PAGEDOWN
-export interface ScreenInput { key: string; fields: { [name: string]: string }; }
+export interface ScreenInput {
+  key: string;
+  fields: { [name: string]: string };
+  lines?: { rrn: number; fields: { [name: string]: string } }[];   // saisie sur les lignes du sous-fichier
+}
 
 export interface Terminal {
   show(screen: Screen): void;         // affiche (W, et réaffichage avec message)

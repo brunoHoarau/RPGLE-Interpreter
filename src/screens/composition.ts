@@ -83,7 +83,12 @@ export function subfileScreen(state: SubfileState, endActive: boolean): ScreenSu
       : shownFields(state.format, record.values, flags, f => f.row! + k * height);
     return { rrn, fields };
   });
-  const result: ScreenSubfile = { format: state.name, rows, folded: state.folded };
+  const loaded = [...Array(state.sf.count)].map((_, i) => {
+    const values: { [name: string]: string } = {};
+    for (const f of state.format.fields) values[f.name] = display(f, state.sf.chain(i + 1)!.values.get(f.name)!);
+    return { rrn: i + 1, values };
+  });
+  const result: ScreenSubfile = { format: state.name, rows, folded: state.folded, loaded };
   const more = (rrns[rrns.length - 1] ?? 0) < state.sf.count;
   if (endActive && state.control.end) {
     const text = state.control.end.text === '*MORE' ? (more ? 'A suivre...' : 'Fin') : more ? '+' : undefined;

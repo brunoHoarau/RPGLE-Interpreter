@@ -4,10 +4,12 @@ import { failCall } from './protocol';
 import type { Screen, ScreenInput, SpecialCall, SpecialRoutine, Terminal } from './protocol';
 import { AreaValue, decodeArea, encodeArea, indicatorsString, parseIndicators } from './area';
 import { parseInput } from './input-values';
-import { active, blank, ownRows, pageOfRrn, pageRows, sharesRow, shownConstants, shownFields, subfileScreen } from './composition';
+import { active, blank, ownRows, pageOfRrn, pageRows, perPage, sharesRow, shownConstants, shownFields, subfileScreen } from './composition';
 import { Subfile } from './subfile';
 import type { SubfileState } from './subfile';
 import { subfileCall } from './subfile-calls';
+import { collectLines, commitLines } from './subfile-input';
+import type { PendingLines } from './subfile-input';
 
 interface Displayed {
   format: string;
@@ -20,7 +22,7 @@ interface Displayed {
   subfile?: { state: SubfileState; endActive: boolean };   // contrôle : page du sous-fichier montrée
 }
 
-type Accepted = { key?: string; values: Map<string, AreaValue> } | { message: string };
+type Accepted = { key?: string } | { message: string } | { continue: true };
 
 export class ScreenSimulator implements SpecialRoutine {
   private displayed: Displayed[] = [];     // formats affichés, du plus ancien au dernier écrit
@@ -137,48 +139,86 @@ export class ScreenSimulator implements SpecialRoutine {
     const shown = this.displayed.find(d => d.format.toUpperCase() === p.format.toUpperCase());
     if (!shown) return failCall(p, `READ ${p.format} : le format affiché est ${this.displayed.map(d => d.format).join(', ')}`);
     const control = shown.definition.control;
-    if (control) this.subfiles.get(control.subfile)!.sf.resetPosition();   // READC repart avant le rang 1
+    const state = control ? this.subfiles.get(control.subfile)! : undefined;
+    state?.sf.resetPosition();   // READC repart avant le rang 1
+    const pending = { values: new Map(shown.values), lines: new Map() as PendingLines };
     let screen = this.compose();
     for (;;) {
-      const accepted = this.accept(shown, this.terminal.input(screen));
-      if ('message' in accepted) {   // refus : réaffichage avec message, puis nouvelle saisie
-        screen = { ...this.compose(), message: accepted.message };
+      const step = this.accept(shown, state, this.terminal.input(screen), pending);
+      if ('message' in step) {   // refus : réaffichage avec message, puis nouvelle saisie
+        screen = { ...this.compose(), message: step.message };
         this.terminal.show(screen);
         continue;
       }
-      if (accepted.key === undefined || !accepted.key.startsWith('CA')) {
-        p.area = encodeArea(shown.definition.fields, accepted.values);   // CA : AREA inchangée
+      if ('continue' in step) {  // pagination ou touche drop : le simulateur répond seul, saisies conservées
+        screen = this.compose();
+        this.terminal.show(screen);
+        continue;
       }
-      p.indicators = this.responseIndicators(p.indicators, shown, accepted.key);
+      if (step.key === undefined || !step.key.startsWith('CA')) {   // CA : AREA inchangée, rien n'est transmis
+        p.area = encodeArea(shown.definition.fields, pending.values);
+        if (state) commitLines(state, pending.lines);
+      }
+      p.indicators = this.responseIndicators(p.indicators, shown, step.key);
       return;
     }
   }
 
-  private accept(shown: Displayed, input: ScreenInput): Accepted {
-    const key = this.declaredKey(shown.definition, input.key);
-    if (key === null) return { message: `Touche ${input.key} non autorisée` };
-    const values = new Map(shown.values);
-    if (key?.startsWith('CA')) return { key, values };   // CA : aucune saisie transmise, aucun contrôle de zone
+  // Une saisie : refus, réponse du simulateur (continue) ou retour au programme (key = touche déclarée, undefined = ENTER)
+  private accept(shown: Displayed, state: SubfileState | undefined, input: ScreenInput,
+                 pending: { values: Map<string, AreaValue>; lines: PendingLines }): Accepted {
+    const written = input.key.toUpperCase();
+    const key = this.declaredKey(shown.definition, state, written);
+    const paging = shown.subfile !== undefined && (written === 'PAGEDOWN' || written === 'PAGEUP');
+    if (key === null && !paging) return { message: `Touche ${input.key} non autorisée` };
+    if (key?.startsWith('CA')) return { key };   // CA : aucune saisie transmise, aucun contrôle de zone
     for (const name of Object.keys(input.fields)) {
       const field = shown.fields.find(f => f.name.toUpperCase() === name.toUpperCase());
       if (!field) return { message: `Zone ${name} inconnue ou non affichée` };
       if (field.usage === 'O') return { message: `Zone ${field.name} non saisissable` };
       const parsed = parseInput(shown.definition.fields.find(f => f.name === field.name)!, input.fields[name]);
       if ('message' in parsed) return parsed;
-      values.set(field.name, parsed.value);
+      pending.values.set(field.name, parsed.value);
     }
-    return { key, values };
+    if (input.lines) {
+      const message = collectLines(shown.subfile?.state, input.lines, pending.lines);
+      if (message !== undefined) return { message };
+      // comme l'opérateur qui pagine jusqu'à chaque ligne : la page affichée à la fin est celle de la dernière ligne saisie
+      for (const { rrn } of input.lines) {
+        if (state && pageOfRrn(state, rrn) !== state.page) {
+          state.page = pageOfRrn(state, rrn);
+          this.terminal.show(this.compose());
+        }
+      }
+    }
+    if (state && key !== undefined && key === state.control.drop) {
+      const first = (state.page - 1) * perPage(state) + 1;
+      state.folded = !state.folded;
+      state.page = pageOfRrn(state, first);
+      return { continue: true };
+    }
+    if (paging && state) {
+      const down = written === 'PAGEDOWN';
+      const inRange = down ? state.page * perPage(state) < state.sf.count : state.page > 1;
+      if (inRange) {
+        state.page += down ? 1 : -1;
+        return { continue: true };
+      }
+      if (shown.subfile!.endActive) return { message: `${down ? 'fin' : 'début'} du sous-fichier` };
+      if (key === null) return { message: `Touche ${input.key} non autorisée` };
+    }
+    return { key: key ?? undefined };
   }
 
   // ENTER -> undefined ; touche déclarée (CA03, CF05, PAGEUP...) ; null si non autorisée.
   // CAnn et CFnn ne coexistent pas pour un même nn (refusé au chargement de displays.json).
-  private declaredKey(format: DisplayFormat, written: string): string | undefined | null {
-    const key = written.toUpperCase();
+  private declaredKey(format: DisplayFormat, state: SubfileState | undefined, written: string): string | undefined | null {
+    const key = written;
     if (key === 'ENTER') return undefined;
     const m = /^F(\d{1,2})$/.exec(key);
     const nn = m ? m[1].padStart(2, '0') : '';
     const candidates = m ? [`CA${nn}`, `CF${nn}`] : key === 'PAGEUP' || key === 'PAGEDOWN' ? [key] : [];
-    return candidates.find(c => format.keys.has(c) || this.definition.keys.has(c)) ?? null;
+    return candidates.find(c => format.keys.has(c) || this.definition.keys.has(c) || c === state?.control.drop) ?? null;
   }
 
   // Indicateurs reçus au R (valeurs du programme à cet instant), réponse à 0, puis celui de la touche à 1
