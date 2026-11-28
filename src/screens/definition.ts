@@ -1,9 +1,13 @@
 // Description des fichiers écran (displays.json) : types normalisés et validation au chargement.
 import type { DataTypeNode } from '../types';
 import { parseFieldType } from '../files/field-types';
+import { condition, indicator, isObject } from './conditions';
+import type { Condition } from './conditions';
+import { normalizeControl, normalizeSubfile, validateSubfiles } from './definition-subfile';
+import type { ControlSpec, SubfileSpec } from './definition-subfile';
 
-// Indicateurs tous vrais (ET) ; negated : l'indicateur doit être à 0
-export type Condition = { indicator: number; negated: boolean }[];
+export type { Condition };
+export type { ControlSpec, SubfileSpec };
 
 // Touche normalisée (CA03, CF05, PAGEUP, PAGEDOWN) -> indicateur de réponse, ou null (touche autorisée sans indicateur)
 export type KeyMap = Map<string, number | null>;
@@ -19,9 +23,15 @@ export interface DisplayField {
   length: number;
   condition?: Condition;
   lc?: boolean;                    // saisie char conservée en minuscules (équivalent DDS CHECK(LC))
+  fold: boolean;                   // masquée en forme tronquée du sous-fichier (SFLDROP)
 }
 
-export interface DisplayFormat { keys: KeyMap; constants: DisplayConstant[]; fields: DisplayField[] }
+export interface DisplayFormat {
+  keys: KeyMap; constants: DisplayConstant[]; fields: DisplayField[];
+  subfile?: SubfileSpec;            // format sous-fichier (DDS SFL)
+  control?: ControlSpec;            // format contrôle de sous-fichier (DDS SFLCTL)
+  overlay: boolean;                 // OVERLAY : ne vide pas l'écran à l'écriture
+}
 
 export interface DisplayFileDefinition { indara: boolean; keys: KeyMap; formats: { [name: string]: DisplayFormat } }
 
@@ -53,6 +63,7 @@ function normalizeFile(raw: any, where: string): DisplayFileDefinition {
     requireUpper(name, `format '${name}'`, where);
     formats[name] = normalizeFormat(raw.formats[name], `${where}, format '${name}'`, keys);
   }
+  validateSubfiles(formats, where);
   return { indara: raw.indara ?? false, keys, formats };
 }
 
@@ -77,7 +88,16 @@ function normalizeFormat(raw: any, where: string, fileKeys: KeyMap): DisplayForm
     }
     fields.push(field);
   }
-  return { keys, constants, fields };
+  if (raw.overlay !== undefined && typeof raw.overlay !== 'boolean') throw new Error(`${where} : "overlay" doit être vrai ou faux`);
+  if (raw.subfile !== undefined && raw.control !== undefined) throw new Error(`${where} : un format ne peut être à la fois sous-fichier et contrôle`);
+  const format: DisplayFormat = { keys, constants, fields, overlay: raw.overlay ?? false };
+  if (raw.subfile !== undefined) format.subfile = normalizeSubfile(raw.subfile, where);
+  if (raw.control !== undefined) format.control = normalizeControl(raw.control, where, fields);
+  const folded = fields.find(f => f.fold);
+  if (folded && format.subfile === undefined) {
+    throw new Error(`${where}, zone '${folded.name}' : "fold" n'est permis que dans un format sous-fichier`);
+  }
+  return format;
 }
 
 function normalizeKeys(raw: any, where: string): KeyMap {
@@ -140,7 +160,8 @@ function normalizeField(raw: any, where: string): DisplayField {
   if (type.typeName === 'char' ? length < 1 : length < 1 || length > 63 || decimals > length) {
     throw new Error(`${here} : longueur invalide pour le type '${raw.type}' (char : 1 ou plus ; zoned : 1 à 63 chiffres, décimales <= chiffres)`);
   }
-  const field: DisplayField = { name: raw.name, type, usage: raw.usage, length, condition: condition(raw.if, here) };
+  if (raw.fold !== undefined && typeof raw.fold !== 'boolean') throw new Error(`${here} : "fold" doit être vrai ou faux`);
+  const field: DisplayField = { name: raw.name, type, usage: raw.usage, length, condition: condition(raw.if, here), fold: raw.fold === true };
   if (raw.lc !== undefined) {
     if (typeof raw.lc !== 'boolean') throw new Error(`${here} : "lc" doit être vrai ou faux`);
     if (type.typeName !== 'char') throw new Error(`${here} : "lc" n'est permis que sur une zone char`);
@@ -163,27 +184,7 @@ function position(raw: any, length: number, where: string): { row: number; col: 
   return { row, col };
 }
 
-// "31 N32" : indicateurs séparés par des blancs, N devant = négation
-function condition(raw: any, where: string): Condition | undefined {
-  if (raw === undefined) return undefined;
-  const tokens = typeof raw === 'string' ? raw.trim().split(/\s+/) : [];
-  if (typeof raw !== 'string' || raw.trim() === '' || !tokens.every(t => /^N?\d+$/.test(t))) {
-    throw new Error(`${where} : "if" mal formé : indicateurs "01" à "99" séparés par des blancs, N devant pour la négation`);
-  }
-  return tokens.map(t => {
-    const negated = t.startsWith('N');
-    return { indicator: indicator(negated ? t.slice(1) : t, `${where} : "if"`), negated };
-  });
-}
-
-function indicator(digits: string, where: string): number {
-  const n = Number(digits);
-  if (n < 1 || n > 99) throw new Error(`${where} : indicateur '${digits}' hors de 01 à 99`);
-  return n;
-}
-
 function requireUpper(name: string, what: string, where: string): void {
   if (name !== name.toUpperCase()) throw new Error(`${where} : ${what} : le nom doit être en majuscules`);
 }
 
-const isObject = (v: any): boolean => v !== null && typeof v === 'object' && !Array.isArray(v);
