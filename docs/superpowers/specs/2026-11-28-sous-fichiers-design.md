@@ -4,13 +4,18 @@ Prolonge `2026-10-10-ecrans-design.md` (5a). Seules les différences avec 5a son
 
 ## Intention
 
-Faire tourner, avec le terminal scripté, un programme RPGLE à sous-fichier tel qu'il est écrit
-sur IBM i (chargement, affichage, options saisies sur les lignes, `READC`/`UPDATE`, pagination),
-pour que des scénarios de test d'écran deviennent possibles. C'est la base de la partie E2E de la
-bibliothèque de tests destinée à être commercialisée : les scénarios doivent être **lisibles et
-robustes** (ne pas casser quand les données de test changent d'ordre).
+L'interpréteur est d'abord un **simulateur** : développer et exécuter ses programmes RPGLE sans IBM i
+et sans compiler, pour tout ce qui peut l'être. Les sous-fichiers sont présents dans presque tous les
+programmes interactifs ; tant qu'ils sont refusés, ces programmes ne tournent pas.
 
-La navigation à la main (panneau 5250) reste l'incrément 5b ; rien ici ne doit la gêner.
+Cet incrément fait tourner un programme à sous-fichier tel qu'il est écrit sur IBM i (chargement,
+affichage, options saisies sur les lignes, `READC`/`UPDATE`, pagination). Le simulateur d'écran est
+piloté ici par le terminal scripté, qui sert à le vérifier ; la navigation à la main (panneau 5250)
+est l'incrément 5b, et rien ici ne doit la gêner.
+
+Plus tard viendra la partie test (unitaire, fonctionnel, E2E), destinée à être commercialisée : elle
+réutilisera ce terminal scripté pour les scénarios E2E. D'où le soin porté au format du scénario :
+**lisible et robuste** (ne pas casser quand les données de test changent d'ordre).
 
 ## Objectifs
 
