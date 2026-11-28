@@ -23,6 +23,8 @@ export function parseFileDeclaration(p: ParserState): FileDeclarationNode {
   let workstn = false;
   let indds: string | undefined;
   let indddsToken: Token | undefined;
+  const sfile: NonNullable<FileDeclarationNode['sfile']> = [];
+  let sfileToken: Token | undefined;
   const given = new Map<string, Token>();
   while (!p.check(TokenType.SEMICOLON) && !p.isAtEnd()) {
     const word = p.advance();
@@ -102,6 +104,16 @@ export function parseFileDeclaration(p: ParserState): FileDeclarationNode {
       indds = p.expectName().value.toUpperCase();
       indddsToken = word;
       p.expect(TokenType.RPAREN);
+    } else if (lower === 'sfile') {
+      p.expect(TokenType.LPAREN);
+      const format = p.expectName().value.toUpperCase();
+      if (!p.check(TokenType.COLON)) throw new Error(`SFILE attend deux noms : format et variable de rang (ligne ${word.line})`);
+      p.advance();
+      const rrn = p.expectName().value.toUpperCase();
+      p.expect(TokenType.RPAREN);
+      if (sfile.some(e => e.format === format)) throw new Error(`SFILE(${format}) en double sur le fichier ${key} (ligne ${word.line})`);
+      sfile.push({ format, rrn });
+      sfileToken = word;
     } else if (lower === 'printer' || lower === 'special') {
       throw unsupported(`DCL-F ${lower.toUpperCase()}`, word);
     } else {
@@ -112,6 +124,7 @@ export function parseFileDeclaration(p: ParserState): FileDeclarationNode {
     throw new Error(`EXTFILE(*EXTDESC) du fichier ${key} sans le mot-clé EXTDESC (ligne ${start.line})`);
   }
   if (indds !== undefined && !workstn) throw unsupported("INDDS sur un fichier qui n'est pas WORKSTN", indddsToken!);
+  if (sfileToken && !workstn) throw new Error(`SFILE n'est permis que sur un fichier WORKSTN : fichier ${key} (ligne ${sfileToken.line})`);
   if (workstn) {
     if (usage?.update || usage?.delete) {
       throw new Error(`USAGE *UPDATE ou *DELETE impossible sur un fichier écran ${key} : *INPUT et *OUTPUT seulement (ligne ${given.get('usage')?.line ?? start.line})`);
@@ -129,6 +142,7 @@ export function parseFileDeclaration(p: ParserState): FileDeclarationNode {
   const node: FileDeclarationNode = { type: 'FileDeclaration', name: nameToken.value, keyed, usropn, usage: finalUsage, line: start.line };
   if (workstn) node.device = 'workstn';
   if (indds !== undefined) node.indds = indds;
+  if (sfile.length > 0) node.sfile = sfile;
   if (rename) node.rename = rename;
   if (prefix) node.prefix = prefix;
   if (extfile !== undefined) node.extfile = extfile;

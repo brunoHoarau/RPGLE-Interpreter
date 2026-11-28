@@ -77,3 +77,40 @@ test('displays.json : sous-fichier mal formé, deux contrôles, fold hors sous-f
   assert.throws(make(null, c => { c.overlay = 'oui'; }), /CTL1.*"overlay" doit être vrai ou faux/);
   assert.throws(make(null, c => { c.subfile = {}; }), /CTL1.*à la fois sous-fichier et contrôle/);
 });
+
+// --- SFILE et READC : analyse et déclaration ---
+const { parse, run, runScreens } = require('./helpers');
+const ECRAN = () => displaysFrom({ ECRAN: { formats: { SFL1: SFL(), CTL1: CTL(), BAS1: { overlay: true, fields: [] } } } });
+const declare = (decl, body = '') => () => runScreens(`${decl}\n${body}`, ECRAN(), []);
+
+test('SFILE : analyse (un par format, plusieurs permis)', () => {
+  const [node] = parse('dcl-f ecran workstn sfile(SFL1:rrn1) sfile(SFL2:rrn2);').files;
+  assert.deepEqual(node.sfile, [{ format: 'SFL1', rrn: 'RRN1' }, { format: 'SFL2', rrn: 'RRN2' }]);
+  assert.equal(parse('dcl-f ecran workstn;').files[0].sfile, undefined);
+  assert.throws(() => parse('dcl-f ecran sfile(SFL1:rrn1);'), /SFILE.*WORKSTN/);
+  assert.throws(() => parse('dcl-f ecran workstn sfile(SFL1);'), /:/);
+  assert.throws(() => parse('dcl-f ecran workstn sfile(SFL1:rrn1) sfile(sfl1:rrn2);'), /SFILE.*SFL1.*en double/);
+});
+
+test('READC : analyse (format seul, plus refusé)', () => {
+  const op = parse('dcl-f ecran workstn; readc SFL1;').body.find(n => n.type === 'FileOperation');
+  assert.equal(op.operation, 'readc');
+  assert.equal(op.file, 'SFL1');
+});
+
+test('SFILE : déclaration contrôlée par displays.json', () => {
+  assert.throws(declare('dcl-f ecran workstn;'), /SFILE manquant pour le format SFL1/);
+  assert.throws(declare('dcl-f ecran workstn sfile(NOPE:rrn1);'), /SFILE.*format NOPE.*absent/);
+  assert.throws(declare('dcl-f ecran workstn sfile(BAS1:rrn1);'), /SFILE.*BAS1.*n'est pas un format sous-fichier/);
+  assert.throws(declare('dcl-f ecran workstn sfile(CTL1:rrn1);'), /SFILE.*CTL1.*n'est pas un format sous-fichier/);
+});
+
+test('SFILE : variable de rang déclarée implicitement en packed(4:0)', () => {
+  const out = runScreens(`dcl-f ecran workstn sfile(SFL1:rrn1);\nrrn1 = 12;\ndsply rrn1;`, ECRAN(), []).output;
+  assert.deepEqual(out, ['12']);
+});
+
+test('SFILE : variable déjà déclarée int(10) acceptée, packed(5:2) refusée', () => {
+  assert.deepEqual(runScreens(`dcl-s rrn1 int(10);\ndcl-f ecran workstn sfile(SFL1:rrn1);\nrrn1 = 3;\ndsply rrn1;`, ECRAN(), []).output, ['3']);
+  assert.throws(() => runScreens(`dcl-s rrn1 packed(5:2);\ndcl-f ecran workstn sfile(SFL1:rrn1);`, ECRAN(), []), /rrn1.*sans décimales/i);
+});

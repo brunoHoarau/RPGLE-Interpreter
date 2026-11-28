@@ -17,8 +17,9 @@ export const DATETIME_LITERALS = new Map<TokenType, DateTimeKind>([
 export const FILE_OPERATION_TOKENS = [
   TokenType.SETLL, TokenType.SETGT, TokenType.READ, TokenType.READE, TokenType.READP, TokenType.READPE,
   TokenType.CHAIN, TokenType.OPEN, TokenType.CLOSE, TokenType.UPDATE, TokenType.DELETE, TokenType.WRITE, TokenType.EXFMT,
+  TokenType.READC,
 ];
-export const READ_OPERATIONS = new Set(['read', 'readp', 'reade', 'readpe', 'chain', 'setll', 'setgt']);
+export const READ_OPERATIONS = new Set(['read', 'readp', 'reade', 'readpe', 'readc', 'chain', 'setll', 'setgt']);
 // Opérations dont le premier opérande est une clé
 export const KEYED_OPERATIONS = new Set(['reade', 'readpe', 'chain', 'setll', 'setgt']);
 
@@ -30,7 +31,7 @@ export const FILE_BUILTINS = new Set(['%eof', '%found', '%equal', '%open']);
 export const UNSUPPORTED_OPCODES = new Set([
   'acq', 'commit', 'data-gen', 'data-into', 'dealloc', 'dump',
   'eval-corr', 'except', 'feod', 'force', 'in', 'next',
-  'on-excp', 'on-exit', 'out', 'post', 'readc', 'rel',
+  'on-excp', 'on-exit', 'out', 'post', 'rel',
   'rolbk', 'snd-msg', 'test', 'xml-into', 'xml-sax',
 ]);
 
