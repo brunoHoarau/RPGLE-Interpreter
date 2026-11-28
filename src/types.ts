@@ -218,6 +218,7 @@ export interface FileDeclarationNode {
   usage: { input: boolean; output: boolean; update: boolean; delete: boolean };
   device?: 'workstn';                              // WORKSTN : fichier écran (absent : DISK)
   indds?: string;                                  // INDDS(nom) : structure des indicateurs, en majuscules
+  sfile?: { format: string; rrn: string }[];       // SFILE(format:variable de rang), en majuscules
   rename?: { from: string; to: string };           // RENAME(format:nouveau), majuscules
   prefix?: { text: string; count?: number };       // PREFIX(texte[:n]), texte en majuscules sans apostrophes
   extfile?: string;                                // EXTFILE : nom de table en majuscules, bibliothèque retirée, ou '*EXTDESC'
@@ -227,7 +228,7 @@ export interface FileDeclarationNode {
 
 export interface FileOperationNode {
   type: 'FileOperation';
-  operation: 'read' | 'readp' | 'reade' | 'readpe' | 'chain' | 'setll' | 'setgt' | 'open' | 'close' | 'write' | 'update' | 'delete' | 'unlock' | 'exfmt';
+  operation: 'read' | 'readp' | 'reade' | 'readpe' | 'chain' | 'setll' | 'setgt' | 'open' | 'close' | 'write' | 'update' | 'delete' | 'unlock' | 'exfmt' | 'readc';
   file: string;                // nom de fichier ou de format, tel qu'écrit
   key?: ExpressionNode[];      // liste de valeurs de clé
   special?: 'start' | 'end';   // *START / *LOVAL, *END / *HIVAL

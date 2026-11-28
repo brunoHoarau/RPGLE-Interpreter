@@ -3,6 +3,7 @@ import { FileDeclarationNode, ParameterNode } from '../../types';
 import { NotSupportedError } from '../../errors';
 import { SpecialCall } from '../../screens/protocol';
 import { declareFileField } from '../files/declare';
+import type { DisplayFileDefinition } from '../../screens/definition';
 import { DisplayState, InterpreterState } from '../state';
 
 export function displayError(file: string, call: SpecialCall): Error {
@@ -34,10 +35,44 @@ export function declareDisplayFile(s: InterpreterState, node: FileDeclarationNod
   for (const format of formats) {
     for (const field of definition.formats[format].fields) declareFileField(s, field.name, field.type, name, parameters);
   }
-  const state = { file: name, definition, routine: s.options.screens(name, definition), indds: node.indds,
-    usage: { input: node.usage.input, output: node.usage.output } };
+  const sfile = declareSubfiles(s, node, definition, name);
+  const state: DisplayState = { file: name, definition, routine: s.options.screens(name, definition), indds: node.indds,
+    usage: { input: node.usage.input, output: node.usage.output }, sfile };
   s.displays.set(name, state);
   for (const format of formats) s.displays.set(format, state);
+}
+
+// SFILE(format:rang) : un par format sous-fichier ; la variable de rang est créée en packed(4:0) si elle n'existe pas
+function declareSubfiles(s: InterpreterState, node: FileDeclarationNode, definition: DisplayFileDefinition, file: string): Map<string, string> {
+  const sfile = new Map<string, string>();
+  for (const { format, rrn } of node.sfile ?? []) {
+    const target = definition.formats[format];
+    if (!target) throw new Error(`SFILE(${format}:${rrn}) : format ${format} absent du fichier écran ${file}`);
+    if (!target.subfile) throw new Error(`SFILE(${format}:${rrn}) : le format ${format} n'est pas un format sous-fichier`);
+    sfile.set(format, rrn);
+  }
+  for (const [format, target] of Object.entries(definition.formats)) {
+    if (target.subfile && !sfile.has(format)) throw new Error(`SFILE manquant pour le format ${format} du fichier écran ${file}`);
+  }
+  return sfile;
+}
+
+// Variables de rang de SFILE, une fois les déclarations du programme exécutées : créée en packed(4:0) si absente,
+// sinon numérique sans décimales exigée
+export function declareSubfileVariables(s: InterpreterState): void {
+  for (const state of new Set(s.displays.values())) {
+    for (const [format, rrn] of state.sfile) {
+      if (!s.runtime.hasVariable(rrn)) {
+        s.runtime.declareVariable(rrn, 0, { type: 'DataType', typeName: 'packed', length: 4, decimals: 0 });
+        continue;
+      }
+      const type = s.runtime.getType(rrn);
+      const numeric = type !== undefined && ['int', 'uns', 'packed', 'zoned'].includes(type.typeName);
+      if (!numeric || (type!.decimals ?? 0) !== 0) {
+        throw new Error(`SFILE(${format}:${rrn}) : la variable de rang ${rrn} doit être numérique sans décimales`);
+      }
+    }
+  }
 }
 
 // INDDS : structure de données du programme ; à contrôler une fois les déclarations exécutées.

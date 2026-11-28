@@ -335,6 +335,7 @@ export class Lexer {
       'delete': TokenType.DELETE,
       'write': TokenType.WRITE,
       'exfmt': TokenType.EXFMT,
+      'readc': TokenType.READC,
       'exec': TokenType.EXEC_SQL,
       'dsply': TokenType.DSPLY,
     };

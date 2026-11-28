@@ -58,7 +58,6 @@ test('DCL-F WORKSTN : mots-clés refusés sur un fichier écran', () => {
 
 test('opérations de fichier non supportées refusées', () => {
   for (const src of [
-    'dcl-f client keyed; readc client;',
     'dcl-f client keyed; setll k client ds;', 'dcl-f client keyed; delete k client ds;',
   ]) {
     assert.throws(() => parse(src), NOT_SUPPORTED, src);

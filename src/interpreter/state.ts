@@ -48,8 +48,11 @@ export interface DisplayState {
   definition: DisplayFileDefinition;
   routine: SpecialRoutine;
   indds?: string;                  // INDDS(nom), en majuscules
+  sfile: Map<string, string>;      // SFILE : format sous-fichier (majuscules) -> variable de rang (majuscules)
   usage: { input: boolean; output: boolean };
   opened?: boolean;                // appel O réussi, appel C encore dû
+  found?: boolean;                 // %FOUND après CHAIN sur un sous-fichier
+  eof?: boolean;                   // %EOF après READC
   area?: boolean[];                // indicateurs des positions sans sous-zone INDDS (index 1..99), valeur interne du fichier
 }
 

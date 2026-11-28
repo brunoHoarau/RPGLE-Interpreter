@@ -1,7 +1,7 @@
 import { ExpressionNode } from '../../types';
 import { NotSupportedError } from '../../errors';
 import { fileState } from './operations';
-import { InterpreterState } from '../state';
+import { DisplayState, InterpreterState } from '../state';
 
 export const FILE_BUILTINS = new Set(['%eof', '%found', '%equal', '%open']);
 
@@ -9,6 +9,8 @@ export const FILE_BUILTINS = new Set(['%eof', '%found', '%equal', '%open']);
 export function fileBuiltin(s: InterpreterState, name: string, args: ExpressionNode[]): boolean {
   const builtin = name.toLowerCase();
   if (args.length > 0) {
+    const screen = s.displays.get(String(args[0].value).toUpperCase());
+    if (screen) return displayBuiltin(builtin, screen);
     const state = fileState(s, String(args[0].value));
     switch (builtin) {
       case '%open': return state.open;
@@ -21,7 +23,7 @@ export function fileBuiltin(s: InterpreterState, name: string, args: ExpressionN
       case '%equal': return state.equal;
     }
   } else {
-    if (s.files.size === 0) throw new Error(`${name.toUpperCase()} sans fichier déclaré`);
+    if (s.files.size === 0 && s.displays.size === 0) throw new Error(`${name.toUpperCase()} sans fichier déclaré`);
     switch (builtin) {
       case '%eof': return s.lastIndicators.eof;
       case '%found': return s.lastIndicators.found;
@@ -29,4 +31,14 @@ export function fileBuiltin(s: InterpreterState, name: string, args: ExpressionN
     }
   }
   throw new Error(`Fonction ${name.toUpperCase()} inattendue pour un fichier`);
+}
+
+// %EOF, %FOUND, %OPEN d'un fichier écran : état du dernier READC / CHAIN de sous-fichier
+function displayBuiltin(builtin: string, state: DisplayState): boolean {
+  switch (builtin) {
+    case '%open': return state.opened === true;
+    case '%eof': return state.eof === true;
+    case '%found': return state.found === true;
+  }
+  throw new NotSupportedError(`${builtin.toUpperCase()}(${state.file}) sur un fichier écran`);
 }

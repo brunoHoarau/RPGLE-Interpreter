@@ -29,10 +29,21 @@ export function checkFileChanges(s: InterpreterState, node: any): void {
       throw new Error(`${node.operation.toUpperCase()} attend le nom du fichier ${state.file.name}, pas le format ${state.file.format}`);
     }
   }
-  if (node.type === 'Expression' && node.valueType === 'file' && s.displays.has(String(node.value).toUpperCase())) {
-    throw new NotSupportedError(`%OPEN, %EOF, %FOUND ou %EQUAL sur un fichier écran (${String(node.value).toUpperCase()})`);
+  // Fichier écran : %EOF et %FOUND ne servent qu'avec un sous-fichier (SFILE), %OPEN et %EQUAL jamais
+  if (node.type === 'Expression' && node.valueType === 'builtin' && ['%open', '%equal'].includes(String(node.value?.name).toLowerCase())) {
+    const arg = node.value.args?.[0]?.value;
+    if (arg !== undefined && s.displays.has(String(arg).toUpperCase())) {
+      throw new NotSupportedError(`${String(node.value.name).toUpperCase()} sur un fichier écran (${String(arg).toUpperCase()})`);
+    }
   }
-  if (node.type === 'Expression' && node.valueType === 'file') fileState(s, String(node.value));
+  if (node.type === 'Expression' && node.valueType === 'file' && s.displays.has(String(node.value).toUpperCase())) {
+    const display = s.displays.get(String(node.value).toUpperCase())!;
+    if (display.sfile.size === 0) {
+      throw new NotSupportedError(`%EOF ou %FOUND sur un fichier écran sans sous-fichier (${String(node.value).toUpperCase()})`);
+    }
+  } else if (node.type === 'Expression' && node.valueType === 'file') {
+    fileState(s, String(node.value));
+  }
   for (const value of Object.values(node)) {
     if (value !== null && typeof value === 'object') checkFileChanges(s, value);
   }

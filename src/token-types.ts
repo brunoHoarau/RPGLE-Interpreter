@@ -117,6 +117,7 @@ export enum TokenType {
   DELETE = 'DELETE',
   WRITE = 'WRITE',
   EXFMT = 'EXFMT',
+  READC = 'READC',
   DSPLY = 'DSPLY',
 
   EOF = 'EOF'
